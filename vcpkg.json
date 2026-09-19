@@ -1,0 +1,20 @@
+{
+  "name": "omnitrace",
+  "version-string": "0.1.0",
+  "description": "Embedded systems forensic analysis suite",
+  "license": "Apache-2.0",
+  "dependencies": [
+    "zlib",
+    "liblzma",
+    "lz4",
+    "zstd",
+    { "name": "openssl", "default-features": false },
+    "yaml-cpp",
+    "nlohmann-json",
+    "cli11",
+    "spdlog",
+    "tomlplusplus",
+    "gtest"
+  ],
+  "builtin-baseline": "b322364f06075bb2d0c88d4c5a9e2d6aa8a5cdba"
+}

@@ -1,0 +1,53 @@
+# Common warning set applied to every omnitrace target via omnitrace_warnings().
+add_library(omnitrace_warnings INTERFACE)
+if(MSVC)
+  target_compile_options(omnitrace_warnings INTERFACE /W4 /permissive- /utf-8 /Zc:__cplusplus)
+  if(OMNITRACE_WERROR)
+    target_compile_options(omnitrace_warnings INTERFACE /WX)
+  endif()
+  target_compile_definitions(omnitrace_warnings INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+else()
+  target_compile_options(omnitrace_warnings INTERFACE -Wall -Wextra -Wpedantic -Wshadow -Wconversion
+    -Wsign-conversion -Wnon-virtual-dtor -Wold-style-cast -Wimplicit-fallthrough)
+  if(OMNITRACE_WERROR)
+    target_compile_options(omnitrace_warnings INTERFACE -Werror)
+  endif()
+endif()
+
+# omnitrace_module(<name> [DEPS <targets...>])
+# Creates static library omnitrace_<name> from src/<name>/*.cpp with public
+# headers under include/, and (if tests are on) a test executable from
+# tests/unit/<name>/*.cpp registered with CTest. Contributors add files; they
+# never touch CMake.
+function(omnitrace_module name)
+  cmake_parse_arguments(ARG "" "" "DEPS" ${ARGN})
+  file(GLOB_RECURSE _srcs CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+  set(_tgt omnitrace_${name})
+  if(_srcs)
+    add_library(${_tgt} STATIC ${_srcs})
+  else()
+    add_library(${_tgt} INTERFACE)
+  endif()
+  add_library(omnitrace::${name} ALIAS ${_tgt})
+  set(_scope PUBLIC)
+  if(NOT _srcs)
+    set(_scope INTERFACE)
+  endif()
+  target_include_directories(${_tgt} ${_scope} "${PROJECT_SOURCE_DIR}/include")
+  target_link_libraries(${_tgt} ${_scope} ${ARG_DEPS})
+  if(_srcs)
+    target_link_libraries(${_tgt} PRIVATE omnitrace_warnings)
+    target_compile_definitions(${_tgt} PRIVATE OMNITRACE_VERSION="${PROJECT_VERSION}")
+  endif()
+  if(OMNITRACE_BUILD_TESTS)
+    file(GLOB_RECURSE _tests CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/tests/unit/${name}/*.cpp")
+    if(_tests)
+      add_executable(test_${name} ${_tests})
+      target_link_libraries(test_${name} PRIVATE ${_tgt} GTest::gtest GTest::gtest_main omnitrace_warnings)
+      target_compile_definitions(test_${name} PRIVATE
+        OMNITRACE_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures"
+        OMNITRACE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+      add_test(NAME ${name} COMMAND test_${name})
+    endif()
+  endif()
+endfunction()

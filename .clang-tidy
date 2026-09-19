@@ -1,0 +1,16 @@
+Checks: >
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  cppcoreguidelines-narrowing-conversions,
+  misc-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -misc-non-private-member-variables-in-classes,
+  -misc-include-cleaner
+WarningsAsErrors: ''
+HeaderFilterRegex: '(include|src)/omnitrace/.*'

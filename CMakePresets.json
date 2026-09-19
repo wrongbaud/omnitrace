@@ -1,0 +1,43 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "base", "hidden": true, "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON" }
+    },
+    {
+      "name": "vcpkg", "hidden": true, "inherits": "base",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    },
+    { "name": "linux-gcc", "inherits": "base", "displayName": "Linux GCC (system libs)",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_CXX_COMPILER": "g++" } },
+    { "name": "linux-clang", "inherits": "base", "displayName": "Linux Clang (system libs)",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_CXX_COMPILER": "clang++" } },
+    { "name": "linux-asan", "inherits": "linux-clang", "displayName": "Linux Clang ASan/UBSan",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "OMNITRACE_SANITIZE": "ON" } },
+    { "name": "linux-vcpkg", "inherits": "vcpkg", "displayName": "Linux (vcpkg)",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } },
+    { "name": "windows-msvc", "inherits": "vcpkg", "displayName": "Windows MSVC (vcpkg)",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "VCPKG_TARGET_TRIPLET": "x64-windows-static-md" } },
+    { "name": "macos-clang", "inherits": "vcpkg", "displayName": "macOS Clang (vcpkg)",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } }
+  ],
+  "buildPresets": [
+    { "name": "linux-gcc", "configurePreset": "linux-gcc" },
+    { "name": "linux-clang", "configurePreset": "linux-clang" },
+    { "name": "linux-asan", "configurePreset": "linux-asan" },
+    { "name": "linux-vcpkg", "configurePreset": "linux-vcpkg" },
+    { "name": "windows-msvc", "configurePreset": "windows-msvc" },
+    { "name": "macos-clang", "configurePreset": "macos-clang" }
+  ],
+  "testPresets": [
+    { "name": "linux-gcc", "configurePreset": "linux-gcc", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang", "configurePreset": "linux-clang", "output": { "outputOnFailure": true } },
+    { "name": "linux-asan", "configurePreset": "linux-asan", "output": { "outputOnFailure": true } },
+    { "name": "linux-vcpkg", "configurePreset": "linux-vcpkg", "output": { "outputOnFailure": true } },
+    { "name": "windows-msvc", "configurePreset": "windows-msvc", "output": { "outputOnFailure": true } },
+    { "name": "macos-clang", "configurePreset": "macos-clang", "output": { "outputOnFailure": true } }
+  ]
+}
