@@ -30,6 +30,9 @@ struct Limits {
     std::uint64_t max_nodes_per_fs =
         5'000'000;  ///< Metadata records one filesystem reader parses (SquashFS directory entries
                     ///< today; JFFS2 nodes, inodes later).
+    /// History: superseded versions kept per entry path (oldest dropped first, with a
+    /// `<fmt>-limit-versions` diagnostic). Applies to JFFS2/UBIFS/YAFFS2 and QNX6 snapshots.
+    std::uint32_t max_versions_per_entry = 64;
 };
 
 }  // namespace omnitrace
