@@ -135,7 +135,7 @@ Wrapper images carry `partitions:` (MBR/GPT: `name, fixture, offset, size, conte
 
 `jffs2_raw_dirent` (40-byte header + name) for the unlink: `nodetype 0xE001`, `pino` = inode of `history/`, `version` = max + 3, **`ino = 0`** (that is how JFFS2 records a deletion), `mctime 1700000130`, `nsize`, `type DT_REG`, `node_crc = crc(bytes 0..32)`, `name_crc = crc(name)`. The original inode nodes of both files stay on flash; `history.superseded` lists config v1 (mkfs node) and v2 (appended), `history.current` v3, `history.deleted` `deleted.txt` with `unlink_node_offset`, and `history.appended_nodes` gives every appended node's offset and length. The builder re-parses the finished image and verifies every header CRC.
 
-**ext4** (`ext4.img`). Populated with `debugfs -w` (no kernel, no journal). v2 and v3 of `config.txt` are written up front under temporary names so each version owns its own blocks; the history script then does `unlink` + `kill_file` on the old inode and `link`s the new one under `config.txt`, and finally `rm history/deleted.txt`. Result: three freed inodes (`lsdel` shows 26, 27, 31) that keep size, extent tree and data blocks with `dtime` set; the unlinked directory entries (`history/.config.v2`, `.config.v3`, `deleted.txt`) remain in the directory block. `E2FSPROGS_FAKE_TIME` pins every timestamp e2fsprogs would otherwise take from the clock.
+**ext4** (`ext4.img`). Populated with `debugfs -w` (no kernel, no journal). v2 and v3 of `config.txt` are written up front under temporary names so each version owns its own blocks; the history script then does `unlink` + `kill_file` on the old inode and `link`s the new one under `config.txt`, and finally `rm history/deleted.txt`. Result: three freed inodes (`lsdel` shows 26, 27, 31) that keep size, extent tree and data blocks with `dtime` set; the unlinked directory entries (`history/.config.v2`, `.config.v3`, `deleted.txt`) remain in the directory block. Without a journal nothing ties the freed inodes to `config.txt`: v1's entry was overwritten in place by the later `link` of the same name (a reader emits it as `lost+found/#26`) and v2 is named only by the unlinked `.config.v2`, so the YAML lists both under `history.deleted` (with `recovered_as` / `name_recoverable: false` for v1) and `history.superseded` is empty. `E2FSPROGS_FAKE_TIME` pins every timestamp e2fsprogs would otherwise take from the clock.
 
 **FAT32** (`fat32.img`). `mcopy -o` deletes and re-creates, so `config.txt` gets a new directory entry and new clusters per version (old clusters may be reused: `content_recoverable: false`); `mdel history/deleted.txt` leaves its entry with the first byte set to 0xE5, LFN entries, start cluster and size intact (`content_recoverable: true`).
 
@@ -263,3 +263,107 @@ Observed on the current fixtures (all 18 run clean, exit 0):
 ### Adding a tool
 
 Add `run_<name>` to `Runner` (produce raw output under `<out>/<name>/`), a pure `parse_<name>(…) -> list[Finding]` next to the others, the name to `ALL_TOOLS`, aliases to `FORMAT_ALIASES`, and a test in `test_run.py` built from a hand-written raw report and a temporary extraction tree.
+
+---
+
+## 3. Conformance harness (`tests/unit/filesystems/fixture_conformance_test.cpp`)
+
+The fixtures are only useful if every reader is held to them, present and
+future, without anyone remembering to write the test. The conformance harness
+in `test_filesystems` does that: it instantiates one GoogleTest parameter per
+`tests/fixtures/out/<name>.expected.yaml` and, for every fixture whose
+`image.format` has a reader in `fs::FilesystemRegistry`, opens the image the
+way `discovery::analyze` would and checks the walk against the YAML. A reader
+is covered the moment its `OMNITRACE_REGISTER_FILESYSTEM` line exists; the
+harness has no per-format code. Fixtures whose format has no reader are
+skipped with a message naming the format, and `FixtureCoverage.Report` prints
+the whole table, so the log shows what "supported" means in practice:
+
+```
+fixture conformance coverage (.../tests/fixtures/out)
+  registered readers: squashfs
+  ext4: format ext4: NO READER [history]
+  jffs2-history: format jffs2: NO READER [history]
+  squashfs-gzip: format squashfs: reader 'squashfs'
+  ...
+  5 of 15 reader fixtures have a reader
+```
+
+```sh
+./build/linux-gcc/src/filesystems/test_filesystems --gtest_filter='Fixture*'
+./build/linux-gcc/src/filesystems/test_filesystems --gtest_filter='*FixtureConformance*/jffs2_history'   # one fixture
+./build/linux-asan/src/filesystems/test_filesystems --gtest_filter='Fixture*'                            # under ASan/UBSan
+```
+
+Test names carry the fixture (`Fixtures/FixtureConformance.History/jffs2_history`,
+dashes become underscores), so a failure says which image and which check.
+When `tests/fixtures/out` has not been built the whole suite skips.
+
+### How a fixture is opened
+
+`MappedFile` over the image, `discovery::scan` on the whole Span, then the
+finding at offset 0 whose format matches the YAML (`ext4` matches an `ext`
+reader, `fat32` a `fat` or `vfat` one: trailing digits are ignored). The
+reader gets `span.sub(0, finding.size)` exactly as `Recurse::process_filesystem`
+would hand it. If no validator identifies the fixture at offset 0 the test
+fails (analyze() would never open it) and the reader is still run over the
+whole image so its own problems are visible in the same log.
+
+### The four checks
+
+| Test | Sink / options | What must hold |
+|---|---|---|
+| `LiveTree` | `ListingSink(hash=true)`, `history=false` | Walk succeeds, is not truncated, and emits no Warning/Error diagnostic (walk-level or per entry). Every `tree` entry is present with matching kind, size (non-directories), mode (permission bits, when `features.mode`), uid/gid (when `features.owner`), mtime (exact for resolution 1, off by less than the resolution otherwise), `link_target`, sha256 and byte count for regular files; `nlink` when the reader reports one. Entries with `hardlink_of` share a non-zero inode with their target. No live entry beyond the tree except `lost+found` on ext. `WalkResult` counts equal the emitted entries by kind; nothing is flagged deleted/superseded. |
+| `History` | `ListingSink(hash=true)`, `history=true` (fixtures with a `history` section) | The live tree still matches. Every `history.superseded` entry is emitted with `superseded: true`, the same path and `version`, and matching size, inode, mtime and sha256; every `history.deleted` entry with `deleted: true` under its path (or `lost+found/#<inode>` when the name is unrecoverable) and matching fields, sha256 only when `content_recoverable` is not false. Superseded entries have a non-zero version; a live entry that reports a version must report `history.current`'s. `WalkResult::superseded` / `deleted` are at least the YAML counts and equal the flagged entries. |
+| `DiskSink` | `DiskSink` under a temp dir, `hash=true`, `write_versions=true`, `history` on when the YAML has it | Same tree and history checks on the returned `EntryResult`s, then on disk: every regular file's bytes hash to the expected sha256 at `<root>/<path>` with `host_path` and `written` set, directories are directories, symlinks carry the expected target; every superseded/deleted version with recoverable content is at `<root>/.omnitrace-versions/<path>/v<version>` and hashes correctly; every historical `host_path` lies under `.omnitrace-versions`; no `.omnitrace-versions` directory appears without history. |
+| `Determinism` | three `ListingSink` walks: a reader walked twice, plus a fresh reader | Identical entry sequences (path, kind, mode, owner, size, every timestamp, inode, nlink, link target, rdev, flags, version, `extra`, per-entry diagnostic codes, sha256, bytes) and identical walk diagnostics. |
+
+The reader contract these encode is `docs/ARCHITECTURE.md` rule 6 and the
+history contract in `docs/EXTENDING.md` ("Add a filesystem reader"): the live
+tree is what a mount shows; with `WalkOptions::history` every older version of
+a file that still has a live entry is an extra entry with the same path,
+`superseded = true` and `version` set, and every file without a live
+directory entry is `deleted = true` with the best-known path.
+
+### `fixture_yaml`: reading expected.yaml without yaml-cpp
+
+`test_filesystems` links only core and discovery, and the shared CMake files
+are not edited for tests, so `tests/unit/filesystems/fixture_yaml.{h,cpp}` is
+a small parser for exactly the subset PyYAML `safe_dump` writes for the
+fixtures: block mappings, block sequences (including the indentless form
+under a key), plain / single-quoted / double-quoted scalars that may fold
+across lines, `[]` and `{}`, comments and document markers. Anchors, tags,
+block scalars and non-empty flow collections are rejected with a line number
+rather than mis-parsed. Values stay text; `as_int()`, `as_uint()` and
+`as_bool()` convert on demand (`mode: '0755'` is parsed as octal by the
+harness itself). `FixtureYaml.EmbeddedSample` pins the parser on an inline
+document covering every construct, `FixtureYaml.RejectsWhatItDoesNotSupport`
+the error paths, and `FixtureYaml.ParsesEveryExpectedYaml` parses every
+ground-truth file present (schema, name, sorted tree, 64-hex sha256s, image
+size on disk, `index.yaml` agreeing with the directory).
+
+### Checking a case directory: `check_listing.py`
+
+The same comparison for what the CLI wrote, without the test binary
+([tests/fixtures/README.md](../tests/fixtures/README.md) has the full flag
+list):
+
+```sh
+tests/fixtures/check_listing.py tests/fixtures/out/jffs2-history.expected.yaml case/filesystems/n000002/listing.yaml --history
+tests/fixtures/check_listing.py --cases /tmp/cases --history      # /tmp/cases/<fixture-name>/ per fixture
+```
+
+`--history` adds the superseded/deleted checks above to the live-tree check;
+`--cases` prints one `PASS` / `FAIL` / `SKIP` line per fixture (MBR/GPT
+fixtures are checked partition by partition against the inner fixture,
+matched by the filesystem node's offset in `INFO.yaml`) and exits 1 when any
+failed.
+
+### Adding a reader or a fixture
+
+Nothing to register on either side. A new reader appears in
+`FixtureCoverage.Report` as `reader '<key>'` and its fixtures start being
+checked; a new fixture (`docs/EXTENDING.md`, "Add a fixture image") is picked
+up from `out/` on the next run. If a fixture's format has a reader but no
+validator accepts the image, `LiveTree` fails with the list of findings the
+scanner did produce.

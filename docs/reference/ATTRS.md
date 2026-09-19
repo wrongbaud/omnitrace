@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-295 keys across 22 source files.
+349 keys across 24 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -438,6 +438,74 @@ Source: `src/discovery/validators/zstd.cpp` (6 keys)
 | `header_len` | `src/discovery/validators/zstd.cpp:74` | frame header length |
 | `single_segment` | `src/discovery/validators/zstd.cpp:35` | true when the single-segment flag is set |
 | `window_size` | `src/discovery/validators/zstd.cpp:42` | window size in bytes (absent for single segment) |
+
+## filesystem reader (`FilesystemInfo::attrs`)
+
+Source: `src/filesystems/ext/ExtReader.cpp` (33 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `block_groups` | `src/filesystems/ext/ExtReader.cpp:2279` | number of block groups, ceil((blocks_count - first_data_block) / blocks_per_group) |
+| `block_size` | `src/filesystems/ext/ExtReader.cpp:2274` | 1024 << s_log_block_size |
+| `blocks_count` | `src/filesystems/ext/ExtReader.cpp:2275` | s_blocks_count (64-bit when INCOMPAT_64BIT) |
+| `blocks_per_group` | `src/filesystems/ext/ExtReader.cpp:2280` | s_blocks_per_group |
+| `creator_os` | `src/filesystems/ext/ExtReader.cpp:2301` | s_creator_os as a name: linux, hurd, masix, freebsd, lites or unknown |
+| `csum_type` | `src/filesystems/ext/ExtReader.cpp:2306` | crc32c (metadata_csum), crc16 (gdt_csum) or none: what protects the group descriptors and inodes |
+| `desc_size` | `src/filesystems/ext/ExtReader.cpp:2309` | bytes per group descriptor (32, or s_desc_size with INCOMPAT_64BIT) |
+| `encoding` | `src/filesystems/ext/ExtReader.cpp:2310` | s_encoding when set (casefold filesystems) |
+| `errors_behaviour` | `src/filesystems/ext/ExtReader.cpp:2293` | s_errors: 1 continue, 2 remount read-only, 3 panic |
+| `feature_compat` | `src/filesystems/ext/ExtReader.cpp:2285` | s_feature_compat as hex |
+| `feature_incompat` | `src/filesystems/ext/ExtReader.cpp:2286` | s_feature_incompat as hex |
+| `feature_ro_compat` | `src/filesystems/ext/ExtReader.cpp:2287` | s_feature_ro_compat as hex |
+| `features` | `src/filesystems/ext/ExtReader.cpp:2288` | compat\|incompat\|ro_compat feature names, comma-separated inside each group, unknown bits as hex |
+| `first_ino` | `src/filesystems/ext/ExtReader.cpp:2283` | s_first_ino, the first non-reserved inode; dirents naming a lower inode are skipped |
+| `free_blocks` | `src/filesystems/ext/ExtReader.cpp:2277` | s_free_blocks_count (64-bit when INCOMPAT_64BIT) |
+| `free_inodes` | `src/filesystems/ext/ExtReader.cpp:2278` | s_free_inodes_count |
+| `has_journal` | `src/filesystems/ext/ExtReader.cpp:2302` | true when COMPAT_HAS_JOURNAL is set (ext3/ext4); the journal is never replayed |
+| `inode_count` | `src/filesystems/ext/ExtReader.cpp:2276` | s_inodes_count |
+| `inode_size` | `src/filesystems/ext/ExtReader.cpp:2282` | s_inode_size (128 for rev 0) |
+| `inodes_per_group` | `src/filesystems/ext/ExtReader.cpp:2281` | s_inodes_per_group |
+| `journal_inode` | `src/filesystems/ext/ExtReader.cpp:2303` | s_journal_inum (8 by default) when a journal exists, else 0 |
+| `last_check_time` | `src/filesystems/ext/ExtReader.cpp:2296` | s_lastcheck (epoch seconds) |
+| `last_mount_time` | `src/filesystems/ext/ExtReader.cpp:2294` | s_mtime (epoch seconds) |
+| `last_mounted` | `src/filesystems/ext/ExtReader.cpp:2300` | s_last_mounted, where the volume was last mounted |
+| `last_write_time` | `src/filesystems/ext/ExtReader.cpp:2295` | s_wtime (epoch seconds) |
+| `max_mount_count` | `src/filesystems/ext/ExtReader.cpp:2299` | s_max_mnt_count |
+| `mkfs_time` | `src/filesystems/ext/ExtReader.cpp:2297` | s_mkfs_time (epoch seconds), when the filesystem was created |
+| `mount_count` | `src/filesystems/ext/ExtReader.cpp:2298` | s_mnt_count |
+| `needs_recovery` | `src/filesystems/ext/ExtReader.cpp:2305` | true when INCOMPAT_RECOVER is set: the journal holds unreplayed transactions |
+| `rev_level` | `src/filesystems/ext/ExtReader.cpp:2284` | 0 (good old) or 1 (dynamic) |
+| `state` | `src/filesystems/ext/ExtReader.cpp:2291` | clean, not-clean or errors from s_state |
+| `uuid` | `src/filesystems/ext/ExtReader.cpp:2273` | s_uuid as text |
+| `volume_name` | `src/filesystems/ext/ExtReader.cpp:2272` | s_volume_name |
+
+## filesystem reader (`FilesystemInfo::attrs`)
+
+Source: `src/filesystems/jffs2/Jffs2Reader.cpp` (21 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `cleanmarkers` | `src/filesystems/jffs2/Jffs2Reader.cpp:1567` | cleanmarker nodes seen (one per erased block on NOR) |
+| `compressors` | `src/filesystems/jffs2/Jffs2Reader.cpp:1580` | comma-joined compression ids seen on CRC-valid inode nodes (none, zero, rtime, zlib, lzo, lzma, ...) |
+| `crc_failures` | `src/filesystems/jffs2/Jffs2Reader.cpp:1574` | nodes that failed node_crc, data_crc or name_crc |
+| `dirent_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1566` | dirent nodes seen (all versions, including obsolete and unlink records) |
+| `endian` | `src/filesystems/jffs2/Jffs2Reader.cpp:1562` | little or big, from the first CRC-valid node header |
+| `erase_size` | `src/filesystems/jffs2/Jffs2Reader.cpp:1576` | erase-block size inferred from cleanmarker spacing, or unknown |
+| `first_node` | `src/filesystems/jffs2/Jffs2Reader.cpp:1563` | offset (hex) of the first CRC-valid node inside the span |
+| `inode_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1565` | inode nodes seen (all versions) |
+| `inodes_deleted` | `src/filesystems/jffs2/Jffs2Reader.cpp:1583` | inodes with nodes but no live directory entry (recoverable with --history) |
+| `inodes_live` | `src/filesystems/jffs2/Jffs2Reader.cpp:1582` | inodes reachable through live directory entries (the root counts when it has a node) |
+| `inodes_multi_version` | `src/filesystems/jffs2/Jffs2Reader.cpp:1584` | inodes with more than one distinct inode-node version |
+| `nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1564` | nodes scanned (header CRC valid) |
+| `obsolete_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1573` | nodes obsoleted in place (ACCURATE bit cleared); history only |
+| `padding_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1568` | padding nodes seen |
+| `scan_capped` | `src/filesystems/jffs2/Jffs2Reader.cpp:1585` | true when max_nodes_per_fs stopped the scan (jffs2-limit-nodes) |
+| `summary_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1569` | summary nodes seen (counted, not parsed) |
+| `unknown_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1572` | nodes of a type this reader does not decode |
+| `unlink_dirents` | `src/filesystems/jffs2/Jffs2Reader.cpp:1575` | dirents with ino 0, i.e. explicit unlink or rename-away records |
+| `xattr_count` | `src/filesystems/jffs2/Jffs2Reader.cpp:1581` | xref nodes seen (inode-to-xattr links, including retired ones) |
+| `xattr_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1570` | xattr nodes seen |
+| `xref_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1571` | xref nodes seen |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 

@@ -13,11 +13,15 @@ namespace omnitrace::fs {
 
 namespace detail {
 void omnitrace_fs_anchor_squashfs();
+void omnitrace_fs_anchor_ext();
+void omnitrace_fs_anchor_jffs2();
 
 void link_builtin_readers() {
     // Calling each (empty) anchor is enough to make the linker keep its object
     // file and therefore its registrar.
     omnitrace_fs_anchor_squashfs();
+    omnitrace_fs_anchor_ext();
+    omnitrace_fs_anchor_jffs2();
 }
 }  // namespace detail
 

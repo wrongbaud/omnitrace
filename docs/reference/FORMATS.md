@@ -21,8 +21,11 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | format | category | identify | sized | reader | history | mount.sh | docs page | notes |
 |---|---|---|---|---|---|---|---|---|
 | `cramfs` | filesystem | validated to verified (`cramfs`) | yes | no | no (no reader) | `cramfs` | [cramfs.md](../formats/cramfs.md) | signatures: `cramfs-le`, `cramfs-be` |
-| `ext` | filesystem | validated to verified (`ext`) | yes | no | no (no reader) | `ext4` | [ext.md](../formats/ext.md) | validator reports ext2/ext3/ext4; history via libtsk is planned (DEVELOPMENT_PLAN.md 5.3), nothing reads ext today; signatures: `ext` |
-| `jffs2` | filesystem | validated to verified (`jffs2`) | yes | no | no (no reader) | mtd (comment) | [jffs2.md](../formats/jffs2.md) | one finding per partition: nodes coalesced across gaps up to `max_gap`; obsolete nodes CRC-checked; signatures: `jffs2-le`, `jffs2-be` |
+| `ext` | filesystem | validated to verified (`ext`) | yes | no | no (no reader) | `ext4` | [ext.md](../formats/ext.md) | validator reports ext2/ext3/ext4; native reader; history from freed inodes and slack directory entries; signatures: `ext` |
+| `ext2` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2345`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
+| `ext3` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2346`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
+| `ext4` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2347`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
+| `jffs2` | filesystem | validated to verified (`jffs2`) | yes | yes (`src/filesystems/jffs2/Jffs2Reader.cpp:1622`) | yes | mtd (comment) | [jffs2.md](../formats/jffs2.md) | one finding per partition: nodes coalesced across gaps up to `max_gap`; obsolete nodes CRC-checked; signatures: `jffs2-le`, `jffs2-be` |
 | `qnx-ifs` | filesystem | magic-only | no | no | no (no reader) | - | [signatures.md](../formats/signatures.md) (plain magic) | signatures: `qnx-ifs` |
 | `qnx6` | filesystem | magic-only | no | no | no (no reader) | `qnx6` | [signatures.md](../formats/signatures.md) (plain magic) | magic at 0x2000 with `alignment = 4096`; no validator yet; signatures: `qnx6-le`, `qnx6-be` |
 | `romfs` | filesystem | validated to verified (`romfs`) | yes | no | no (no reader) | `romfs` | [romfs.md](../formats/romfs.md) | signatures: `romfs` |
@@ -55,6 +58,6 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 
 ## Counts
 
-- 50 signatures over 32 format ids
-- 21 validators, 1 filesystem reader(s), 0 container reader(s)
+- 50 signatures over 35 format ids
+- 21 validators, 5 filesystem reader(s), 0 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

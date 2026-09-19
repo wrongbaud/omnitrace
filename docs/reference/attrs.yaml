@@ -324,6 +324,64 @@ src/discovery/validators/zstd.cpp:
   single_segment: "true when the single-segment flag is set"
   window_size: window size in bytes (absent for single segment)
 
+src/filesystems/ext/ExtReader.cpp:
+  block_groups: number of block groups, ceil((blocks_count - first_data_block) / blocks_per_group)
+  block_size: 1024 << s_log_block_size
+  blocks_count: s_blocks_count (64-bit when INCOMPAT_64BIT)
+  blocks_per_group: s_blocks_per_group
+  creator_os: "s_creator_os as a name: linux, hurd, masix, freebsd, lites or unknown"
+  csum_type: "crc32c (metadata_csum), crc16 (gdt_csum) or none: what protects the group descriptors and inodes"
+  desc_size: bytes per group descriptor (32, or s_desc_size with INCOMPAT_64BIT)
+  encoding: s_encoding when set (casefold filesystems)
+  errors_behaviour: "s_errors: 1 continue, 2 remount read-only, 3 panic"
+  feature_compat: s_feature_compat as hex
+  feature_incompat: s_feature_incompat as hex
+  feature_ro_compat: s_feature_ro_compat as hex
+  features: "compat|incompat|ro_compat feature names, comma-separated inside each group, unknown bits as hex"
+  first_ino: s_first_ino, the first non-reserved inode; dirents naming a lower inode are skipped
+  free_blocks: s_free_blocks_count (64-bit when INCOMPAT_64BIT)
+  free_inodes: s_free_inodes_count
+  has_journal: "true when COMPAT_HAS_JOURNAL is set (ext3/ext4); the journal is never replayed"
+  inode_count: s_inodes_count
+  inode_size: s_inode_size (128 for rev 0)
+  inodes_per_group: s_inodes_per_group
+  journal_inode: s_journal_inum (8 by default) when a journal exists, else 0
+  last_check_time: s_lastcheck (epoch seconds)
+  last_mount_time: s_mtime (epoch seconds)
+  last_mounted: s_last_mounted, where the volume was last mounted
+  last_write_time: s_wtime (epoch seconds)
+  max_mount_count: s_max_mnt_count
+  mkfs_time: s_mkfs_time (epoch seconds), when the filesystem was created
+  mount_count: s_mnt_count
+  needs_recovery: "true when INCOMPAT_RECOVER is set: the journal holds unreplayed transactions"
+  rev_level: "0 (good old) or 1 (dynamic)"
+  state: "clean, not-clean or errors from s_state"
+  uuid: s_uuid as text
+  volume_name: s_volume_name
+
+src/filesystems/jffs2/Jffs2Reader.cpp:
+  cleanmarkers: cleanmarker nodes seen (one per erased block on NOR)
+  compressors: "comma-joined compression ids seen on CRC-valid inode nodes (none, zero, rtime, zlib, lzo, lzma, ...)"
+  crc_failures: nodes that failed node_crc, data_crc or name_crc
+  dirent_nodes: dirent nodes seen (all versions, including obsolete and unlink records)
+  endian: "little or big, from the first CRC-valid node header"
+  erase_size: "erase-block size inferred from cleanmarker spacing, or unknown"
+  first_node: offset (hex) of the first CRC-valid node inside the span
+  inode_nodes: inode nodes seen (all versions)
+  inodes_deleted: inodes with nodes but no live directory entry (recoverable with --history)
+  inodes_live: inodes reachable through live directory entries (the root counts when it has a node)
+  inodes_multi_version: inodes with more than one distinct inode-node version
+  nodes: nodes scanned (header CRC valid)
+  obsolete_nodes: nodes obsoleted in place (ACCURATE bit cleared); history only
+  padding_nodes: padding nodes seen
+  scan_capped: "true when max_nodes_per_fs stopped the scan (jffs2-limit-nodes)"
+  summary_nodes: summary nodes seen (counted, not parsed)
+  unknown_nodes: nodes of a type this reader does not decode
+  unlink_dirents: dirents with ino 0, i.e. explicit unlink or rename-away records
+  xattr_count: xref nodes seen (inode-to-xattr links, including retired ones)
+  xattr_nodes: xattr nodes seen
+  xref_nodes: xref nodes seen
+
 src/filesystems/squashfs/SquashfsReader.cpp:
   compression_id: numeric compression id
   exportable: "true when an export table exists"

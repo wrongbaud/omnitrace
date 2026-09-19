@@ -509,8 +509,10 @@ def jffs2_inode_node(endian: str, ino: int, version: int, mode: int, uid: int, g
      32  u32 atime             36  u32 mtime            40  u32 ctime
      44  u32 offset (0)        48  u32 csize            52  u32 dsize
      56  u8  compr (0 = none)  57  u8  usercompr        58  u16 flags
-     60  u32 data_crc = crc(data)                       64  u32 node_crc = crc(bytes 0..64)
+     60  u32 data_crc = crc(data)                       64  u32 node_crc = crc(bytes 0..60)
      68  data
+    node_crc covers sizeof(jffs2_raw_inode) - 8 = 60 bytes, i.e. everything
+    before data_crc (fs/jffs2/scan.c, mkfs.jffs2); data_crc is not part of it.
     A reader that honours versions sees the newest node's bytes; the older
     nodes stay on flash as superseded history.
     """
@@ -519,12 +521,12 @@ def jffs2_inode_node(endian: str, ino: int, version: int, mode: int, uid: int, g
     head = struct.pack(p + "HHI", JFFS2_MAGIC, JFFS2_NODETYPE_INODE, totlen)
     head += struct.pack(p + "I", jffs2_crc32(head))
     body = struct.pack(
-        p + "IIIHHIIIIIIIBBHI",
+        p + "IIIHHIIIIIIIBBH",
         ino, version, mode, uid, gid, len(data), when, when, when, 0, len(data), len(data),
-        JFFS2_COMPR_NONE, JFFS2_COMPR_NONE, 0, jffs2_crc32(data),
+        JFFS2_COMPR_NONE, JFFS2_COMPR_NONE, 0,
     )
-    node = head + body
-    node += struct.pack(p + "I", jffs2_crc32(node))
+    node_crc = jffs2_crc32(head + body)  # bytes 0..60: data_crc is excluded
+    node = head + body + struct.pack(p + "II", jffs2_crc32(data), node_crc)
     assert len(node) == JFFS2_INODE_HDR
     return node + data
 
@@ -620,7 +622,7 @@ def build_jffs2(ctx: Ctx, endian: str, history: bool) -> Optional[dict]:
     dt = ctx.work / f"{name}.devtable"
     img = ctx.out / f"{name}.img"
     img.unlink(missing_ok=True)
-    argv = ["mkfs.jffs2", "-r", str(stg), "-o", str(img), "-e", str(ERASE_64K), "-q"] + devtable(tree, dt, features)
+    argv = ["mkfs.jffs2", "-r", str(stg), "-o", str(img), "-e", str(ERASE_64K)] + devtable(tree, dt, features)
     if endian == "big":
         argv.append("--big-endian")
     else:
@@ -928,14 +930,23 @@ def build_ext4(ctx: Ctx) -> Optional[dict]:
         if e.path == "history":
             e.mtime = T0 + 130
     tree = [e for e in tree if e.path != "history/deleted.txt"]
+    # No journal was ever written, so a reader can only see what the freed
+    # inodes and the slack directory entries say: v1's entry was overwritten
+    # in place by the later `link` of the same name (its inode is nameless,
+    # readers emit it under lost+found/#<inode>), v2 is named only by the
+    # unlinked ".config.v2" entry, and ".config.v3" names the live inode.
+    # Neither can be tied to "history/config.txt" without a journal, so
+    # they are deleted files with content, not superseded versions.
     history = {
-        "superseded": [
-            {"path": "history/config.txt", "inode": ino_v1, "version": 1, "size": len(CONFIG_V1), "sha256": sha256(CONFIG_V1), "mtime": T0 + 30, "dtime": T0, "state": "inode freed, dtime set, data blocks released but not reused"},
-            {"path": "history/config.txt", "inode": ino_v2, "version": 2, "size": len(CONFIG_V2), "sha256": sha256(CONFIG_V2), "mtime": T0 + 100, "dtime": T0, "state": "inode freed, dtime set, data blocks released but not reused"},
-        ],
+        "superseded": [],
         "current": [{"path": "history/config.txt", "inode": ino_v3, "version": 3, "size": len(CONFIG_V3), "sha256": sha256(CONFIG_V3), "mtime": T0 + 110}],
         "deleted": [
             {"path": "history/deleted.txt", "inode": ino_del, "size": len(DELETED_TXT), "sha256": sha256(DELETED_TXT), "mtime": T0 + 32, "dtime": T0, "content_recoverable": True},
+            {"path": "history/config.txt", "inode": ino_v1, "size": len(CONFIG_V1), "sha256": sha256(CONFIG_V1), "mtime": T0 + 30, "dtime": T0, "content_recoverable": True,
+             "name_recoverable": False, "recovered_as": f"lost+found/#{ino_v1}",
+             "state": "config.txt v1: inode freed, dtime set, data blocks released but not reused; its directory entry was overwritten by the later link of the same name"},
+            {"path": "history/.config.v2", "inode": ino_v2, "size": len(CONFIG_V2), "sha256": sha256(CONFIG_V2), "mtime": T0 + 100, "dtime": T0, "content_recoverable": True,
+             "state": "config.txt v2: inode freed, dtime set, data blocks released but not reused; only the unlinked temporary name survives"},
         ],
         "deleted_names": [
             {"path": "history/.config.v2", "inode": ino_v2, "note": "temporary name, unlinked; inode later freed"},
@@ -943,7 +954,9 @@ def build_ext4(ctx: Ctx) -> Optional[dict]:
         ],
         "note": (
             "Populated with debugfs (no kernel, no journal). Unlinked directory entries stay in the directory block "
-            "with their names; freed inodes keep size/blocks/extent tree with dtime set (E2FSPROGS_FAKE_TIME)."
+            "with their names; freed inodes keep size/blocks/extent tree with dtime set (E2FSPROGS_FAKE_TIME). "
+            "Without a journal the older config.txt inodes cannot be tied to that path, so they are listed under "
+            "deleted (v1 nameless, v2 under its temporary name) rather than superseded."
         ),
     }
     return image_doc("ext4", "ext4", img, ctx.version("mkfs.ext4", ["mkfs.ext4", "-V"]), argv[1:], features, tree,

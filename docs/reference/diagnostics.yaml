@@ -129,9 +129,77 @@ elf-truncated:
   meaning: program/section headers or segments extend past the available data
   action: the object is cut; expect a partial binary
 
+ext-blockmap-corrupt:
+  meaning: an ext2/ext3 block map (direct or indirect pointer) names a block outside the filesystem or an unreadable indirect block; the data after that point is not recovered
+  action: the entry is truncated at the bad pointer; compare with debugfs "blocks <inode>" and carve the rest by hand if it matters
+
+ext-data-truncated:
+  meaning: a data block of a file lies past the end of the image; the rest of the file is zero-filled and the entry marked truncated
+  action: the dump is short (see ext-truncated-image); re-acquire the partition if the file matters
+
+ext-deleted-blocks-reused:
+  meaning: a freed inode still maps blocks that the block bitmap shows allocated to something else; those blocks are zero-filled in the recovered version
+  action: the recovered content is partial; the surviving bytes are what the unallocated blocks still hold
+
+ext-deleted-no-blocks:
+  meaning: a freed inode keeps its size and times but its extent tree or block map was cleared when it was unlinked (what the kernel does), so only metadata is recoverable
+  action: the name, size, owner and times are evidence; the content must be carved from unallocated space with signature-based tools
+
+ext-dir-loop:
+  meaning: a directory entry points at a directory inode that was already listed (an ancestor or a directory linked twice); it is not descended again
+  action: corruption or tampering; note the inode and compare with e2fsck -n
+
+ext-dirent-corrupt:
+  meaning: a directory entry has an invalid rec_len or name_len, names a reserved inode, an empty inode, or a name containing '/' or NUL; the rest of that directory block is skipped
+  action: the directory is damaged; entries before the bad one are listed; run e2fsck -n on the carved partition for the kernel's view
+
+ext-extent-corrupt:
+  meaning: an extent tree node has a bad magic, more entries than fit, a depth above 5, a child whose eh_depth or first logical block disagrees with its parent's index entry, out-of-order entries, or maps blocks outside the filesystem; the data after that point is not recovered
+  action: the entry is truncated at the bad node; compare with debugfs "dump_extents <inode>"
+
+ext-gdt-csum-mismatch:
+  meaning: one or more group descriptors fail their crc16 (gdt_csum) or crc32c (metadata_csum) checksum; their bitmaps and inode tables may be stale
+  action: the walk continues with the descriptors as read; history results (which depend on the bitmaps) deserve less trust
+
+ext-inline-data-corrupt:
+  meaning: an inode with INLINE_DATA_FL claims more bytes than i_block plus its system.data xattr hold, or the xattr is unreadable
+  action: the entry is truncated to what is present
+
 ext-inode-count-mismatch:
   meaning: inodes_count does not equal block_groups * inodes_per_group; consistency check failed
   action: superblock may be corrupt or hand-made; verify with e2fsck -n on the carved partition
+
+ext-inode-csum-mismatch:
+  meaning: inodes whose metadata_csum crc32c does not match; the count and the first path are in the message and each entry carries extra.checksum=mismatch
+  action: those inodes were written outside the filesystem driver or the image is damaged; treat their metadata with care
+
+ext-limit-file-bytes:
+  meaning: a file's i_size exceeds Limits::max_file_bytes; its data is cut at the limit and the entry marked truncated. The same cap bounds the directory blocks read for one directory (a largedir i_size is 64-bit); entries beyond it are not listed and the walk is marked truncated
+  action: re-run with a larger --max-bytes if the file matters; an absurd i_size on a hostile image is expected here
+
+ext-limit-files:
+  meaning: Limits::max_files entries were emitted; the walk stopped
+  action: re-run with a larger --max-files
+
+ext-limit-nodes:
+  meaning: Limits::max_nodes_per_fs directory entries, freed inodes or slack entries were seen; the listing or history is truncated
+  action: re-run with a larger limit if the filesystem is genuinely that large
+
+ext-metadata-corrupt:
+  meaning: a superblock, group descriptor, inode table, inode, bitmap or directory block could not be read or is inconsistent (Error when the root is unusable, Warning when one subtree or entry is skipped)
+  action: the message names the structure; compare with dumpe2fs / debugfs on the carved partition
+
+ext-root-invalid:
+  meaning: inode 2 is not a directory
+  action: not a usable ext filesystem; the superblock may belong to a wiped or partially overwritten volume
+
+ext-sink-error:
+  meaning: the Sink refused an entry (unsafe path such as a Windows reserved name, or a sink limit); the entry is not extracted
+  action: the message carries the sink code; the listing still names the entry
+
+ext-superblock-bad:
+  meaning: the superblock fails a hard constraint (as a Status the reader refuses to open; as a Warning the metadata_csum crc32c does not match and the walk continues with the fields as read)
+  action: verify with dumpe2fs on the carved partition; a modified superblock is itself a finding
 
 ext-superblock-csum-mismatch:
   meaning: the metadata_csum crc32c over the superblock does not match s_checksum
@@ -140,6 +208,18 @@ ext-superblock-csum-mismatch:
 ext-truncated:
   meaning: blocks_count * block_size exceeds the available data; size clamped
   action: the partition or dump is short; the tail of the filesystem is missing
+
+ext-truncated-image:
+  meaning: the reader found blocks_count * block_size larger than the data it was given; blocks past the end read as missing and only the block groups that start inside the data are scanned (the message gives the count)
+  action: the dump is short; entries whose blocks lie past the end get ext-data-truncated
+
+ext-unsupported-feature:
+  meaning: a feature the reader does not implement was met (unknown incompat bits, a journal needing recovery, encryption, casefold, compression, a non-crc32c checksum type); the entry or filesystem is still listed
+  action: encrypted data is extracted as stored; a journal is never replayed, so the listing is the pre-replay state; mount a carved copy on Linux for the kernel's view
+
+ext-xattr-corrupt:
+  meaning: an extended-attribute block or in-inode xattr area has a bad magic, an entry running past its end, or a value outside the area; extra.xattrs holds what was parsed before it
+  action: the attributes are damaged; compare with debugfs "ea_list <inode>"
 
 fdt-bad-node-name:
   meaning: a node name is not terminated inside the structure block, or a non-root node is unnamed
@@ -297,13 +377,85 @@ image-word-swapped:
   meaning: the dump has every 16- or 32-bit word byte-reversed; the analysis ran on a corrected view
   action: carved files are the corrected bytes (name suffix -swap16/-swap32); say so in the report
 
+jffs2-bad-entry-name:
+  meaning: a dirent name is empty, `.`, `..`, or contains `/` or NUL; the entry was skipped
+  action: hostile or corrupt dirent; inspect the node at the offset in the message
+
+jffs2-data-crc-mismatch:
+  meaning: inode nodes whose data_crc does not match their payload; ignored for the live tree, kept for history with extra crc=bad
+  action: bit rot or a partial write; treat the flagged versions as unverified
+
+jffs2-decompress-failed:
+  meaning: a data node's payload did not decode (corrupt stream, wrong size); its range was zero-filled and the entry marked truncated
+  action: check the node offset in the message; the bytes may be recoverable by hand
+
+jffs2-dir-loop:
+  meaning: a dirent names one of its own ancestors, or a second name for a directory already walked; not descended
+  action: hostile or corrupt dirent chain; the rest of the tree is intact
+
 jffs2-dirty-gaps:
   meaning: non-node, non-erased bytes were skipped between nodes
   action: informational; dead data or padding inside the partition
 
+jffs2-isize-exceeds-data:
+  meaning: the inode's isize is larger than the bytes its data nodes cover; the tail is zero-filled
+  action: informational: a sparse file, or data nodes lost to erasure or corruption
+
+jffs2-limit-decompress-ratio:
+  meaning: a data node claims more output than csize x max_decompress_ratio; refused before decoding, range zero-filled
+  action: raise --max-decompress-ratio only for a trusted image; this is the decompression-bomb guard
+
+jffs2-limit-file-bytes:
+  meaning: an inode's isize or a node's dsize exceeds max_file_bytes; the data was cut or zero-filled there
+  action: raise --max-bytes / max_file_bytes and re-run for that filesystem
+
+jffs2-limit-files:
+  meaning: max_files reached; the walk stopped
+  action: raise --max-files and re-run
+
+jffs2-limit-nodes:
+  meaning: max_nodes_per_fs reached while scanning; later nodes were not read
+  action: raise max_nodes_per_fs for a partition with millions of nodes
+
+jffs2-limit-versions:
+  meaning: an inode had more history versions than the per-inode cap (max_nodes_per_fs / 78125); the oldest were dropped
+  action: raise max_nodes_per_fs; the newest versions were kept and the entry carries extra versions_dropped; the walk itself is not truncated
+
+jffs2-missing-inode:
+  meaning: a live dirent names an inode that has no usable inode node; the entry was emitted from the dirent alone (type, name, mctime)
+  action: the inode's nodes were erased or failed their CRC; a mount would list the name but fail to stat it
+
+jffs2-name-crc-mismatch:
+  meaning: dirent nodes whose name_crc does not match the name; not used for any path
+  action: corrupt name bytes; the node offset is in the message
+
 jffs2-no-erase-size:
   meaning: fewer than two cleanmarkers, so the erase-block size was not inferred
   action: pass the erase size by hand when mounting through mtdram
+
+jffs2-no-nodes:
+  meaning: open() found no CRC-valid node header at any 4-byte offset
+  action: not a JFFS2 partition, or a byte-swapped or ECC-interleaved dump
+
+jffs2-node-crc-mismatch:
+  meaning: nodes whose node_crc does not match; ignored for the live tree, kept for history with extra crc=bad
+  action: bit rot, a partial write, or a hand-built node; the kernel would ignore them too
+
+jffs2-node-malformed:
+  meaning: nodes whose csize, nsize or name_len runs past totlen, or whose totlen is below the type's minimum; their payload was ignored
+  action: hostile or corrupt node; count in the message
+
+jffs2-node-truncated:
+  meaning: node headers whose totlen runs past the end of the data; skipped
+  action: the partition span is short or the length is hostile; check the end of the dump
+
+jffs2-orphan-inode:
+  meaning: inodes with nodes but no dirent ever naming them; emitted under lost+found/#<inode> with history
+  action: the names were garbage-collected; content is still recoverable
+
+jffs2-sink-error:
+  meaning: the Sink refused an entry (unsafe path, its own limit); entry skipped, walk continues
+  action: see the sink code in the message
 
 jffs2-truncated:
   meaning: the last node's totlen runs past the data
@@ -312,6 +464,10 @@ jffs2-truncated:
 jffs2-unknown-nodetype:
   meaning: nodes with a type this scanner does not know were counted
   action: informational; may be xattr, summary or vendor nodes
+
+jffs2-unsupported-compression:
+  meaning: data nodes compressed with rubinmips or dynrubin, which this reader does not decode; ranges zero-filled, entries marked truncated
+  action: rare mkfs.jffs2 -X modes; mount the carved copy on Linux to read them
 
 luks-bad-hdr-size:
   meaning: LUKS2 hdr_size is not a power of two in 16 KiB..4 MiB

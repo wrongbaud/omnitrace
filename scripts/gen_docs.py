@@ -76,7 +76,7 @@ FORMAT_NOTES = {
     "jffs2": "one finding per partition: nodes coalesced across gaps up to `max_gap`; obsolete nodes CRC-checked",
     "mbr": "size is the 512-byte table sector; EBR chain sectors hidden through `also_covers`",
     "gpt": "size is the table extent (header + entry array); the disk extent is `disk_size`",
-    "ext": "history via libtsk is planned (DEVELOPMENT_PLAN.md 5.3), nothing reads ext today",
+    "ext": "native reader; history from freed inodes and slack directory entries",
     "dtb": "steps back to structural when the root has `/images` so the `fit` finding wins",
     "elf": "unaligned hits must reach consistent or they are dropped",
     "ubifs": "aligned hits only (`min_io_size` or 512); inside UBI the size is not meaningful",
