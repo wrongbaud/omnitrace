@@ -69,3 +69,13 @@ OmniTrace
 ```
 
 Please generate a full-stack development plan, and also search online for other tools that claim to do this as well so we understand the competition space. 
+
+# Project state and where things are (maintained; last updated 2026-09-19)
+
+- Phase 0 is complete and Phase 1 (filesystem readers) is next. `docs/ROADMAP.md` is the short form; `DEVELOPMENT_PLAN.md` the long form.
+- The contract every change must follow is `docs/ARCHITECTURE.md`. Read it before writing code. `docs/CODE_TOUR.md` explains the layers; `docs/EXTENDING.md` has step-by-step how-tos (validator, filesystem reader, container reader, CLI command, fixture, diagnostic code).
+- Build: `cmake --preset linux-gcc && cmake --build --preset linux-gcc --parallel && ctest --preset linux-gcc`. Also keep `linux-clang` and `linux-asan` green. `CONTRIBUTING.md` covers setup on all OSes.
+- Public headers under `include/omnitrace/` are the interfaces. Per-layer CMake globs sources and tests, so adding a file never needs a CMake edit.
+- Output contract: the case directory in `docs/CASE_LAYOUT.md` (INFO.yaml, INFO.md, flash/, partitions/, mount.sh). `docs/reference/` holds generated catalogues (diagnostics, formats, attrs, CLI flags); regenerate with `scripts/gen_docs.py`, check with `scripts/check_docs.py`.
+- Decisions on record: no web UI until the core is proven (`core-before-ui`); moria is a design reference and parity baseline only, never a dependency (`docs/MORIA_SPIKE.md`); GPT labels name carved partitions, nested finds are named by offset.
+- `corpus/` is a local, git-ignored evidence corpus. Never commit images. Testing against it is described in `docs/TESTING.md`.
