@@ -7,7 +7,7 @@ Two harnesses live under `tests/`:
 | **Fixtures** | Builds a small, forensically rich file tree into every filesystem, container and partition-table format OmniTrace reads, with a scripted create / overwrite / delete history, and writes a ground-truth `*.expected.yaml` beside every image. Byte-reproducible. | `tests/fixtures/build.sh` (or `scripts/fixtures.sh`) |
 | **Parity** | Runs unblob, binwalk 3, moria and (when built) the OmniTrace CLI over one image, normalises their output into one shape, diffs findings by offset and files by path + sha256, and writes a Markdown report and a JSON summary. | `tests/parity/run.py` |
 
-Unit tests (`tests/unit/<layer>/*_test.cpp`) read the fixtures through `OMNITRACE_TEST_DATA_DIR` (point it at `tests/fixtures/out`). A reader test compares what it walks against the `tree` and `history` sections of the matching `expected.yaml`, never against another tool.
+Unit tests (`tests/unit/<layer>/*_test.cpp`) read the fixtures through `OMNITRACE_TEST_DATA_DIR`, which `cmake/Warnings.cmake:48` compiles in as `<repo>/tests/fixtures`; the test helpers append `/out`, so nothing needs to be set and a missing fixture makes the test skip, not fail. A reader test compares what it walks against the `tree` and `history` sections of the matching `expected.yaml`, never against another tool.
 
 ---
 
@@ -40,7 +40,7 @@ Native builds need `mksquashfs`, `mkfs.ext4` + `debugfs`, `mkfs.vfat` + `mcopy`/
 | `squashfs-{gzip,xz,lz4,zstd}.img` | `mksquashfs -comp … -b 131072` | ownership via `-pf` pseudo file, `-mkfs-time`/`-root-time` pinned |
 | `squashfs-none.img` | `mksquashfs -noI -noD -noF -noX` | superblock names gzip, every block stored raw; payload of `uimage-lzma.img` |
 | `jffs2-le.img`, `jffs2-be.img` | `mkfs.jffs2 -e 65536 --pad` | little/big endian, cleanmarkers |
-| `jffs2-history.img` | `mkfs.jffs2` + hand-assembled nodes | see [JFFS2 history](#jffs2-history-nodes) |
+| `jffs2-history.img` | `mkfs.jffs2` + hand-assembled nodes | see [History semantics per format](#history-semantics-per-format) |
 | `ubifs.img` | `mkfs.ubifs -m 2048 -e 129024 -c 128 -x zlib` | superblock UUID and every inode's atime/ctime pinned after the fact (CRCs recomputed) |
 | `ubi.img` | `ubinize -m 2048 -p 131072 -s 2048 -O 2048 -Q 0x12345678` | one dynamic autoresize volume `rootfs` holding `ubifs.img` |
 | `yaffs2.img` | `mkyaffs2 -p 2048 -s 64` | page + spare (OOB) image, Linux MTD spare layout (tags at spare byte 2) |

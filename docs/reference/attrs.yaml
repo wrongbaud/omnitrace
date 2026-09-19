@@ -1,0 +1,348 @@
+# attrs.yaml - one-line meaning for every attrs key a validator, reader or the
+# analysis driver emits. scripts/gen_docs.py joins this with the source into
+# docs/reference/ATTRS.md and fails when a key here is not emitted or a key in
+# source has no entry here. Sections are keyed by the source file that sets
+# the key; keys are sorted alphabetically inside each section.
+#
+# Format (a YAML subset read by scripts/gen_docs.py):
+#   <source path>:
+#     <key>: one line
+
+src/discovery/Recurse.cpp:
+  backup_header: "ok or crc-mismatch: state of the GPT backup header folded into this primary table node"
+  backup_lba: LBA of the folded GPT backup header (my_lba of the backup)
+  backup_offset: image offset (hex) of the folded GPT backup header
+  block_size: block size reported by the filesystem reader (FilesystemInfo::block_size)
+  boot: "true on an MBR entry with the 0x80 active flag"
+  bytes: bytes the reader emitted for this filesystem (WalkResult::bytes)
+  carve_skipped: "max-carve-bytes when the node was not carved because it exceeds --max-carve-bytes"
+  carved_in: "partitions/<file> that already contains this find (it starts at the partition's first byte)"
+  carved_path: "partitions/<file> holding exactly location.offset .. offset+length; node digests are that file's"
+  category: signature category of the finding (filesystem, container, compressed, partition-table, kernel, bootloader, crypto, other)
+  claimed_size: the entry's original size when it ran past the end of the data (partition-truncated)
+  compression: compression reported by the filesystem reader (FilesystemInfo::compression)
+  deleted: deletion records emitted with --history (WalkResult::deleted)
+  dirs: directory entries emitted (WalkResult::dirs)
+  entries: total entries emitted (WalkResult::entries)
+  evidence: "id of the Evidence row (e1) on the Image node"
+  files: regular-file entries emitted (WalkResult::files)
+  fill: "0xff / 0x00 (or 0x..) when every byte of an unidentified region is that value: erased flash or padding"
+  gpt_attributes: GPT attribute bits of the entry, when non-zero
+  index: "pN, the slot number of a partition entry (MBR logicals count from p5)"
+  label: GPT partition name (sanitized UTF-8) or the volume label a filesystem reader reports
+  logical: "true on an MBR entry that came from the EBR chain"
+  nested: "true on a partition-table node found inside another table's entry; its entries were not expanded"
+  others: device, fifo, socket and unknown entries emitted (WalkResult::others)
+  protective: "true on an MBR 0xEE entry that only guards a GPT"
+  role: "table on the node that represents a partition table itself"
+  signature: name of the signature that produced the finding (Signature::name)
+  superseded: superseded versions emitted with --history (WalkResult::superseded)
+  symlinks: symlink entries emitted (WalkResult::symlinks)
+  table: "mbr-primary | gpt-primary | gpt-backup: which table a partition node came from"
+  truncated: "true when a limit stopped the walk, a carve was short, or a file entry is partial"
+  type: MBR type byte (0x83) or GPT type GUID of a partition entry
+  type_byte: the MBR type byte again, under the format-specific key
+  type_guid: the GPT type GUID again, under the format-specific key
+  unique_guid: GPT unique partition GUID
+  word_swap: "swap16 or swap32 on the Image node when the dump was byte-reversed per word"
+  word_swap_confidence: detector score (0-100) behind word_swap
+  written: "false on a regular-file node that was not written to disk (extraction on, but the Sink skipped it)"
+
+src/discovery/validators/android_boot.cpp:
+  bootconfig_size: vendor boot v4 bootconfig section size
+  cmdline: kernel command line (control bytes replaced by _, extra_cmdline appended)
+  dtb_size: DTB section size (boot v2, vendor boot)
+  header_size: header size field (v2+)
+  header_version: boot image header version 0-4
+  id: 32-byte image id as hex
+  kernel_addr: kernel load address (v0-2)
+  kernel_size: kernel section size
+  name: product name field
+  os_patch_level: OS patch level decoded from os_version
+  os_version: OS version decoded from os_version
+  page_size: page size sections are aligned to
+  ramdisk_addr: ramdisk load address (v0-2)
+  ramdisk_size: ramdisk section size
+  recovery_dtbo_size: recovery DTBO section size (v1-2)
+  second_addr: second-stage load address (v0-2)
+  second_size: second-stage section size (v0-2)
+  signature_size: boot signature size (v4)
+  tags_addr: kernel tags address (v0-2)
+  vendor_ramdisk_size: vendor ramdisk section size (vendor boot)
+  vendor_ramdisk_table_size: vendor ramdisk table size (vendor boot v4)
+
+src/discovery/validators/android_sparse.cpp:
+  block_size: blk_sz from the file header (multiple of 4)
+  chunks_walked: chunk headers actually parsed before the walk stopped
+  crc_chunks: number of CRC32 chunks
+  dont_care_chunks: number of don't-care chunks
+  fill_chunks: number of fill chunks
+  image_checksum: header checksum field as hex
+  output_size: total_blocks * block_size, the expanded image size
+  raw_chunks: number of raw chunks
+  total_blocks: total_blks from the header
+  total_chunks: total_chunks from the header
+
+src/discovery/validators/cramfs.cpp:
+  blocks: fsid.blocks (v2)
+  crc: superblock crc field as hex
+  crc_check: "ok or mismatch: image CRC32 against the crc field"
+  edition: fsid.edition (v2)
+  files: fsid.files (v2)
+  flags: superblock flags as hex
+  name: volume name
+  version: "1 or 2 (FSID_VERSION_2 flag)"
+
+src/discovery/validators/elf.cpp:
+  class: "32 or 64"
+  endian: little or big
+  entry: entry point address as hex
+  flags: e_flags as hex
+  machine: e_machine name for common values, else unknown(n)
+  machine_id: numeric e_machine
+  osabi: EI_OSABI name
+  program_headers: e_phnum
+  section_headers: e_shnum
+  type: relocatable, executable, shared-object, core, or os-/processor-specific
+
+src/discovery/validators/ext.cpp:
+  block_groups: ceil((blocks_count - first_data_block) / blocks_per_group)
+  block_size: 1024 << s_log_block_size
+  blocks_count: s_blocks_count (64-bit when INCOMPAT_64BIT)
+  blocks_per_group: s_blocks_per_group
+  feature_compat: s_feature_compat as hex (rev 1)
+  feature_incompat: s_feature_incompat as hex (rev 1)
+  feature_ro_compat: s_feature_ro_compat as hex (rev 1)
+  inode_count: s_inodes_count
+  inode_size: s_inode_size (rev 1)
+  inodes_per_group: s_inodes_per_group
+  last_mount_time: s_mtime (epoch seconds)
+  last_mounted: s_last_mounted directory (rev 1)
+  last_write_time: s_wtime (epoch seconds)
+  mount_count: s_mnt_count
+  rev_level: "0 (good old) or 1 (dynamic)"
+  state: "clean, not-clean or errors from s_state"
+  superblock_checksum: "ok or mismatch when RO_COMPAT_METADATA_CSUM is set"
+  uuid: s_uuid (rev 1)
+  volume_name: s_volume_name (rev 1)
+
+src/discovery/validators/fit.cpp:
+  compatible: root compatible strings, comma-joined (dtb)
+  configurations: "name:kernel=..,fdt=..,ramdisk=..;... from /configurations (fit)"
+  default_configuration: /configurations/default (fit)
+  description: root description property (fit)
+  hash_failed: image hash nodes that did not match (fit)
+  hash_ok: image hash nodes verified (fit)
+  hash_unsupported: hash nodes with an unchecked algorithm or skipped by max_hash_bytes (fit)
+  image_count: subnodes of /images (fit)
+  images: "name:offset:size:type:compression;... offset relative to the FIT start, missing when outside the data (fit)"
+  images_without_hash: images with no hash subnode (fit)
+  model: root model property (dtb)
+  nodes: nodes parsed from the structure block
+  properties: properties parsed from the structure block
+  strings_size: FDT size_dt_strings
+  struct_size: FDT size_dt_struct
+  timestamp: root timestamp property (fit)
+  totalsize: FDT totalsize
+  version: FDT header version
+
+src/discovery/validators/gpt.cpp:
+  alternate: "valid | invalid | outside: the header at alternate_lba"
+  alternate_lba: alternate_lba field
+  backup: "on a primary: valid | mismatch | invalid | outside for its backup"
+  disk_guid: disk GUID
+  disk_offset: span-relative offset of LBA 0 of the disk the table describes (absent when LBA 0 lies before the data)
+  disk_size: "(last LBA + 1) * sector: alternate_lba for a primary, my_lba for a backup, never smaller than the farthest partition"
+  entries_lba: partition entry array LBA
+  entry_array_crc: "ok | mismatch (absent when the array is outside the data)"
+  entry_count: number of entries in the array
+  entry_size: size of one entry
+  first_usable_lba: first_usable_lba field
+  header_lba: my_lba of this header
+  last_usable_lba: last_usable_lba field
+  my_lba: alias of header_lba on a backup header (older consumers read it)
+  partition_count: entries listed in partitions
+  partitions: "pN:start_bytes:size_bytes:type_guid:unique_guid:name[:attrs=0x..];... disk-relative"
+  primary: "on a backup: valid | mismatch | invalid | outside for its primary"
+  revision: header revision as hex
+  sector_size: "512 or 4096, from which signature matched"
+  table: "gpt-primary | gpt-backup"
+
+src/discovery/validators/gzip.cpp:
+  extra_len: FEXTRA length when present
+  flags: FLG byte as hex
+  has_comment: "true when FCOMMENT is set"
+  has_header_crc: "true when FHCRC is set"
+  header_len: bytes from the magic to the start of the deflate data (FCOMMENT/FHCRC not walked)
+  mtime: MTIME (epoch seconds, 0 when unset)
+  original_name: FNAME when present, capped by max_name_len
+  os: OS byte name
+  text: "true when FTEXT is set"
+  xfl: XFL byte
+
+src/discovery/validators/jffs2.cpp:
+  aligned_size: size rounded up to the erase size
+  cleanmarkers: cleanmarker nodes counted
+  dirent_nodes: dirent nodes counted
+  dirty_gap_bytes: skipped bytes that were neither nodes nor erased
+  erase_size: inferred erase-block size in bytes, or unknown
+  erase_size_source: how erase_size was inferred (cleanmarker spacing)
+  erased_blocks: erase blocks inside the walk holding nothing but an optional cleanmarker
+  erased_gap_bytes: skipped bytes that were all 0xFF
+  first_nodetype: nodetype of the first node as hex
+  gaps: number of gaps skipped between nodes
+  inode_nodes: inode nodes counted
+  nodes: total nodes walked
+  obsolete_nodes: nodes with the ACCURATE bit cleared (in-place obsoleted, NOR)
+  padding_nodes: padding nodes counted
+  summary_nodes: summary nodes counted (not parsed)
+  unknown_nodes: nodes with an unrecognised nodetype
+  xattr_nodes: xattr and xref nodes counted
+
+src/discovery/validators/luks.cpp:
+  checksum_alg: LUKS2 header checksum algorithm
+  cipher: cipher name
+  cipher_spec: LUKS2 segment cipher spec
+  hash: hash spec (LUKS1) or JSON hash (LUKS2)
+  hdr_offset: LUKS2 hdr_offset
+  hdr_size: LUKS2 hdr_size
+  kdf: LUKS2 keyslot KDF type
+  key_bits: LUKS1 key length in bits
+  key_slots_enabled: LUKS1 active key slots
+  label: LUKS2 label
+  mk_digest_iterations: LUKS1 master-key digest iterations
+  mode: cipher mode
+  payload_offset: payload offset in bytes
+  payload_offset_sectors: LUKS1 payload offset in 512-byte sectors
+  seqid: LUKS2 header sequence id
+  subsystem: LUKS2 subsystem
+  uuid: volume UUID
+  version: "1 or 2"
+
+src/discovery/validators/lz4.cpp:
+  block_checksum: "true when every block carries a checksum"
+  block_independence: "true when blocks are independent"
+  block_max_size: "64KiB, 256KiB, 1MiB or 4MiB"
+  content_checksum: "true when a content checksum follows the frame"
+  content_size: decompressed size when the descriptor carries it
+  dictionary_id: dictionary id as hex when present
+  header_len: frame header length including the HC byte
+
+src/discovery/validators/mbr.cpp:
+  also_covers: "offset:512;... the EBR sectors of the logical chain, hidden from later hits"
+  disk_offset: span-relative offset of LBA 0 (the table's own offset)
+  disk_size: end of the farthest partition in bytes
+  disk_signature: NT disk signature as 0x + 8 hex digits
+  partition_count: entries listed in partitions
+  partitions: "pN:start_bytes:size_bytes:type_byte[:boot][:logical];... p1-p4 primary, p5.. logical"
+  protective: "true when an entry has type 0xEE"
+  table: mbr-primary
+
+src/discovery/validators/romfs.cpp:
+  checksum: "ok or mismatch: header checksum over the first 512 bytes"
+  full_size: full_size field in bytes
+  volume_name: volume name
+
+src/discovery/validators/squashfs.cpp:
+  block_size: superblock block_size
+  bytes_used: superblock bytes_used
+  compression: compressor name for ids 1..6
+  compression_id: numeric compression id
+  flags: superblock flags as hex
+  fragments: fragment count
+  id_count: no_ids
+  inodes: inode count
+  mkfs_time: mkfs_time (epoch seconds)
+  version: "major.minor"
+
+src/discovery/validators/ubi.cpp:
+  data_offset: EC header data_offset
+  erase_counter: EC header erase counter of the first PEB
+  erased_pebs: erased PEBs inside the walked run
+  first_peb_mapped: "true/false: whether the first PEB has a VID header"
+  image_seq: EC header image_seq as hex
+  peb_size: physical erase block size derived from the next EC header
+  pebs: PEBs in the run (valid plus interior erased)
+  trailing_erased_pebs: erased PEBs after the last valid one (not claimed)
+  version: EC header version (1)
+  vid_hdr_offset: EC header vid_hdr_offset
+
+src/discovery/validators/ubifs.cpp:
+  crc_check: "ok or mismatch: superblock node CRC"
+  default_compr: default compressor name
+  fanout: B-tree fanout
+  flags: superblock flags as hex
+  fmt_version: on-flash format version
+  hash_algo: authentication hash algorithm (fmt 5)
+  jhead_cnt: journal heads
+  key_hash: key hash function id
+  leb_cnt: LEB count
+  leb_size: LEB size in bytes
+  log_lebs: log LEBs
+  lpt_lebs: LPT LEBs
+  lsave_cnt: lsave count
+  max_leb_cnt: maximum LEB count
+  min_io_size: minimum I/O unit
+  orph_lebs: orphan LEBs
+  ro_compat_version: read-only compatible version
+  rp_size: reserved pool size
+  sqnum: superblock node sequence number
+  uuid: filesystem UUID
+
+src/discovery/validators/uimage.cpp:
+  arch: ih_arch name
+  compression: ih_comp name
+  data_crc: "ok, mismatch or unchecked (truncated)"
+  data_size: ih_size, payload bytes
+  entry_point: ih_ep as hex
+  load_address: ih_load as hex
+  name: ih_name
+  os: ih_os name
+  timestamp: ih_time (epoch seconds)
+  type: ih_type name
+
+src/discovery/validators/verity.cpp:
+  algorithm: hash algorithm, lowercased
+  data_block_size: data block size
+  data_blocks: number of protected data blocks
+  data_bytes: data_blocks * data_block_size, the size of the protected region
+  hash_block_size: hash block size
+  hash_tree_blocks: computed hash tree size in blocks
+  hash_type: "0 (Chrome OS) or 1 (normal)"
+  salt: salt as hex
+  uuid: superblock UUID
+  version: superblock version
+
+src/discovery/validators/xz.cpp:
+  check: "none, crc32, crc64 or sha256"
+
+src/discovery/validators/zstd.cpp:
+  content_checksum: "true when the frame carries a content checksum"
+  dictionary_id: dictionary id when present
+  frame_content_size: decompressed size when the header carries it
+  header_len: frame header length
+  single_segment: "true when the single-segment flag is set"
+  window_size: window size in bytes (absent for single segment)
+
+src/filesystems/squashfs/SquashfsReader.cpp:
+  compression_id: numeric compression id
+  exportable: "true when an export table exists"
+  flags: superblock flags as hex
+  fragments: fragment count
+  gzip_level: gzip compressor option
+  gzip_strategies: gzip compressor option
+  gzip_window: gzip compressor option
+  id_count: no_ids
+  inodes: inode count
+  lz4_flags: lz4 compressor option
+  lz4_version: lz4 compressor option
+  lzo_algorithm: lzo compressor option
+  lzo_level: lzo compressor option
+  magic: the four magic bytes as text
+  mkfs_time: mkfs_time (epoch seconds)
+  root_inode: root inode reference as hex
+  version: "major.minor"
+  xattr_ids: number of xattr ids (0 when there is no xattr table)
+  xz_dict_size: xz compressor option
+  xz_filters: xz compressor option
+  zstd_level: zstd compressor option

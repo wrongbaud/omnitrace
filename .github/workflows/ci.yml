@@ -3,6 +3,14 @@ on:
   push: { branches: [main] }
   pull_request:
 jobs:
+  docs:
+    # First and cheapest: the generated reference must match the code, every
+    # validator/reader needs its docs/formats page, docs/CLI.md must name every
+    # flag, and no Markdown link may dangle. No build, no dependencies.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_docs.py
   linux:
     runs-on: ubuntu-24.04
     strategy:

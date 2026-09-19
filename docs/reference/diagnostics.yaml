@@ -1,0 +1,722 @@
+# diagnostics.yaml - curated meaning and examiner action for every diagnostic
+# and status code emitted by src/ and apps/. scripts/gen_docs.py joins this
+# with the source sites into docs/reference/DIAGNOSTICS.md and fails when a
+# code here has no source or a code in source has no entry here.
+#
+# Format (a YAML subset read by scripts/gen_docs.py):
+#   <code>:
+#     meaning: one line, what happened
+#     action: one line, what the examiner or contributor should do
+# Keep entries short. Codes are sorted alphabetically.
+
+also-matched:
+  meaning: another signature matched the same bytes with lower confidence; the winner is this node
+  action: informational; check the named format only if the winner turns out to be wrong
+
+analyze-empty-image:
+  meaning: the evidence file has zero bytes
+  action: verify the acquisition; there is nothing to analyse
+
+analyze-limit-depth:
+  meaning: nesting went deeper than Limits::max_depth, so that branch was not analysed
+  action: re-run with a larger --max-depth if the nested content matters
+
+analyze-limit-files:
+  meaning: the run-wide --max-files budget was spent before this filesystem, so it was not walked
+  action: re-run with a larger --max-files or --no-extract for an inventory
+
+analyze-no-image:
+  meaning: analyze() was called with a null Source (caller bug)
+  action: contributor error; the CLI never produces this
+
+analyze-no-out-dir:
+  meaning: extraction was requested without a case directory (caller bug)
+  action: contributor error; the CLI always passes --out
+
+analyze-no-reader:
+  meaning: the format was recognised but no reader is registered, so nothing was walked or opened
+  action: carve the node (partitions/) and use an external tool; the coverage row says unsupported
+
+analyze-open-failed:
+  meaning: a registered reader rejected the structure at open(); the message carries the reader's status code
+  action: treat the finding as identification only; inspect the carved bytes by hand
+
+analyze-sink-failed:
+  meaning: the case directory could not receive the extracted tree (DiskSink::open or mkdir failed)
+  action: fix the host path or permissions and re-run
+
+analyze-walk-failed:
+  meaning: the reader started but could not finish the walk; entries emitted before the failure are kept
+  action: the listing is incomplete; compare with an external extraction of the carved file
+
+android-boot-bad-header:
+  meaning: header_version or page_size is outside the values the format allows
+  action: magic-tier hit; probably not a boot image, or a vendor variant
+
+android-boot-empty:
+  meaning: kernel_size and ramdisk_size are both zero
+  action: the header carries no payload; look for the real boot image elsewhere
+
+android-boot-truncated:
+  meaning: the page-aligned sections extend past the available data; size clamped
+  action: the dump or partition is short; expect a partial kernel or ramdisk
+
+android-boot-truncated-header:
+  meaning: fewer bytes than the header needs after the magic
+  action: magic-tier hit at the end of the data; usually noise
+
+carve-dir-failed:
+  meaning: partitions/ could not be created; nothing was carved
+  action: fix the host path or permissions and re-run
+
+carve-limit-bytes:
+  meaning: the node is larger than --max-carve-bytes and was not written
+  action: re-run with a larger --max-carve-bytes or carve the range with dd from location.offset
+
+carve-mount-script-failed:
+  meaning: partitions/mount.sh could not be written
+  action: fix the host path; the carved files themselves are intact
+
+carve-short-read:
+  meaning: the evidence returned fewer bytes than the node claims while carving; the file is short
+  action: the image is unreadable past that point; check the acquisition
+
+carve-unknown-size:
+  meaning: the finding has no known extent, so there is nothing to carve
+  action: identification only; use the offset with an external tool if needed
+
+carve-write-failed:
+  meaning: writing the carved file failed; the partial file was removed
+  action: check free space and permissions, then re-run
+
+cramfs-bad-size:
+  meaning: the superblock size or file count is out of range
+  action: magic-tier hit; probably not a cramfs image
+
+cramfs-crc-mismatch:
+  meaning: the image CRC32 does not match the superblock field
+  action: the image is modified or truncated; extract with care and note it in the report
+
+cramfs-truncated:
+  meaning: the superblock size extends past the available data; size clamped
+  action: the dump or partition is short
+
+cramfs-unknown-flags:
+  meaning: flag bits outside the ones cramfs defines are set
+  action: informational; may be a vendor variant
+
+cramfs-v1-no-size:
+  meaning: FSID_VERSION_2 is clear, so the size and fsid fields are not valid and the extent is unknown
+  action: old cramfs; carve manually if needed
+
+dtb-is-fit:
+  meaning: the device tree has an /images node, so it is a FIT image; the fit finding at the same offset wins
+  action: informational; read the fit node
+
+dtb-truncated:
+  meaning: totalsize extends past the available data; size clamped
+  action: the dump or partition is short
+
+elf-extended-numbering:
+  meaning: header counts use the extended numbering (PN_XNUM / section 0); the tables were not walked
+  action: size may be understated; use readelf on the carved bytes
+
+elf-no-tables:
+  meaning: no program or section headers, so the extent is unknown
+  action: identification only
+
+elf-truncated:
+  meaning: program/section headers or segments extend past the available data
+  action: the object is cut; expect a partial binary
+
+ext-inode-count-mismatch:
+  meaning: inodes_count does not equal block_groups * inodes_per_group; consistency check failed
+  action: superblock may be corrupt or hand-made; verify with e2fsck -n on the carved partition
+
+ext-superblock-csum-mismatch:
+  meaning: the metadata_csum crc32c over the superblock does not match s_checksum
+  action: the superblock was modified after the last checksum update; verify with e2fsck -n
+
+ext-truncated:
+  meaning: blocks_count * block_size exceeds the available data; size clamped
+  action: the partition or dump is short; the tail of the filesystem is missing
+
+fdt-bad-node-name:
+  meaning: a node name is not terminated inside the structure block, or a non-root node is unnamed
+  action: the device tree is corrupt; the finding stays at structural tier
+
+fdt-bad-prop-name:
+  meaning: a property's nameoff points outside the strings block
+  action: the device tree is corrupt; the finding stays at structural tier
+
+fdt-bad-token:
+  meaning: an unknown token in the structure block
+  action: the device tree is corrupt; the finding stays at structural tier
+
+fdt-limit-depth:
+  meaning: nesting exceeded the signature's max_depth; the walk stopped
+  action: raise max_depth in signatures/core.toml if the tree is genuine
+
+fdt-limit-nodes:
+  meaning: more nodes than the signature's max_nodes; the walk stopped
+  action: raise max_nodes in signatures/core.toml if the tree is genuine
+
+fdt-limit-props:
+  meaning: more properties than the signature's max_props; the walk stopped
+  action: raise max_props in signatures/core.toml if the tree is genuine
+
+fdt-multiple-roots:
+  meaning: a second top-level BEGIN_NODE
+  action: the device tree is corrupt; the finding stays at structural tier
+
+fdt-no-root:
+  meaning: END before any node
+  action: the device tree is empty or corrupt
+
+fdt-prop-outside-node:
+  meaning: a PROP token before the root node
+  action: the device tree is corrupt; the finding stays at structural tier
+
+fdt-prop-overrun:
+  meaning: property data runs past the structure block
+  action: the device tree is corrupt; the finding stays at structural tier
+
+fdt-struct-overrun:
+  meaning: the token stream ran past size_dt_struct
+  action: the device tree is corrupt; the finding stays at structural tier
+
+fdt-unbalanced:
+  meaning: END_NODE without an open node, or END with nodes still open
+  action: the device tree is corrupt; the finding stays at structural tier
+
+fit-data-missing:
+  meaning: one or more images have no payload inside the available data
+  action: the FIT references data outside the dump; expect missing images
+
+fit-hash-mismatch:
+  meaning: an image hash node does not match the payload bytes
+  action: the image was modified or is corrupt; note it in the report
+
+fit-hash-unsupported:
+  meaning: a hash node uses an algorithm not checked here, or was skipped by the hash budget
+  action: verify with mkimage -l or dumpimage if the hash matters
+
+fit-limit-hash-bytes:
+  meaning: the payloads exceed the signature's max_hash_bytes; remaining hashes were not verified
+  action: raise max_hash_bytes in signatures/core.toml to verify everything
+
+fit-no-images:
+  meaning: /images has no subnodes
+  action: an empty or unusual FIT; nothing to extract
+
+fit-truncated:
+  meaning: image data extends past the available data
+  action: the dump or partition is short
+
+gpt-backup:
+  meaning: this is a backup header that matches its primary
+  action: informational; the primary node carries backup_lba
+
+gpt-backup-crc-mismatch:
+  meaning: the backup header folded into this primary has a CRC mismatch
+  action: the backup is stale or damaged; the primary map was used
+
+gpt-backup-mismatch:
+  meaning: primary and backup headers describe different disks or entry arrays; the backup was expanded as a second map
+  action: decide which map is current; a re-partitioned disk keeps the old backup at the end
+
+gpt-bad-entry-size:
+  meaning: entry_size is not a multiple of 8 of at least 128
+  action: magic-tier hit; not a usable GPT header
+
+gpt-bad-header-size:
+  meaning: header_size is outside [92, sector size]
+  action: magic-tier hit; not a usable GPT header
+
+gpt-bad-my-lba:
+  meaning: my_lba is 0 or equals alternate_lba
+  action: magic-tier hit; not a usable GPT header
+
+gpt-disk-truncated:
+  meaning: the table describes a disk larger than the data available from LBA 0
+  action: the dump is short; partitions past the end get partition-outside-image / partition-truncated
+
+gpt-entries-detached:
+  meaning: the entry array is not adjacent to the header; the finding covers the header only
+  action: informational; the entries were still read
+
+gpt-entries-outside:
+  meaning: the partition entry array is not inside the available data
+  action: the map cannot be read; look for the backup header at the end of the disk
+
+gpt-entry-array-crc-mismatch:
+  meaning: the entry array CRC32 does not match the header
+  action: entries may be stale or edited; compare with the backup map
+
+gpt-entry-invalid:
+  meaning: entries with a type GUID but no valid LBA range were skipped
+  action: informational; check for hidden partitions by hand if the count is unexpected
+
+gpt-entry-limit:
+  meaning: more entries than the signature's max_entries; the rest were not read
+  action: raise max_entries in signatures/core.toml
+
+gpt-header-crc-mismatch:
+  meaning: the header CRC32 does not match
+  action: header edited or damaged; rely on the backup header if it verifies
+
+gpt-origin-outside:
+  meaning: LBA 0 of the described disk lies before the data (carved slice); disk_offset is absent
+  action: partition offsets are disk-relative, not image-relative
+
+gpt-primary-missing:
+  meaning: no valid primary header; the partitions were recovered from the backup header
+  action: expected on truncated or wiped disks; verify the map against the partition contents
+
+gpt-truncated-header:
+  meaning: fewer than 92 bytes after the magic
+  action: magic-tier hit at the end of the data; usually noise
+
+gzip-bad-os:
+  meaning: the OS byte is not a defined value
+  action: magic-tier hit; probably not a gzip member
+
+gzip-truncated-header:
+  meaning: fewer bytes than the fixed header or the FEXTRA length needs
+  action: magic-tier hit at the end of the data; usually noise
+
+gzip-unusual-xfl:
+  meaning: XFL is not 0, 2 or 4
+  action: informational; unusual producer
+
+image-word-swap-tail:
+  meaning: the image size is not a multiple of the swap word; the last 1-3 bytes are passed through unswapped
+  action: informational
+
+image-word-swapped:
+  meaning: the dump has every 16- or 32-bit word byte-reversed; the analysis ran on a corrected view
+  action: carved files are the corrected bytes (name suffix -swap16/-swap32); say so in the report
+
+jffs2-dirty-gaps:
+  meaning: non-node, non-erased bytes were skipped between nodes
+  action: informational; dead data or padding inside the partition
+
+jffs2-no-erase-size:
+  meaning: fewer than two cleanmarkers, so the erase-block size was not inferred
+  action: pass the erase size by hand when mounting through mtdram
+
+jffs2-truncated:
+  meaning: the last node's totlen runs past the data
+  action: the dump or partition is short
+
+jffs2-unknown-nodetype:
+  meaning: nodes with a type this scanner does not know were counted
+  action: informational; may be xattr, summary or vendor nodes
+
+luks-bad-hdr-size:
+  meaning: LUKS2 hdr_size is not a power of two in 16 KiB..4 MiB
+  action: magic-tier hit; not a usable LUKS2 header
+
+luks-bad-header:
+  meaning: a cipher, mode, hash, uuid, checksum or label field is not a printable token
+  action: magic-tier hit; probably not a LUKS header
+
+luks-bad-json:
+  meaning: the LUKS2 JSON area does not start with { or lacks keyslots/segments
+  action: header damaged; cryptsetup luksDump will confirm
+
+luks-bad-keyslots:
+  meaning: a LUKS1 key slot has an unknown state or key material past the payload offset
+  action: header damaged or edited
+
+luks-bad-uuid:
+  meaning: the uuid field is not in 8-4-4-4-12 form
+  action: informational
+
+luks-truncated:
+  meaning: the header area up to the payload extends past the available data
+  action: the dump is short; the encrypted payload is missing
+
+luks-truncated-header:
+  meaning: fewer bytes than the header needs, or the version field is missing
+  action: magic-tier hit at the end of the data
+
+luks-unsupported-version:
+  meaning: the LUKS version is neither 1 nor 2
+  action: magic-tier hit; probably not LUKS
+
+lz4-bad-frame-descriptor:
+  meaning: the FLG/BD bytes are not a valid LZ4 frame descriptor
+  action: magic-tier hit; probably not an LZ4 frame
+
+lz4-truncated-header:
+  meaning: fewer than 6 bytes for the frame descriptor
+  action: magic-tier hit at the end of the data
+
+manifest-parent-missing:
+  meaning: a node names a parent that is not in the graph
+  action: contributor bug in whatever produced the node; the node is kept
+
+mbr-ebr-chain-limit:
+  meaning: the EBR chain is longer than the signature's ebr_max_chain
+  action: raise ebr_max_chain in signatures/core.toml or expect a loop
+
+mbr-ebr-missing:
+  meaning: a chain link points at a sector without 0x55AA
+  action: the logical partitions after that link are missing
+
+mbr-entry-invalid:
+  meaning: an entry has a bad status byte, zero length or a start past the data
+  action: informational; unused or damaged slot
+
+mbr-partition-truncated:
+  meaning: an entry ends past the available data
+  action: the dump is short; the partition is partial
+
+mbr-partitions-overlap:
+  meaning: two entries of the same class overlap
+  action: hand-edited or damaged table; decide which entry is real
+
+partition-entry-unparsable:
+  meaning: an item of the validator's partitions attr could not be parsed
+  action: contributor bug in the validator or Recurse; the entry was skipped
+
+partition-outside-image:
+  meaning: the entry starts past the end of the data; nothing was carved
+  action: the dump is short or the table belongs to a larger disk
+
+partition-protective:
+  meaning: the MBR 0xEE entry only guards a GPT; the GPT entries are the partitions
+  action: informational
+
+partition-rescan:
+  meaning: found by scanning the partition on its own; the whole-image scan missed it
+  action: informational; usually an aligned filesystem with a short magic
+
+partition-table-nested:
+  meaning: a table that starts inside another table's entry describes another disk; its entries were not expanded
+  action: an MBR sector as file data or a disk image inside a partition; carve and analyse it separately
+
+partition-truncated:
+  meaning: the entry extends past the end of the data; clamped (claimed_size keeps the original)
+  action: the dump is short; the partition is partial
+
+region-unidentified:
+  meaning: no signature matched in this gap of at least min_region_bytes
+  action: check fill (0xff/0x00 is erased or padding); otherwise strings or entropy tools
+
+romfs-bad-first-header:
+  meaning: the first file header points past the end of the image
+  action: structural-tier hit; damaged or not romfs
+
+romfs-bad-name:
+  meaning: the volume name is not printable ASCII
+  action: magic string inside other data; ignore
+
+romfs-bad-size:
+  meaning: full_size cannot hold the header and a file entry
+  action: magic-tier hit; ignore
+
+romfs-checksum-mismatch:
+  meaning: the header checksum over the first 512 bytes is not zero
+  action: modified or damaged image; extract with care
+
+romfs-truncated:
+  meaning: full_size extends past the available data
+  action: the dump or partition is short
+
+romfs-truncated-header:
+  meaning: fewer than 16 bytes for the superblock
+  action: magic-tier hit at the end of the data
+
+scan-hit-limit:
+  meaning: the scan stopped after ScanOptions::max_hits; the rest of the span was not scanned
+  action: the finding list is incomplete; raise max_hits (a contributor option) or scan a sub-range
+
+sink-duplicate-path:
+  meaning: an entry's path already existed on disk; it was written with a ~N suffix (or no free suffix was left)
+  action: the filesystem has duplicate names or an earlier walk left files; listing.yaml has the host path
+
+sink-io-error:
+  meaning: a host write, mkdir or stat failed
+  action: check free space and permissions; the entry is truncated or missing
+
+sink-limit-bytes:
+  meaning: the run-wide max_bytes budget was reached; data truncated
+  action: re-run with a larger --max-bytes
+
+sink-limit-file-bytes:
+  meaning: an entry exceeded Limits::max_file_bytes; data truncated
+  action: contributor option; the file on disk is partial
+
+sink-limit-files:
+  meaning: Limits::max_files entries were already emitted
+  action: re-run with a larger --max-files
+
+sink-not-directory:
+  meaning: a path component exists on the host and is not a directory
+  action: use an empty case directory
+
+sink-protocol:
+  meaning: begin_file/write/entry called out of order (reader bug)
+  action: contributor error in the reader
+
+sink-root-invalid:
+  meaning: the case directory root is empty, not creatable or not a directory
+  action: fix the --out path
+
+sink-special-skipped:
+  meaning: a device, fifo, socket or unknown entry was recorded but not created on disk
+  action: informational; the metadata is in listing.yaml
+
+sink-symlink-component:
+  meaning: a directory component on the host is a symlink or reparse point; refused
+  action: use a clean case directory; this guards against escaping the tree
+
+sink-symlink-unsupported:
+  meaning: the host cannot create the symlink; it is recorded only
+  action: informational (Windows without privilege); listing.yaml has the target
+
+sink-unsafe-path:
+  meaning: the entry path is absolute, contains .. or otherwise escapes the tree; refused
+  action: hostile or damaged filesystem; the entry name is in the message
+
+sink-version-skipped:
+  meaning: a superseded or deleted version was recorded but not written (no --history)
+  action: re-run with --history to extract it
+
+sparse-bad-chunk-type:
+  meaning: a chunk has a type other than raw, fill, don't-care or crc32
+  action: the image is damaged or not sparse; the walk stopped there
+
+sparse-bad-header:
+  meaning: header sizes or block size are out of range
+  action: magic-tier hit; probably not a sparse image
+
+sparse-block-count-mismatch:
+  meaning: the chunks cover a different number of blocks than the header claims
+  action: damaged or truncated image; expanded size is unreliable
+
+sparse-chunk-size-mismatch:
+  meaning: a chunk's total_sz disagrees with its type and block count
+  action: damaged image; the walk stopped there
+
+sparse-truncated:
+  meaning: a chunk header or its data lies past the end of the data
+  action: the dump is short
+
+sparse-truncated-header:
+  meaning: fewer than 28 bytes for the file header
+  action: magic-tier hit at the end of the data
+
+sparse-unknown-version:
+  meaning: the version is not 1.0
+  action: magic-tier hit; not a known sparse format
+
+squashfs-bad-block-size:
+  meaning: block_size is not a power of two in 4 KiB..1 MiB
+  action: magic-tier hit; not a usable superblock
+
+squashfs-bad-bytes-used:
+  meaning: bytes_used is smaller than the superblock
+  action: magic-tier hit; not a usable superblock
+
+squashfs-bad-compression:
+  meaning: the compression id is not 1..6
+  action: magic-tier hit; vendor variant or noise
+
+squashfs-bad-entry-name:
+  meaning: a directory entry name is empty, ., .., or contains / or NUL; skipped
+  action: hostile or damaged image; note the skipped entry
+
+squashfs-bad-fragment:
+  meaning: a fragment index is outside the table or unreadable; the tail was zero-filled
+  action: the file is partial (truncated flag); compare with unsquashfs
+
+squashfs-bad-id:
+  meaning: a uid/gid index is outside the id table; reported as 0
+  action: ownership of that entry is unknown
+
+squashfs-bad-inode-type:
+  meaning: an inode type is outside 1..14; the entry was skipped
+  action: damaged image; note the skipped entry
+
+squashfs-bad-superblock:
+  meaning: open() refused the superblock (size, magic, block_log, block_size or bytes_used)
+  action: the validator hit was not a usable filesystem; inspect by hand
+
+squashfs-bad-xattr:
+  meaning: an xattr id is outside the xattr table
+  action: informational; the xattr count is omitted for that entry
+
+squashfs-block-corrupt:
+  meaning: a data or fragment block did not decode or has an impossible size; zero-filled
+  action: the file is partial (truncated flag); compare with unsquashfs
+
+squashfs-block-log-mismatch:
+  meaning: block_log disagrees with block_size
+  action: magic-tier hit; not a usable superblock
+
+squashfs-data-truncated:
+  meaning: a data block lies past the end of the image
+  action: the image is cut; the file ends there
+
+squashfs-dir-loop:
+  meaning: a directory entry refers to one of its own ancestors; not descended
+  action: hostile image; note it in the report
+
+squashfs-limit-file-bytes:
+  meaning: a symlink target is longer than Limits::max_file_bytes; the entry was skipped
+  action: hostile image; contributor limit
+
+squashfs-limit-files:
+  meaning: Limits::max_files reached; the walk stopped
+  action: re-run with a larger --max-files
+
+squashfs-limit-nodes:
+  meaning: Limits::max_nodes_per_fs reached, or one listing exceeds it; the walk or listing was cut
+  action: contributor limit; the listing is incomplete
+
+squashfs-metadata-corrupt:
+  meaning: a metadata block or a structure inside it is unreadable; walk fails at the root, otherwise the entry is skipped
+  action: damaged or unsupported image; compare with unsquashfs
+
+squashfs-minor-version:
+  meaning: s_minor is not 0; parsed as 4.0
+  action: informational
+
+squashfs-root-invalid:
+  meaning: root_inode is not a directory; the walk fails
+  action: damaged superblock; nothing was extracted
+
+squashfs-sink-error:
+  meaning: the Sink refused an entry (unsafe path or its own limit); the walk continued
+  action: see the sink-* code in the message
+
+squashfs-table-order:
+  meaning: the inode table does not precede the directory table
+  action: unusual producer; the finding stays at structural tier
+
+squashfs-table-outside:
+  meaning: a table pointer lies outside bytes_used
+  action: damaged superblock; the finding stays at structural tier
+
+squashfs-truncated:
+  meaning: bytes_used exceeds the available data (validator)
+  action: the dump or partition is short
+
+squashfs-truncated-image:
+  meaning: bytes_used exceeds the span (reader)
+  action: the dump or partition is short; expect data-truncated entries
+
+squashfs-truncated-superblock:
+  meaning: fewer than 96 bytes after the magic
+  action: magic-tier hit at the end of the data
+
+squashfs-unsupported-compression:
+  meaning: the compression id is unknown; compressed blocks cannot be decoded
+  action: vendor compressor; extract with the vendor's tool
+
+squashfs-unsupported-version:
+  meaning: the major version is not 4
+  action: SquashFS 1-3; use an old unsquashfs
+
+ubi-ec-crc-mismatch:
+  meaning: the erase-counter header CRC does not match; size unknown
+  action: a corrupt first PEB; try the next PEB or ubireader
+
+ubi-ec-fields-insane:
+  meaning: the EC header CRC is fine but version or offsets are out of range
+  action: unusual or hostile image
+
+ubi-single-peb:
+  meaning: no second EC header was found, so the PEB size and image size are unknown
+  action: a single PEB or a mis-sized dump; identification only
+
+ubi-truncated-header:
+  meaning: fewer than 64 bytes for the EC header
+  action: magic-tier hit at the end of the data
+
+ubifs-bad-leb-layout:
+  meaning: log/lpt/orphan LEB counts do not fit into leb_cnt
+  action: structural-tier hit; damaged superblock
+
+ubifs-bad-superblock:
+  meaning: superblock fields are out of range
+  action: magic-tier hit; probably a non-superblock node
+
+ubifs-crc-mismatch:
+  meaning: the superblock node CRC32 does not match
+  action: damaged superblock; verify with ubireader
+
+ubifs-truncated:
+  meaning: leb_size * leb_cnt extends past the data; inside UBI the LEBs are not contiguous anyway
+  action: informational for a UBI-embedded volume; a short dump otherwise
+
+uimage-data-crc-mismatch:
+  meaning: the payload CRC32 does not match ih_dcrc
+  action: modified or damaged payload; note it in the report
+
+uimage-header-crc-mismatch:
+  meaning: the header CRC32 does not match; fields not trusted
+  action: magic-tier hit; probably noise or a damaged header
+
+uimage-truncated:
+  meaning: the payload extends past the available data
+  action: the dump or partition is short
+
+uimage-truncated-header:
+  meaning: fewer than 64 bytes for the header
+  action: magic-tier hit at the end of the data
+
+validator-missing:
+  meaning: a signature names a validator that is not registered; only the magic match is reported
+  action: contributor error (missing anchor or builtin.cpp line)
+
+verity-bad-algorithm:
+  meaning: the hash algorithm is not sha256, sha1 or sha512
+  action: magic-tier hit; probably noise
+
+verity-bad-block-size:
+  meaning: data or hash block size is not a power of two in 512..65536
+  action: magic-tier hit; probably noise
+
+verity-bad-hash-type:
+  meaning: hash_type is neither 0 nor 1
+  action: magic-tier hit; probably noise
+
+verity-bad-salt-size:
+  meaning: salt_size exceeds the 256-byte field
+  action: magic-tier hit; probably noise
+
+verity-truncated:
+  meaning: the superblock plus hash tree extends past the available data
+  action: the dump is short; the hash tree is partial
+
+verity-truncated-header:
+  meaning: fewer than 512 bytes for the superblock
+  action: magic-tier hit at the end of the data
+
+verity-unsupported-version:
+  meaning: the superblock version is not 1
+  action: magic-tier hit; probably noise
+
+xz-bad-stream-flags:
+  meaning: the stream flags are not valid
+  action: magic-tier hit; probably not an xz stream
+
+xz-header-crc-mismatch:
+  meaning: the stream flags CRC32 does not match
+  action: magic-tier hit; probably not an xz stream
+
+xz-truncated-header:
+  meaning: fewer than 12 bytes for the stream header
+  action: magic-tier hit at the end of the data
+
+zstd-bad-frame-header:
+  meaning: reserved bits are set in the frame header descriptor
+  action: magic-tier hit; probably not a zstd frame
+
+zstd-truncated-header:
+  meaning: fewer than 5 bytes for the frame header
+  action: magic-tier hit at the end of the data

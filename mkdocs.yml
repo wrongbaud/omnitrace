@@ -1,0 +1,100 @@
+# Docs site. Build locally with:
+#   uvx --with mkdocs-material mkdocs build --strict
+#   uvx --with mkdocs-material mkdocs serve
+# The nav mirrors docs/README.md. docs/README.md itself is excluded from the
+# site because index.md is the landing page (mkdocs treats both as the index).
+site_name: OmniTrace v2
+site_description: Offline, cross-platform forensic analysis for embedded systems
+repo_url: ""
+docs_dir: docs
+site_dir: build/site
+strict: true
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - admonition
+
+exclude_docs: |
+  README.md
+
+# Docs link straight to source with file:line targets (../src/core/Span.h#L30),
+# which are clickable on GitHub and in editors but sit outside docs_dir, so
+# mkdocs cannot resolve them. Downgrade only that check; nav entries and
+# anchors stay strict.
+validation:
+  links:
+    not_found: info
+
+nav:
+  - Home: index.md
+  - Users:
+      - CLI: CLI.md
+      - Case layout: CASE_LAYOUT.md
+      - Formats supported: reference/FORMATS.md
+      - Glossary: GLOSSARY.md
+  - Contributors:
+      - Architecture: ARCHITECTURE.md
+      - Code tour: CODE_TOUR.md
+      - API and header order: API.md
+      - Extending: EXTENDING.md
+      - Testing: TESTING.md
+      - Roadmap: ROADMAP.md
+  - Reference:
+      - Diagnostics: reference/DIAGNOSTICS.md
+      - Formats: reference/FORMATS.md
+      - Attributes: reference/ATTRS.md
+      - CLI flags: reference/CLI_FLAGS.md
+      - Format pages index: formats/README.md
+      - Signatures and validators: formats/signatures.md
+      - Format pages:
+          - Partition tables: formats/partition-tables.md
+          - SquashFS: formats/squashfs.md
+          - JFFS2: formats/jffs2.md
+          - UBIFS: formats/ubifs.md
+          - UBI: formats/ubi.md
+          - ext2/3/4: formats/ext.md
+          - cramfs: formats/cramfs.md
+          - romfs: formats/romfs.md
+          - FIT: formats/fit.md
+          - DTB: formats/dtb.md
+          - uImage: formats/uimage.md
+          - Android sparse: formats/android-sparse.md
+          - Compressed streams: formats/compressed-streams.md
+          - Android boot: formats/android-boot.md
+          - ELF: formats/elf.md
+          - LUKS: formats/luks.md
+          - dm-verity: formats/verity.md
+          - Word-swapped images: formats/word-swap.md
+  - Background:
+      - Competitive landscape: COMPETITIVE_LANDSCAPE.md
+      - moria spike: MORIA_SPIKE.md

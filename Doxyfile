@@ -1,0 +1,60 @@
+# Doxyfile — API reference for the public headers. Run `doxygen Doxyfile` from
+# the repository root; the HTML lands in build/doxygen/index.html. See
+# docs/API.md for the reading order and the header-to-purpose map.
+#
+# Only keys that differ from Doxygen's defaults are listed, so `doxygen -u`
+# can upgrade this file without losing intent.
+
+PROJECT_NAME           = "OmniTrace v2"
+PROJECT_BRIEF          = "Embedded-systems forensic analysis: public C++20 API"
+OUTPUT_DIRECTORY       = build
+HTML_OUTPUT            = doxygen
+CREATE_SUBDIRS         = NO
+
+# Inputs: the public headers (the contract) and README.md as the main page.
+INPUT                  = include README.md
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.md
+USE_MDFILE_AS_MAINPAGE = README.md
+STRIP_FROM_PATH        = include
+STRIP_FROM_INC_PATH    = include
+EXCLUDE_SYMBOLS        = *::detail *::detail::*
+
+# Only what is documented, and every undocumented public member is a warning:
+# the headers are meant to be self-explanatory, so a gap is a bug.
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+WARN_AS_ERROR          = NO
+QUIET                  = YES
+
+# Comment style: the first sentence of a /// block is the brief.
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = NO
+MULTILINE_CPP_IS_BRIEF = NO
+MARKDOWN_SUPPORT       = YES
+TAB_SIZE               = 4
+BUILTIN_STL_SUPPORT    = YES
+SORT_MEMBER_DOCS       = NO
+SORT_BRIEF_DOCS        = NO
+INLINE_SIMPLE_STRUCTS  = NO
+SHOW_INCLUDE_FILES     = YES
+
+# Output: HTML only, with the tree view; no LaTeX, no diagrams (no dot needed).
+GENERATE_HTML          = YES
+GENERATE_TREEVIEW      = YES
+GENERATE_LATEX         = NO
+GENERATE_XML           = NO
+HAVE_DOT               = NO
+CLASS_GRAPH            = NO
+COLLABORATION_GRAPH    = NO
+INCLUDE_GRAPH          = NO
+INCLUDED_BY_GRAPH      = NO
+SOURCE_BROWSER         = YES
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES

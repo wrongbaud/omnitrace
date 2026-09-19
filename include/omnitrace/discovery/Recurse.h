@@ -36,6 +36,16 @@
 // Layering: this file lives in discovery and therefore cannot link against the
 // filesystems library. Readers are supplied by the caller through
 // AnalyzeOptions::open_reader; the CLI passes FilesystemRegistry::create.
+/// @file Recurse.h
+/// @brief `analyze()`, the driver that turns one image into a `Manifest` and
+/// a case directory, with its options and the mount-script helpers.
+///
+/// What it does today versus the plan: one level of analysis (the image and
+/// the partitions inside it). Nested recursion into container payloads and
+/// extracted files is not implemented; `Limits::max_depth` is checked but
+/// only depth 0 is ever reached. Word-swap detection *is* implemented (see
+/// `ImageViewHook`). docs/CASE_LAYOUT.md documents the resulting nodes,
+/// attrs and files.
 #pragma once
 #include <cstdint>
 #include <functional>
@@ -55,11 +65,17 @@
 namespace omnitrace::discovery {
 
 // Returns a reader for `format`, or nullptr when none is available.
+/// Reader factory: a fresh `fs::FilesystemReader` for `format`, or `nullptr`
+/// when none exists (the node then gets an "unsupported" Coverage row). The
+/// CLI passes a lambda around `fs::FilesystemRegistry::instance().create`.
 using ReaderLookup =
     std::function<std::unique_ptr<fs::FilesystemReader>(const std::string& format)>;
 
 // Scanner used for the whole image and for every partition re-scan. Tests
 // substitute hand-made findings; the default is scan(span, builtin, opts.scan).
+/// Scanner used for the whole image and for every partition re-scan. Tests
+/// substitute hand-made findings; the default is
+/// `scan(span, SignatureSet::builtin(), opts.scan)`.
 using Scanner = std::function<std::vector<Finding>(const Span& span)>;
 
 // EXTENSION POINT (word swap; not implemented here). Called once, before the
@@ -68,38 +84,56 @@ using Scanner = std::function<std::vector<Finding>(const Span& span)>;
 // view such as core/Swap.h SwappedSource chosen by detect_word_swap(). The hook
 // records what it decided on `image_node` (attrs, diagnostics such as
 // "image-word-swapped"). Empty (the default): the image is analysed as is.
+/// Chooses the Source the analysis runs on. Called once, before the
+/// whole-image scan, with the evidence Source and the Image node already in
+/// the graph. Return the same Source, or a derived view such as a
+/// `SwappedSource`, and record the decision on `image_node` (attrs,
+/// diagnostics); returning `nullptr` keeps the image as is.
+///
+/// When the hook is empty (the default), `analyze()` runs `detect_word_swap`
+/// itself: a detected swap sets attrs `word_swap` / `word_swap_confidence`,
+/// the "image-word-swapped" warning (plus "image-word-swap-tail" for a
+/// partial last word), a "word-swap" Coverage row, and every node found
+/// beneath carries "<evidence-id>|swap16|32" in `Location::source_id`.
 using ImageViewHook = std::function<std::shared_ptr<const Source>(
     const std::shared_ptr<const Source>& image, Node& image_node)>;
 
 // What to carve into <out_dir>/partitions/.
+/// What to carve into `<out_dir>/partitions/` (CLI `--carve`).
 enum class Carve : std::uint8_t {
-    None,   // nothing; no partitions/ directory is created
-    Table,  // every partition-table entry
-    All,    // table entries plus every nested find (filesystem, container, kernel, ...)
+    None,   ///< Nothing; no partitions/ directory is created.
+    Table,  ///< Every partition-table entry.
+    All,    ///< Table entries plus every nested find directly under the image or a partition
+            ///< (filesystem, container, kernel, ...).
 };
+/// "none", "table", "all".
 const char* carve_name(Carve c);
 
+/// Everything `analyze()` needs beyond the image.
 struct AnalyzeOptions {
-    std::string
-        out_dir;  // case directory; extracted trees land under <out_dir>/filesystems/<id>/files
-    bool extract = true;   // false: ListingSink, metadata only, nothing written
-    bool history = false;  // emit superseded/deleted versions when the reader can
-    Limits limits;         // run-wide: max_files / max_bytes are shared by every walk
-    ScanOptions scan;
-    // Gaps between claimed ranges shorter than this are not reported as Regions.
-    std::uint64_t min_region_bytes = 4096;
-    // Reader factory. Empty: every filesystem is "unsupported" (Coverage row).
-    ReaderLookup open_reader;
-    // Scanner override (tests). Empty: the builtin signatures with `scan`.
-    Scanner scanner;
-    // Word-swap extension point; see ImageViewHook.
-    ImageViewHook image_view;
-    // Carving into <out_dir>/partitions/. Ignored when out_dir is empty.
-    Carve carve = Carve::All;
-    std::uint64_t max_carve_bytes = 4ull << 30;  // per carved file
+    std::string out_dir;  ///< Case directory; extracted trees land under
+                          ///< `<out_dir>/filesystems/<id>/files`.
+    bool extract =
+        true;  ///< false: a `ListingSink` per filesystem, metadata only, nothing written.
+    bool history =
+        false;      ///< Ask readers for superseded/deleted versions (`fs::WalkOptions::history`).
+    Limits limits;  ///< Run-wide: `max_files` / `max_bytes` are shared by every walk.
+    ScanOptions scan;  ///< Passed to the default Scanner.
+    std::uint64_t min_region_bytes =
+        4096;                  ///< Gaps shorter than this are not reported as Region nodes.
+    ReaderLookup open_reader;  ///< Reader factory. Empty: every filesystem is "unsupported".
+    Scanner scanner;  ///< Scanner override (tests). Empty: the builtin signatures with `scan`.
+    ImageViewHook image_view;  ///< See `ImageViewHook`. Empty: automatic word-swap detection.
+    Carve carve =
+        Carve::All;  ///< Carving into `<out_dir>/partitions/`; ignored when `out_dir` is empty.
+    std::uint64_t max_carve_bytes = 4ull
+                                    << 30;  ///< Per carved file; larger ones get `carve_skipped`
+                                            ///< and a "carve"/"partial" Coverage row.
 };
 
 // One (filesystem node id, entries) pair per walked filesystem, in node order.
+/// One (filesystem node id, entries) pair per walked filesystem, in node
+/// order; the input to `output::listing_to_yaml` / `listing_markdown`.
 using Listings = std::vector<std::pair<std::string, std::vector<EntryResult>>>;
 
 // Analyze `image` (the examiner's evidence, read as `evidence_path`) into `out`.
@@ -107,6 +141,29 @@ using Listings = std::vector<std::pair<std::string, std::vector<EntryResult>>>;
 // `out.run` is left to the caller. Fails only on caller errors (null image,
 // extraction requested without out_dir); hostile images produce nodes,
 // diagnostics and coverage rows, never a failure.
+/// Run the pipeline in the file comment on `image` and append the result to
+/// `out`: one Evidence row (id "e<n>", path `evidence_path`, digests from
+/// `hash_span`), an Image node, and everything found beneath it. `out.run` is
+/// left to the caller.
+///
+/// Fails only on caller errors: "analyze-no-image" (null `image`) and
+/// "analyze-no-out-dir" (`extract` without `out_dir`). A hostile image
+/// produces nodes, diagnostics and Coverage rows, never a failure. Writes
+/// to the host only under `opts.out_dir` (`filesystems/<id>/files`,
+/// `partitions/`); the manifest and Markdown files are the CLI's job.
+///
+/// ```cpp
+/// omnitrace::Manifest m;
+/// omnitrace::discovery::Listings listings;
+/// omnitrace::discovery::AnalyzeOptions opts;
+/// opts.out_dir = "case-router";
+/// opts.open_reader = [](const std::string& f) {
+///     return omnitrace::fs::FilesystemRegistry::instance().create(f);
+/// };
+/// if (auto st = omnitrace::discovery::analyze(file, "router.bin", opts, m, listings); !st)
+///     return st;
+/// std::string yaml = omnitrace::output::manifest_to_yaml(m);
+/// ```
 Status analyze(const std::shared_ptr<const Source>& image, const std::string& evidence_path,
                const AnalyzeOptions& opts, Manifest& out, Listings& listings);
 
@@ -116,10 +173,18 @@ Status analyze(const std::shared_ptr<const Source>& image, const std::string& ev
 // a nested filesystem carved on its own) and the Linux `mount -t` type for it.
 // jffs2 / ubifs / yaffs2 carves are listed in a comment with the mtdram /
 // nandsim instructions instead. Deterministic: rendered from `m` only.
+/// Text of `<out_dir>/partitions/mount.sh`: the examiner's template with
+/// `PARTITION_NAMES` / `PARTITION_TYPES` filled from every carved file whose
+/// first byte is a loop-mountable filesystem, in image order. jffs2 / ubifs /
+/// yaffs2 carves go in a comment block with mtdram / nandsim instructions.
+/// Deterministic: rendered from `m` only.
 std::string mount_script_text(const Manifest& m);
 
 // Linux `mount -t` type for a filesystem format ("ext4" for ext2/3/4, "vfat"
 // for fat, ...); empty when the format is not loop-mountable this way.
+/// Linux `mount -t` type for a filesystem format ("ext4" for ext2/3/4, "vfat"
+/// for fat, ...); empty when the format is not loop-mountable this way
+/// (table in docs/CASE_LAYOUT.md).
 std::string mount_type_for(const std::string& format);
 
 }  // namespace omnitrace::discovery

@@ -1,35 +1,88 @@
 # OmniTrace v2
 
-Open-source, offline, cross-platform forensic analysis for embedded systems. Feed it a raw SPI/eMMC/NAND dump, an MTD partition, or a firmware update package and get back a traceable evidence graph: image, partition, filesystem, file (including deleted and superseded versions), byte range, artifact, report.
+OmniTrace is an offline, cross-platform forensic analysis tool for embedded systems, written in C++20. Give it a raw SPI, NAND or eMMC dump and it hashes the evidence, maps the partitions and filesystems inside it, carves each one to its own file, extracts what it can read, and writes the whole result as a case directory that people read as Markdown and tools read as YAML.
 
-Status: Phase 0 (foundation). See `DEVELOPMENT_PLAN.md`, `docs/ARCHITECTURE.md`, `docs/COMPETITIVE_LANDSCAPE.md`, `docs/MORIA_SPIKE.md`.
+It is for forensic examiners who receive flash dumps rather than phone extractions, embedded security researchers who want a traceable map of an image before they start digging, and agents or scripts that consume `INFO.yaml` and never look at a terminal.
 
-## Build
+**Status:** Phase 0 complete: format identification (21 validators, 50 signatures), MBR/EBR/GPT partition tables, a SquashFS reader, and the examiner case layout. Phase 1 readers (ext4, JFFS2, UBIFS, YAFFS2, QNX) are in progress. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
-```
-cmake --preset linux-gcc        # or linux-clang, linux-asan, windows-msvc, macos-clang
+## Quick start
+
+```sh
+cmake --preset linux-gcc
 cmake --build --preset linux-gcc --parallel
 ctest --preset linux-gcc
-./build/linux-gcc/apps/cli/omnitrace --help
+./build/linux-gcc/apps/cli/omnitrace analyze router.bin --out case-router
+less case-router/INFO.md
 ```
 
-Linux presets use system packages (zlib, xz, lz4, zstd, openssl, yaml-cpp, nlohmann-json, CLI11, spdlog, gtest). The `windows-msvc`, `macos-clang` and `linux-vcpkg` presets use vcpkg manifest mode and need `VCPKG_ROOT` set.
+Linux presets use system packages; `CONTRIBUTING.md` lists them per distro and covers macOS and Windows through vcpkg.
 
-## Layout
+`router.bin` stands for any raw dump you have; on a 16 MB OpenWrt SPI dump the run takes about a second and `INFO.md` starts like this (trimmed):
 
 ```
-include/omnitrace/   public headers (the contracts)
-src/core             Source, Span, Hash, Node, Manifest, Sink, Clock, Compression
-src/discovery        signatures (TOML), scanner, validators, conflict resolution
-src/containers       tar, zip, cpio, gzip/xz/lz4/zstd, uImage, FIT, sparse, boot
-src/images           partition tables, UBI, NAND OOB, vendor layouts
-src/filesystems      squashfs, jffs2, ubifs, yaffs2, ext, fat, qnx6, qnxifs, cramfs, romfs
-src/output           YAML manifest, Markdown renderers, JSON schema
-apps/cli             the omnitrace binary
-signatures/          *.toml signature sets, embedded at build time
-tests/unit/<layer>   GoogleTest, globbed per layer
-tests/fixtures       synthetic image generator (Docker) with known deleted/overwritten files
-tests/parity         diff harness vs unblob, binwalk, moria
+## Evidence
+
+| Id | Path       | Size               | MD5      | SHA-1    | SHA-256                                                          |
+|----|------------|--------------------|----------|----------|------------------------------------------------------------------|
+| e1 | router.bin | 16.0 MiB (16777216)| 87243471…| 6783d6c1…| 56a97e35baf7f6fd9c40047c3a2727b35aa6af40d8eb9beb13b979b8a4e5eea9 |
+
+## Map
+
+- `n000001` image raw "router.bin" @ 0x0 16.0 MiB (16777216) [verified (99)]
+  - `n000002` region "unidentified" @ 0x0 320.0 KiB (327680) [reject (0)]
+  - `n000003` container uimage "MIPS OpenWrt Linux-4.14.63" @ 0x50000 1.5 MiB (1544773) [verified (99)]
+  - `n000004` filesystem squashfs "squashfs" @ 0x1c9245 10.5 MiB (11055104) [consistent (85)]
+  - `n003388` region "unidentified" @ 0xc54245 47.4 KiB (48571) [reject (0)]
+  - `n003389` filesystem jffs2 "jffs2" @ 0xc60000 3.6 MiB (3735564) [verified (99)]
+  - `n003390` region "unidentified" @ 0xff000c 64.0 KiB (65524) [reject (0)]
+
+# Partitions carved
+
+| File                             | Offset   | Size     | Kind                | SHA-256   |
+|----------------------------------|----------|----------|---------------------|-----------|
+| partitions/0x00050000-uimage.bin | 0x50000  | 1.5 MiB  | container/uimage    | 477f0b77… |
+| partitions/0x001c9245-squashfs.bin | 0x1c9245 | 10.5 MiB | filesystem/squashfs | cd810305… |
+| partitions/0x00c60000-jffs2.bin  | 0xc60000 | 3.6 MiB  | filesystem/jffs2    | 335b5a3f… |
+
+# Coverage
+
+| Format   | Status      | Detail                          |
+|----------|-------------|---------------------------------|
+| uimage   | unsupported | no container reader registered  |
+| squashfs | supported   |                                 |
+| jffs2    | unsupported | no reader registered            |
+| carve    | supported   |                                 |
 ```
 
-License: Apache-2.0.
+The coverage table is the honest part: a format the scanner recognises but cannot yet extract is reported, never skipped.
+
+## What you get
+
+`analyze` writes one case directory. The image itself is never modified and never copied unless you pass `--copy-image`.
+
+- `INFO.yaml`: the manifest (schema `omnitrace/1`): run info, evidence hashes, every node with its byte range, coverage, diagnostics. `manifest.yaml` is an alias.
+- `INFO.md`: the same, rendered for people: summary, partition map, carved-partition table, coverage.
+- `flash/SOURCE.yaml`: path, size, MD5/SHA-1/SHA-256 and acquisition time of the evidence.
+- `partitions/<name>.bin`: one file per partition entry or nested find, hashed as it is written; `p6-system.bin` from a GPT label, `0x001c9245-squashfs.bin` for a find without a table entry.
+- `partitions/mount.sh`: a loop-mount script with `PARTITION_NAMES` and `PARTITION_TYPES` filled in.
+- `filesystems/<node-id>/listing.yaml`, `listing.md` and `files/`: the inventory (mode, uid/gid, timestamps, inode, digests) and the extracted tree of every filesystem with a reader.
+
+The full contract is [docs/CASE_LAYOUT.md](docs/CASE_LAYOUT.md); the commands and flags are in [docs/CLI.md](docs/CLI.md).
+
+## Where to go next
+
+| You want to | Read |
+|---|---|
+| find any document in the project | [docs/README.md](docs/README.md) |
+| build on your OS, run the tests, send a change | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| understand the layers and the data flow in an hour | [docs/CODE_TOUR.md](docs/CODE_TOUR.md) |
+| add a validator, a reader, a signature or a CLI command | [docs/EXTENDING.md](docs/EXTENDING.md) |
+| read the public headers in order or build the API reference | [docs/API.md](docs/API.md) |
+| know which formats are identified, sized and extracted today | [docs/reference/FORMATS.md](docs/reference/FORMATS.md) |
+| know the rules every change must follow | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| see what is next and where to start | [docs/ROADMAP.md](docs/ROADMAP.md) |
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

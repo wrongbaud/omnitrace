@@ -1,23 +1,33 @@
 # OmniTrace CLI
 
-`omnitrace` is the command-line front end. Every command reads evidence
-through a memory-mapped, read-only `Source`; nothing ever writes to the image.
-Exit status is `0` on success and `1` on any failure (unreadable image, case
-directory not writable, manifest that does not round-trip).
+This page is for examiners running `omnitrace` and for anyone scripting it.
+After reading it you can hash an image, list what the scanner finds, produce
+a case directory with the options that matter for evidence handling, and read
+what the tool prints. The exact option list is generated from the source into
+`docs/reference/CLI_FLAGS.md` and checked by `scripts/check_docs.py`; this
+page explains what the options do.
+
+`omnitrace` is the command-line front end (`apps/cli/main.cpp`,
+`apps/cli/analyze_commands.cpp`). Every command reads evidence through a
+memory-mapped, read-only `Source`; nothing ever writes to the image. Exit
+status is `0` on success and `1` on any failure (unreadable image, case
+directory not writable, manifest that does not round-trip). `-h, --help` on
+any command prints the CLI11 help.
 
 ```
 omnitrace [-v] <command> [options]
 
-  hash     <image>                     MD5 / SHA-1 / SHA-256 of an evidence file
+  hash     <file>                      MD5 / SHA-1 / SHA-256 of an evidence file
   scan     <image> [--json]            format signatures found in the image
   analyze  <image> --out DIR [...]     the case directory (docs/CASE_LAYOUT.md)
   --version                            print the version
   -v, --verbose                        debug logging (goes to stderr)
 ```
 
-## `hash <image>`
+## `hash <file>`
 
-One pass over the file, three digests. Output is `key: value` lines.
+One pass over the file, three digests. Output is `key: value` lines
+(`path`, `size`, `md5`, `sha1`, `sha256`).
 
 ## `scan <image> [--json]`
 
@@ -98,6 +108,8 @@ The end-to-end pipeline:
 
 Every limit that trips is visible: the node gets `truncated: "true"` in its
 attrs, a `Warning` diagnostic, and the format's coverage row becomes `partial`.
+Every diagnostic code that can appear in `INFO.yaml` is catalogued with its
+meaning and the examiner's next step in `docs/reference/DIAGNOSTICS.md`.
 
 ### Stdout
 
@@ -198,10 +210,10 @@ omnitrace scan firmware.bin --json | jq '.findings[] | {offset_hex, format, tier
 
 ### End-to-end smoke
 
-With the sample router image:
+With a 16 MiB OpenWrt SPI-flash dump from a local corpus (`router.bin`):
 
 ```sh
-omnitrace analyze corpus/router-example/flash/router.bin --out case-router
+omnitrace analyze router.bin --out case-router
 grep -E "offset_hex|format:" case-router/INFO.yaml | paste - - | grep -E "uimage|squashfs|jffs2"
 ls case-router/partitions
 ```
@@ -211,10 +223,11 @@ should list `uimage` at `0x50000`, `squashfs` at `0x1c9245` and `jffs2` at
 lands), the extracted rootfs under `case-router/filesystems/<id>/files/`, and
 `partitions/` holding `0x00050000-uimage.bin`, `0x001c9245-squashfs.bin`,
 `0x00c60000-jffs2.bin` and a `mount.sh` whose arrays name the squashfs carve
-(the jffs2 one is in the mtdram comment block). With the eMMC corpus:
+(the jffs2 one is in the mtdram comment block). With a GPT-partitioned
+eMMC dump from a local corpus:
 
 ```sh
-omnitrace analyze corpus/auto-ivi-example/flash/UserData.BIN --out case-hk --carve table --max-carve-bytes 64M
+omnitrace analyze emmc.img --out case-emmc --carve table --max-carve-bytes 64M
 ```
 
 carves `p1-dtb.bin` ... `p16-kpanic.bin` from the GPT labels, skips
