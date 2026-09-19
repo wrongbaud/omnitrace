@@ -268,28 +268,31 @@ Engine: RE2 set-matching over memory-mapped file contents and regions, with a si
 
 ## 6. Output contract (the Phase 1 deliverable)
 
-The case directory is the API. Anything an agent or downstream tool needs is on disk:
+The case directory is the API. It follows the examiner's extraction template (decided 2026-09-19): the original image stays untouched, every partition and every nested find is carved to its own file, a mount script is generated, and an INFO pair describes the image for people and agents.
 
 ```
 case-dir/
-├── manifest.yaml           # Evidence, Nodes, Coverage, ToolRecords — the whole graph
-├── summary.md              # human/agent readable overview: image, partitions, filesystems, platform
-├── partitions.md           # table: offset, size, type, FS, confidence, warnings
+├── INFO.yaml               # the manifest: run info, evidence hashes, the whole Node graph, coverage, tools, diagnostics
+├── INFO.md                 # summary, partition map, carved-partition table, coverage, diagnostics (rendered from INFO.yaml)
+├── flash/SOURCE.yaml       # path, size, MD5/SHA-1/SHA-256, acquisition time of the original (image copied only with --copy-image)
+├── partitions/
+│   ├── p6-system.bin       # GPT entry: "p<index>-<label>.bin"; MBR entry: "p<index>.bin"
+│   ├── 0x03100000-squashfs.bin   # nested find with no table entry: "0x<offset,8 hex>-<format>.bin"
+│   └── mount.sh            # examiner template with PARTITION_NAMES / PARTITION_TYPES filled in
 ├── filesystems/<node-id>/
-│   ├── listing.yaml        # every FileEntry incl. deleted/superseded
+│   ├── listing.yaml        # every FileEntry incl. deleted/superseded, with hashes
 │   ├── listing.md
 │   └── files/              # extracted tree (superseded versions in .omnitrace-versions/)
-├── artifacts.yaml, artifacts.md
-├── findings.yaml           # examiner dispositions
-├── timeline.csv
-├── regions/                # carved/unallocated blobs
-├── report/index.html       # self-contained
-└── case.db                 # SQLite index, rebuildable from the above
+├── artifacts.yaml, artifacts.md     # Phase 2
+├── findings.yaml                    # examiner dispositions (Phase 2)
+├── timeline.csv                     # Phase 2
+├── report/index.html                # Phase 2
+└── manifest.yaml, summary.md, partitions.md   # compatibility names for INFO.yaml / INFO.md sections
 ```
 
-Manifest schema versioned (`schema: omnitrace/1`), JSON-Schema published in `docs/schema/`, validated in CI. Markdown files are generated from the YAML by `output/`, never hand-edited.
+Rules: carving streams and hashes; a partition above `--max-carve-bytes` (default 4 GiB) is skipped with a Coverage row and a node diagnostic, never silently. Names pass through `safe_filename_component`. Partition tables are sized to the table itself and never absorb the findings inside them; a missing primary GPT is recovered from the backup header with a `gpt-primary-missing` diagnostic. Word-swapped dumps are detected and analysed through a derived view, with `image-word-swapped` recorded on the image node.
 
----
+Manifest schema versioned (`schema: omnitrace/1`), JSON-Schema published in `docs/schema/`, validated in CI. Markdown files are generated from the YAML by `output/`, never hand-edited.
 
 ## 7. Reporting (`omnireport`)
 
