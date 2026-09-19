@@ -1,0 +1,574 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OmniTrace manifest",
+  "description": "manifest.yaml (schema omnitrace/1): the whole case as data. Keys are emitted in the order listed under each object's `properties`. Integers are decimal; `offset_hex` and `*_iso` keys are read-only conveniences derived from their integer twins.",
+  "type": "object",
+  "required": [
+    "schema",
+    "run",
+    "evidence",
+    "nodes",
+    "coverage",
+    "tools",
+    "diagnostics"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "omnitrace/1",
+      "description": "Manifest schema identifier."
+    },
+    "run": {
+      "$ref": "#/$defs/run"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      },
+      "description": "Evidence files as given by the examiner, in argument order."
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      },
+      "description": "The evidence graph in insertion order; ids are sequential."
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/coverage"
+      },
+      "description": "One row per capability the run could or could not exercise."
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/tool"
+      },
+      "description": "External tools invoked during the run."
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      },
+      "description": "Run-level diagnostics."
+    }
+  },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "description": "Who produced this manifest and when.",
+      "required": [
+        "tool",
+        "version",
+        "git_sha",
+        "started_at",
+        "finished_at",
+        "host_os",
+        "argv"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "type": "string",
+          "description": "Producer name, normally \"omnitrace\"."
+        },
+        "version": {
+          "type": "string",
+          "description": "Producer version (OMNITRACE_VERSION)."
+        },
+        "git_sha": {
+          "type": "string",
+          "description": "Producer git commit if known; empty otherwise."
+        },
+        "started_at": {
+          "type": "string",
+          "description": "ISO-8601 UTC start of the run; empty if unknown."
+        },
+        "finished_at": {
+          "type": "string",
+          "description": "ISO-8601 UTC end of the run; empty if unknown."
+        },
+        "host_os": {
+          "type": "string",
+          "description": "Host operating system label."
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Command line of the run."
+        }
+      }
+    },
+    "digests": {
+      "type": "object",
+      "description": "MD5, SHA-1 and SHA-256 of the same bytes, lowercase hex.",
+      "required": [
+        "md5",
+        "sha1",
+        "sha256",
+        "bytes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "md5": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{32})?$"
+        },
+        "sha1": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{40})?$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{64})?$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615,
+          "description": "Number of bytes hashed."
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "description": "One examiner-supplied evidence file.",
+      "required": [
+        "id",
+        "path",
+        "size",
+        "acquired_at",
+        "note"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^e[0-9]+$"
+        },
+        "path": {
+          "type": "string",
+          "description": "Path as given by the examiner."
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615,
+          "description": "File size in bytes."
+        },
+        "digests": {
+          "$ref": "#/$defs/digests"
+        },
+        "acquired_at": {
+          "type": "string",
+          "description": "ISO-8601 acquisition time, or empty."
+        },
+        "note": {
+          "type": "string",
+          "description": "Examiner note, or empty."
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "description": "A structured diagnostic: stable kebab-case code plus a human message.",
+      "required": [
+        "severity",
+        "code",
+        "message"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "description": "Stable machine slug, e.g. \"jffs2-crc-mismatch\"."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human sentence."
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "description": "Where the node's bytes live, relative to a Source.",
+      "required": [
+        "source",
+        "offset",
+        "offset_hex",
+        "length"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Source id the offset is relative to."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615,
+          "description": "Byte offset, decimal."
+        },
+        "offset_hex": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]+$",
+          "description": "Lowercase hex twin of `offset`; ignored on read."
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615,
+          "description": "Byte length; 0 = unknown."
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "description": "Per-file metadata as recorded by the filesystem. Timestamps are unix seconds with an ISO-8601 twin. `deleted` and `superseded` appear only when true; `version` only when > 0; `link_target` only for symlinks; `rdev_*` only for devices; `extra` only when non-empty.",
+      "required": [
+        "path",
+        "kind",
+        "mode",
+        "mode_octal",
+        "uid",
+        "gid",
+        "size",
+        "inode",
+        "nlink"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "POSIX-style path relative to the filesystem root, no leading '/'."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "regular",
+            "directory",
+            "symlink",
+            "char-device",
+            "block-device",
+            "fifo",
+            "socket",
+            "unknown"
+          ]
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Permission bits (and type bits if the FS has them), decimal."
+        },
+        "mode_octal": {
+          "type": "string",
+          "pattern": "^[0-7]{4}$",
+          "description": "Low 12 bits of `mode` in octal; ignored on read."
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Owner user id."
+        },
+        "gid": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Owner group id."
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615,
+          "description": "Size in bytes."
+        },
+        "mtime": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807,
+          "description": "Modification time, unix seconds."
+        },
+        "mtime_iso": {
+          "type": "string",
+          "pattern": "^-?[0-9]{4,}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "description": "ISO-8601 twin of `mtime`; ignored on read."
+        },
+        "mtime_nsec": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Nanosecond part of `mtime`."
+        },
+        "ctime": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807,
+          "description": "Inode change time, unix seconds."
+        },
+        "ctime_iso": {
+          "type": "string",
+          "pattern": "^-?[0-9]{4,}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "description": "ISO-8601 twin of `ctime`; ignored on read."
+        },
+        "ctime_nsec": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Nanosecond part of `ctime`."
+        },
+        "atime": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807,
+          "description": "Access time, unix seconds."
+        },
+        "atime_iso": {
+          "type": "string",
+          "pattern": "^-?[0-9]{4,}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "description": "ISO-8601 twin of `atime`; ignored on read."
+        },
+        "atime_nsec": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Nanosecond part of `atime`."
+        },
+        "crtime": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807,
+          "description": "Creation time, unix seconds."
+        },
+        "crtime_iso": {
+          "type": "string",
+          "pattern": "^-?[0-9]{4,}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "description": "ISO-8601 twin of `crtime`; ignored on read."
+        },
+        "inode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615,
+          "description": "Inode number; 0 if the FS has none."
+        },
+        "nlink": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Hard link count; 0 if unknown."
+        },
+        "link_target": {
+          "type": "string",
+          "description": "Symlink target."
+        },
+        "rdev_major": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Device major number."
+        },
+        "rdev_minor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Device minor number."
+        },
+        "deleted": {
+          "const": true,
+          "description": "No live directory entry points at this entry."
+        },
+        "superseded": {
+          "const": true,
+          "description": "An older version of a file that still has a live entry."
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 18446744073709551615,
+          "description": "FS-recorded version of this inode (JFFS2 version, UBIFS sqnum order, YAFFS2 sequence)."
+        },
+        "extra": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "FS-specific extras (compression, xattr summary, ...)."
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "description": "One node of the evidence graph. `file` is present only for kind \"file\"; `digests` only when hashed.",
+      "required": [
+        "id",
+        "parent",
+        "kind",
+        "name",
+        "format",
+        "location",
+        "confidence",
+        "evidence",
+        "endian",
+        "attrs",
+        "diagnostics",
+        "children"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^n[0-9]{6,}$",
+          "description": "Sequential id assigned by the graph."
+        },
+        "parent": {
+          "type": "string",
+          "pattern": "^(n[0-9]{6,})?$",
+          "description": "Parent id; empty for a root."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "image",
+            "partition",
+            "container",
+            "filesystem",
+            "file",
+            "region",
+            "artifact"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "Human label: partition name, file name, format label."
+        },
+        "format": {
+          "type": "string",
+          "description": "Format slug (\"squashfs\", \"mbr\", \"gzip\", ...); empty for file/region."
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "confidence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "0-100; see the confidence tiers."
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Why the confidence."
+        },
+        "endian": {
+          "type": "string",
+          "enum": [
+            "little",
+            "big"
+          ]
+        },
+        "attrs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Format-specific attributes: version, compression, arch, label."
+        },
+        "file": {
+          "$ref": "#/$defs/file"
+        },
+        "digests": {
+          "$ref": "#/$defs/digests"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^n[0-9]{6,}$"
+          },
+          "description": "Child ids in insertion order; derived from `parent` on read."
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "format",
+        "status",
+        "detail"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "type": "string",
+          "description": "Format slug."
+        },
+        "status": {
+          "type": "string",
+          "description": "\"supported\" | \"partial\" | \"unsupported\" | \"tool-missing\"."
+        },
+        "detail": {
+          "type": "string",
+          "description": "What was or was not possible."
+        }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "argv",
+        "exit_code",
+        "seconds"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Tool name."
+        },
+        "version": {
+          "type": "string",
+          "description": "Tool version string."
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments the tool was invoked with."
+        },
+        "exit_code": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "seconds": {
+          "type": "number",
+          "description": "Wall time in seconds."
+        }
+      }
+    }
+  }
+}

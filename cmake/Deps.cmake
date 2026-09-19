@@ -33,6 +33,10 @@ if(NOT TARGET yaml-cpp::yaml-cpp)
 endif()
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
+# Pin fmt >= 10 before spdlog's find_dependency(fmt): a distro may ship a
+# legacy fmt9 compat package whose config dir also matches the fmt* glob, and
+# linking a fmt-9 ABI against a spdlog built on fmt 12 fails at link time.
+find_package(fmt 10 CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 
 find_package(tomlplusplus CONFIG QUIET)

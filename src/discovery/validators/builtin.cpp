@@ -1,0 +1,39 @@
+// builtin.cpp — the list of validators compiled into the library. See anchors.h.
+#include "anchors.h"
+
+namespace omnitrace::discovery::detail {
+
+#define OMNITRACE_DECLARE_ANCHOR(name) void omnitrace_validator_anchor_##name();
+#define OMNITRACE_TOUCH_ANCHOR(name) omnitrace_validator_anchor_##name();
+
+OMNITRACE_DECLARE_ANCHOR(squashfs)
+OMNITRACE_DECLARE_ANCHOR(jffs2)
+OMNITRACE_DECLARE_ANCHOR(ubi)
+OMNITRACE_DECLARE_ANCHOR(ext)
+OMNITRACE_DECLARE_ANCHOR(mbr)
+OMNITRACE_DECLARE_ANCHOR(gpt)
+OMNITRACE_DECLARE_ANCHOR(uimage)
+OMNITRACE_DECLARE_ANCHOR(gzip)
+OMNITRACE_DECLARE_ANCHOR(xz)
+OMNITRACE_DECLARE_ANCHOR(lz4)
+OMNITRACE_DECLARE_ANCHOR(zstd)
+OMNITRACE_DECLARE_ANCHOR(android_sparse)
+
+void link_builtin_validators() {
+    // Calling each (empty) anchor is enough to make the linker keep its object
+    // file, and with it the static registrar defined next to the validator.
+    OMNITRACE_TOUCH_ANCHOR(squashfs)
+    OMNITRACE_TOUCH_ANCHOR(jffs2)
+    OMNITRACE_TOUCH_ANCHOR(ubi)
+    OMNITRACE_TOUCH_ANCHOR(ext)
+    OMNITRACE_TOUCH_ANCHOR(mbr)
+    OMNITRACE_TOUCH_ANCHOR(gpt)
+    OMNITRACE_TOUCH_ANCHOR(uimage)
+    OMNITRACE_TOUCH_ANCHOR(gzip)
+    OMNITRACE_TOUCH_ANCHOR(xz)
+    OMNITRACE_TOUCH_ANCHOR(lz4)
+    OMNITRACE_TOUCH_ANCHOR(zstd)
+    OMNITRACE_TOUCH_ANCHOR(android_sparse)
+}
+
+}  // namespace omnitrace::discovery::detail

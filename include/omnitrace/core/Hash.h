@@ -20,7 +20,7 @@ struct Digests {
 };
 
 class Hasher {
-public:
+   public:
     Hasher();
     ~Hasher();
     Hasher(const Hasher&) = delete;
@@ -29,7 +29,7 @@ public:
     Digests finish();  // resets for reuse
     static Digests of(std::span<const std::uint8_t> data);
 
-private:
+   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

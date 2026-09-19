@@ -1,0 +1,420 @@
+# core.toml — built-in format signatures for OmniTrace discovery.
+# Schema and validator contract: docs/formats/signatures.md
+# Offsets are relative to the structure start; magic_offset says where in the
+# structure the magic sits, so the scanner subtracts it from every hit.
+
+# ----------------------------------------------------------------- filesystems
+
+[[signature]]
+name = "squashfs-le"
+format = "squashfs"
+category = "filesystem"
+magic = "hsqs"
+endian = "little"
+validator = "squashfs"
+description = "SquashFS v4 superblock, little-endian"
+references = ["https://dr-emann.github.io/squashfs/", "https://elixir.bootlin.com/linux/latest/source/fs/squashfs/squashfs_fs.h"]
+
+[[signature]]
+name = "squashfs-be"
+format = "squashfs"
+category = "filesystem"
+magic = "sqsh"
+endian = "big"
+validator = "squashfs"
+description = "SquashFS v4 superblock, big-endian"
+references = ["https://dr-emann.github.io/squashfs/"]
+
+[[signature]]
+name = "squashfs-vendor-shsq"
+format = "squashfs"
+category = "filesystem"
+magic = "shsq"
+validator = "squashfs"
+description = "SquashFS with vendor (DD-WRT/Broadcom) magic 'shsq'; byte order inferred from the version field"
+references = ["https://github.com/ReFirmLabs/binwalk/blob/master/src/binwalk/magic/filesystems"]
+
+[[signature]]
+name = "squashfs-vendor-qshs"
+format = "squashfs"
+category = "filesystem"
+magic = "qshs"
+validator = "squashfs"
+description = "SquashFS with vendor magic 'qshs'; byte order inferred from the version field"
+
+[[signature]]
+name = "jffs2-le"
+format = "jffs2"
+category = "filesystem"
+hex = "8519"
+endian = "little"
+alignment = 4
+validator = "jffs2"
+description = "JFFS2 node (magic 0x1985 stored little-endian); node header CRC verified"
+references = ["https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/jffs2.h"]
+
+[[signature]]
+name = "jffs2-be"
+format = "jffs2"
+category = "filesystem"
+hex = "1985"
+endian = "big"
+alignment = 4
+validator = "jffs2"
+description = "JFFS2 node (magic 0x1985 stored big-endian); node header CRC verified"
+
+[[signature]]
+name = "ubi"
+format = "ubi"
+category = "container"
+magic = "UBI#"
+endian = "big"
+validator = "ubi"
+description = "UBI erase-counter header at the start of a physical erase block"
+references = ["https://elixir.bootlin.com/linux/latest/source/drivers/mtd/ubi/ubi-media.h"]
+
+[[signature]]
+name = "ubifs"
+format = "ubifs"
+category = "filesystem"
+hex = "31181006"
+endian = "little"
+description = "UBIFS node magic (superblock node at the start of a UBIFS volume)"
+references = ["https://elixir.bootlin.com/linux/latest/source/fs/ubifs/ubifs-media.h"]
+
+[[signature]]
+name = "ext"
+format = "ext"
+category = "filesystem"
+hex = "53ef"
+magic_offset = 0x438
+endian = "little"
+validator = "ext"
+description = "ext2/ext3/ext4 superblock magic 0xEF53 at 0x38 into the superblock, which sits 1024 bytes into the filesystem"
+references = ["https://www.kernel.org/doc/html/latest/filesystems/ext4/globals.html"]
+
+[[signature]]
+name = "cramfs-le"
+format = "cramfs"
+category = "filesystem"
+hex = "453dcd28"
+endian = "little"
+description = "cramfs superblock, little-endian"
+references = ["https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/cramfs_fs.h"]
+
+[[signature]]
+name = "cramfs-be"
+format = "cramfs"
+category = "filesystem"
+hex = "28cd3d45"
+endian = "big"
+description = "cramfs superblock, big-endian"
+
+[[signature]]
+name = "romfs"
+format = "romfs"
+category = "filesystem"
+magic = "-rom1fs-"
+endian = "big"
+description = "romfs superblock"
+references = ["https://www.kernel.org/doc/Documentation/filesystems/romfs.txt"]
+
+[[signature]]
+name = "qnx6-le"
+format = "qnx6"
+category = "filesystem"
+hex = "22111968"
+magic_offset = 0x2000
+endian = "little"
+description = "QNX6 (Power-Safe) superblock magic 0x68191122; the first superblock sits 0x2000 bytes into the partition, after the boot block"
+references = ["https://elixir.bootlin.com/linux/latest/source/fs/qnx6/qnx6.h", "https://www.qnx.com/developers/docs/7.1/#com.qnx.doc.neutrino.sys_arch/topic/fsys_Power-Safe_filesystem.html"]
+
+[[signature]]
+name = "qnx6-be"
+format = "qnx6"
+category = "filesystem"
+hex = "68191122"
+magic_offset = 0x2000
+endian = "big"
+description = "QNX6 (Power-Safe) superblock magic 0x68191122, big-endian"
+
+[[signature]]
+name = "qnx-ifs"
+format = "qnx-ifs"
+category = "filesystem"
+hex = "eb7eff00"
+endian = "little"
+description = "QNX IFS startup header (magic 0x00FF7EEB)"
+references = ["https://www.qnx.com/developers/docs/7.1/#com.qnx.doc.neutrino.building/topic/startup_header.html"]
+
+# ------------------------------------------------------------------ containers
+
+[[signature]]
+name = "cpio-newc"
+format = "cpio"
+category = "container"
+magic = "070701"
+description = "cpio archive, SVR4 'newc' ASCII header"
+references = ["https://www.kernel.org/doc/html/latest/driver-api/early-userspace/buffer-format.html"]
+
+[[signature]]
+name = "cpio-crc"
+format = "cpio"
+category = "container"
+magic = "070702"
+description = "cpio archive, SVR4 ASCII header with CRC"
+
+[[signature]]
+name = "cpio-odc"
+format = "cpio"
+category = "container"
+magic = "070707"
+description = "cpio archive, POSIX 'odc' ASCII header"
+
+[[signature]]
+name = "tar-ustar"
+format = "tar"
+category = "container"
+magic = "ustar"
+magic_offset = 257
+description = "POSIX ustar / GNU tar header (magic at 257 into the 512-byte header)"
+references = ["https://www.gnu.org/software/tar/manual/html_node/Standard.html"]
+
+[[signature]]
+name = "zip"
+format = "zip"
+category = "container"
+hex = "504b0304"
+endian = "little"
+description = "ZIP local file header"
+references = ["https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT"]
+
+[[signature]]
+name = "7z"
+format = "7z"
+category = "container"
+hex = "377abcaf271c"
+endian = "little"
+description = "7-Zip archive signature header"
+
+[[signature]]
+name = "uimage"
+format = "uimage"
+category = "container"
+hex = "27051956"
+endian = "big"
+validator = "uimage"
+description = "U-Boot legacy image header; header CRC verified, payload CRC checked"
+references = ["https://source.denx.de/u-boot/u-boot/-/blob/master/include/image.h"]
+
+[[signature]]
+name = "fit-dtb"
+format = "dtb"
+category = "other"
+hex = "d00dfeed"
+endian = "big"
+description = "Flattened device tree blob (also U-Boot FIT images)"
+references = ["https://devicetree-specification.readthedocs.io/en/latest/chapter5-flattened-format.html"]
+
+[[signature]]
+name = "android-boot"
+format = "android-boot"
+category = "container"
+magic = "ANDROID!"
+endian = "little"
+description = "Android boot image header"
+references = ["https://source.android.com/docs/core/architecture/bootloader/boot-image-header"]
+
+[[signature]]
+name = "android-sparse"
+format = "android-sparse"
+category = "container"
+hex = "ed26ff3a"
+endian = "little"
+validator = "android-sparse"
+description = "Android sparse image (simg); chunk list walked"
+references = ["https://android.googlesource.com/platform/system/core/+/master/libsparse/sparse_format.h"]
+
+# ------------------------------------------------------------ partition tables
+
+[[signature]]
+name = "mbr"
+format = "mbr"
+category = "partition-table"
+hex = "55aa"
+magic_offset = 510
+endian = "little"
+validator = "mbr"
+ebr_max_chain = 128
+description = "DOS/MBR partition table (0x55AA at 510); EBR chains walked up to ebr_max_chain links"
+
+[[signature]]
+name = "gpt"
+format = "gpt"
+category = "partition-table"
+magic = "EFI PART"
+magic_offset = 512
+endian = "little"
+validator = "gpt"
+max_entries = 1024
+description = "GUID partition table with 512-byte sectors (header at LBA 1)"
+references = ["https://uefi.org/specs/UEFI/2.10/05_GUID_Partition_Table_Format.html"]
+
+[[signature]]
+name = "gpt-4k"
+format = "gpt"
+category = "partition-table"
+magic = "EFI PART"
+magic_offset = 4096
+endian = "little"
+validator = "gpt"
+max_entries = 1024
+description = "GUID partition table with 4096-byte sectors (header at LBA 1)"
+
+# ------------------------------------------------------------------ compressed
+
+[[signature]]
+name = "gzip"
+format = "gzip"
+category = "compressed"
+hex = "1f8b08"
+endian = "little"
+validator = "gzip"
+max_name_len = 4096
+description = "gzip member with deflate compression"
+references = ["https://www.rfc-editor.org/rfc/rfc1952"]
+
+[[signature]]
+name = "xz"
+format = "xz"
+category = "compressed"
+hex = "fd377a585a00"
+endian = "little"
+validator = "xz"
+description = ".xz stream header; stream flags CRC verified"
+references = ["https://tukaani.org/xz/xz-file-format.txt"]
+
+[[signature]]
+name = "lz4-frame"
+format = "lz4"
+category = "compressed"
+hex = "04224d18"
+endian = "little"
+validator = "lz4"
+description = "LZ4 frame"
+references = ["https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md"]
+
+[[signature]]
+name = "zstd"
+format = "zstd"
+category = "compressed"
+hex = "28b52ffd"
+endian = "little"
+validator = "zstd"
+description = "Zstandard frame"
+references = ["https://www.rfc-editor.org/rfc/rfc8878"]
+
+# ------------------------------------------------------------------ executables
+
+[[signature]]
+name = "elf"
+format = "elf"
+category = "other"
+hex = "7f454c46"
+description = "ELF executable, shared object or relocatable"
+references = ["https://refspecs.linuxfoundation.org/elf/elf.pdf"]
+
+# ------------------------------------------------------------------------ crypto
+
+[[signature]]
+name = "pem-certificate"
+format = "pem"
+category = "crypto"
+magic = "-----BEGIN CERTIFICATE-----"
+description = "PEM-encoded X.509 certificate"
+references = ["https://www.rfc-editor.org/rfc/rfc7468"]
+
+[[signature]]
+name = "pem-certificate-request"
+format = "pem"
+category = "crypto"
+magic = "-----BEGIN CERTIFICATE REQUEST-----"
+description = "PEM-encoded PKCS#10 certificate request"
+
+[[signature]]
+name = "pem-crl"
+format = "pem"
+category = "crypto"
+magic = "-----BEGIN X509 CRL-----"
+description = "PEM-encoded certificate revocation list"
+
+[[signature]]
+name = "pem-public-key"
+format = "pem"
+category = "crypto"
+magic = "-----BEGIN PUBLIC KEY-----"
+description = "PEM-encoded SubjectPublicKeyInfo"
+
+[[signature]]
+name = "pem-rsa-public-key"
+format = "pem"
+category = "crypto"
+magic = "-----BEGIN RSA PUBLIC KEY-----"
+description = "PEM-encoded PKCS#1 RSA public key"
+
+[[signature]]
+name = "pem-private-key"
+format = "pem-private-key"
+category = "crypto"
+magic = "-----BEGIN PRIVATE KEY-----"
+description = "PEM-encoded PKCS#8 private key (unencrypted)"
+
+[[signature]]
+name = "pem-encrypted-private-key"
+format = "pem-private-key"
+category = "crypto"
+magic = "-----BEGIN ENCRYPTED PRIVATE KEY-----"
+description = "PEM-encoded PKCS#8 private key (encrypted)"
+
+[[signature]]
+name = "pem-rsa-private-key"
+format = "pem-private-key"
+category = "crypto"
+magic = "-----BEGIN RSA PRIVATE KEY-----"
+description = "PEM-encoded PKCS#1 RSA private key"
+
+[[signature]]
+name = "pem-ec-private-key"
+format = "pem-private-key"
+category = "crypto"
+magic = "-----BEGIN EC PRIVATE KEY-----"
+description = "PEM-encoded SEC1 EC private key"
+
+[[signature]]
+name = "pem-dsa-private-key"
+format = "pem-private-key"
+category = "crypto"
+magic = "-----BEGIN DSA PRIVATE KEY-----"
+description = "PEM-encoded DSA private key"
+
+[[signature]]
+name = "openssh-private-key"
+format = "openssh-private-key"
+category = "crypto"
+magic = "-----BEGIN OPENSSH PRIVATE KEY-----"
+description = "OpenSSH private key (openssh-key-v1 inside PEM armour)"
+references = ["https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.key"]
+
+[[signature]]
+name = "pgp-private-key"
+format = "pgp"
+category = "crypto"
+magic = "-----BEGIN PGP PRIVATE KEY BLOCK-----"
+description = "ASCII-armoured PGP private key"
+
+[[signature]]
+name = "pgp-public-key"
+format = "pgp"
+category = "crypto"
+magic = "-----BEGIN PGP PUBLIC KEY BLOCK-----"
+description = "ASCII-armoured PGP public key"

@@ -28,7 +28,7 @@ struct ByteRange {
 };
 
 class Span {
-public:
+   public:
     Span() = default;
     Span(std::shared_ptr<const Source> src, std::uint64_t base, std::uint64_t len);
     static Span whole(std::shared_ptr<const Source> src);
@@ -54,7 +54,9 @@ public:
         if (read(off, std::span<std::uint8_t>(buf, sizeof(T))) != sizeof(T)) return std::nullopt;
         return load_int<T>(buf, e);
     }
-    std::optional<std::uint8_t> u8(std::uint64_t off) const { return at<std::uint8_t>(off, Endian::Little); }
+    std::optional<std::uint8_t> u8(std::uint64_t off) const {
+        return at<std::uint8_t>(off, Endian::Little);
+    }
 
     // Copy n bytes at off into a vector. nullopt on overrun.
     std::optional<std::vector<std::uint8_t>> bytes(std::uint64_t off, std::size_t n) const;
@@ -68,7 +70,7 @@ public:
     // NUL-terminated or fixed-width string at off (max n bytes), stops at first NUL.
     std::optional<std::string> cstring(std::uint64_t off, std::size_t n) const;
 
-private:
+   private:
     std::shared_ptr<const Source> src_;
     std::uint64_t base_ = 0;
     std::uint64_t len_ = 0;

@@ -14,11 +14,13 @@ std::string summary_markdown(const Manifest& m);
 // (offset, size, kind, format, confidence, warnings), nested by depth.
 std::string partitions_markdown(const Manifest& m);
 // listing.md for one filesystem.
-std::string listing_markdown(const std::string& fs_node_id, const std::vector<EntryResult>& entries);
+std::string listing_markdown(const std::string& fs_node_id,
+                             const std::vector<EntryResult>& entries);
 
 // Helpers shared by all renderers.
 std::string md_escape(const std::string& s);
-std::string md_table(const std::vector<std::string>& header, const std::vector<std::vector<std::string>>& rows);
+std::string md_table(const std::vector<std::string>& header,
+                     const std::vector<std::vector<std::string>>& rows);
 std::string human_bytes(std::uint64_t n);
 std::string hex(std::uint64_t v);
 

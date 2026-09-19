@@ -16,3 +16,6 @@ tests/corpus/local/
 __pycache__/
 *.pyc
 .venv/
+
+# Local evidence corpus (never commit images)
+corpus/

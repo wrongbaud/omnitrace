@@ -10,7 +10,9 @@ namespace omnitrace {
 
 enum class Endian : std::uint8_t { Little, Big };
 
-inline const char* endian_name(Endian e) { return e == Endian::Little ? "little" : "big"; }
+inline const char* endian_name(Endian e) {
+    return e == Endian::Little ? "little" : "big";
+}
 
 template <class T>
 inline T byteswap_int(T v) {

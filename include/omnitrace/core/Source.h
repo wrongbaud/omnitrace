@@ -16,7 +16,7 @@
 namespace omnitrace {
 
 class Source : public std::enable_shared_from_this<Source> {
-public:
+   public:
     virtual ~Source() = default;
     virtual std::uint64_t size() const = 0;
     // Stable identifier: file path for a MappedFile, "<parent-id>@<off>+<len>"
@@ -32,14 +32,14 @@ public:
 };
 
 class MemorySource final : public Source {
-public:
+   public:
     MemorySource(std::vector<std::uint8_t> bytes, std::string label);
     std::uint64_t size() const override;
     std::string id() const override;
     std::size_t read(std::uint64_t off, std::span<std::uint8_t> out) const override;
     std::span<const std::uint8_t> map(std::uint64_t off, std::size_t len) const override;
 
-private:
+   private:
     std::vector<std::uint8_t> bytes_;
     std::string label_;
 };
@@ -47,7 +47,7 @@ private:
 // Whole-file read-only mapping (mmap on POSIX, MapViewOfFile on Windows).
 // Files larger than the address space are not supported yet; see docs/ARCHITECTURE.md.
 class MappedFile final : public Source {
-public:
+   public:
     static Status open(const std::string& path, std::shared_ptr<MappedFile>& out);
     ~MappedFile() override;
     MappedFile(const MappedFile&) = delete;
@@ -59,7 +59,7 @@ public:
     std::span<const std::uint8_t> map(std::uint64_t off, std::size_t len) const override;
     const std::string& path() const { return path_; }
 
-private:
+   private:
     MappedFile() = default;
     struct Impl;
     std::unique_ptr<Impl> impl_;
@@ -68,7 +68,7 @@ private:
 
 // A sub-range of another Source. Never copies.
 class SubSource final : public Source {
-public:
+   public:
     SubSource(std::shared_ptr<const Source> parent, std::uint64_t off, std::uint64_t len);
     std::uint64_t size() const override;
     std::string id() const override;
@@ -77,7 +77,7 @@ public:
     const std::shared_ptr<const Source>& parent() const { return parent_; }
     std::uint64_t offset_in_parent() const { return off_; }
 
-private:
+   private:
     std::shared_ptr<const Source> parent_;
     std::uint64_t off_, len_;
 };

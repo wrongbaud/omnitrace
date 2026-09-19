@@ -21,15 +21,15 @@ struct Evidence {
 
 struct RunInfo {
     std::string tool = "omnitrace";
-    std::string version;   // OMNITRACE_VERSION
-    std::string git_sha;   // if known
+    std::string version;                  // OMNITRACE_VERSION
+    std::string git_sha;                  // if known
     std::string started_at, finished_at;  // ISO-8601 from Clock
     std::string host_os;
     std::vector<std::string> argv;
 };
 
 class Manifest {
-public:
+   public:
     static constexpr const char* kSchema = "omnitrace/1";
 
     RunInfo run;
@@ -46,7 +46,7 @@ public:
     std::vector<const Node*> children_of(const std::string& id) const;
     std::size_t count(NodeKind k) const;
 
-private:
+   private:
     std::vector<Node> nodes_;
     std::map<std::string, std::size_t> index_;
 };

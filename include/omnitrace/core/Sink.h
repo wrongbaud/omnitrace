@@ -21,16 +21,16 @@
 namespace omnitrace {
 
 struct EntryResult {
-    FileMeta meta;          // as given, path normalized
-    Digests digests;        // regular files only (when hashing enabled)
-    std::string host_path;  // DiskSink: where it landed; empty otherwise
-    bool written = false;   // DiskSink: bytes landed on disk
-    bool truncated = false; // a Limit stopped the data early
+    FileMeta meta;           // as given, path normalized
+    Digests digests;         // regular files only (when hashing enabled)
+    std::string host_path;   // DiskSink: where it landed; empty otherwise
+    bool written = false;    // DiskSink: bytes landed on disk
+    bool truncated = false;  // a Limit stopped the data early
     std::vector<Diagnostic> diagnostics;
 };
 
 class Sink {
-public:
+   public:
     virtual ~Sink() = default;
 
     // Regular file protocol: begin -> write* -> end. Non-regular entries use
@@ -53,12 +53,12 @@ public:
 // Superseded/deleted versions land under <root>/.omnitrace-versions/<path>/v<version>
 // so the live tree stays a faithful copy of the filesystem.
 class DiskSink final : public Sink {
-public:
+   public:
     struct Options {
         bool hash = true;
-        bool preserve_times = true;   // set mtime on written files when known
-        bool preserve_mode = true;    // chmod (never setuid/setgid/sticky)
-        bool write_versions = true;   // superseded/deleted entries under .omnitrace-versions
+        bool preserve_times = true;  // set mtime on written files when known
+        bool preserve_mode = true;   // chmod (never setuid/setgid/sticky)
+        bool write_versions = true;  // superseded/deleted entries under .omnitrace-versions
         Limits limits;
     };
     static Status open(const std::string& root_dir, Options opts, std::unique_ptr<DiskSink>& out);
@@ -73,14 +73,14 @@ public:
     std::uint64_t bytes_emitted() const override;
     const std::string& root() const;
 
-private:
+   private:
     DiskSink() = default;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
 
 class ListingSink final : public Sink {
-public:
+   public:
     explicit ListingSink(bool hash = false, Limits limits = {});
     ~ListingSink() override;
 
@@ -94,7 +94,7 @@ public:
 
     const std::vector<EntryResult>& entries() const;
 
-private:
+   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

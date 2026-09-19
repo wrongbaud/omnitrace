@@ -23,7 +23,7 @@ struct ContainerInfo {
 };
 
 class ContainerReader {
-public:
+   public:
     virtual ~ContainerReader() = default;
     virtual std::string format() const = 0;
     virtual Status open(const Span& span) = 0;
@@ -34,21 +34,26 @@ public:
 using ReaderFactory = std::function<std::unique_ptr<ContainerReader>()>;
 
 class ContainerRegistry {
-public:
+   public:
     static ContainerRegistry& instance();
     void add(const std::string& format, ReaderFactory f);
     std::unique_ptr<ContainerReader> create(const std::string& format) const;
     std::vector<std::string> formats() const;
 
-private:
+   private:
     std::map<std::string, ReaderFactory> factories_;
 };
 
 struct ContainerRegistrar {
-    ContainerRegistrar(const char* format, ReaderFactory f) { ContainerRegistry::instance().add(format, std::move(f)); }
+    ContainerRegistrar(const char* format, ReaderFactory f) {
+        ContainerRegistry::instance().add(format, std::move(f));
+    }
 };
-#define OMNITRACE_REGISTER_CONTAINER(format, ReaderType)                                   \
-    static ::omnitrace::container::ContainerRegistrar _omnitrace_container_##ReaderType{ \
-        format, [] { return std::unique_ptr<::omnitrace::container::ContainerReader>(new ReaderType()); }}
+#define OMNITRACE_REGISTER_CONTAINER(format, ReaderType)                                       \
+    static ::omnitrace::container::ContainerRegistrar _omnitrace_container_##ReaderType {      \
+        format, [] {                                                                           \
+            return std::unique_ptr<::omnitrace::container::ContainerReader>(new ReaderType()); \
+        }                                                                                      \
+    }
 
 }  // namespace omnitrace::container

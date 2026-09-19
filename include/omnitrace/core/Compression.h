@@ -15,10 +15,12 @@ const char* codec_name(Codec c);
 
 // Decompress `in` into `out` (cleared first). `max_out` caps the output; on cap
 // hit returns fail with code "decompress-cap".
-Status decompress(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out, std::uint64_t max_out);
+Status decompress(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
+                  std::uint64_t max_out);
 
 // Raw-block variants used by filesystems (SquashFS/UBIFS blocks, JFFS2 nodes):
 // exact expected output size, fail if the stream produces more or less.
-Status decompress_exact(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out, std::size_t expected);
+Status decompress_exact(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
+                        std::size_t expected);
 
 }  // namespace omnitrace::compress

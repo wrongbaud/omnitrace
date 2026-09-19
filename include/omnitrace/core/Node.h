@@ -35,7 +35,16 @@ struct Location {
     std::uint64_t length = 0;  // 0 = unknown
 };
 
-enum class EntryKind : std::uint8_t { Regular, Directory, Symlink, CharDevice, BlockDevice, Fifo, Socket, Unknown };
+enum class EntryKind : std::uint8_t {
+    Regular,
+    Directory,
+    Symlink,
+    CharDevice,
+    BlockDevice,
+    Fifo,
+    Socket,
+    Unknown
+};
 const char* entry_kind_name(EntryKind k);
 
 // Per-file metadata captured by filesystem readers. Every field a forensic
@@ -72,8 +81,8 @@ struct Node {
     std::uint8_t confidence = 0;  // 0-100
     std::string evidence;         // why the confidence
     Endian endian = Endian::Little;
-    std::optional<FileMeta> file;  // present when kind == File
-    Digests digests;               // filled for File (regular) and for extracted blobs
+    std::optional<FileMeta> file;              // present when kind == File
+    Digests digests;                           // filled for File (regular) and for extracted blobs
     std::map<std::string, std::string> attrs;  // format-specific: version, compression, arch, label
     std::vector<Diagnostic> diagnostics;
     std::vector<std::string> child_ids;
