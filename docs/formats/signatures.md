@@ -129,24 +129,45 @@ the object file (see `validators/anchors.h`).
 | validator | format(s) | tier reachable | size |
 |---|---|---|---|
 | squashfs | squashfs (LE/BE/vendor magics) | consistent | bytes_used rounded up to 4 KiB |
-| jffs2 | jffs2 | verified | walk of nodes and interior erased gaps; trailing erased space excluded |
+| jffs2 | jffs2 | verified | walk of nodes across erased/dirty gaps up to `max_gap` (obsolete nodes CRC-checked with the accurate bit re-set); trailing erased space excluded; erase size inferred from cleanmarkers |
 | ubi | ubi | verified | PEB size derived from the next EC header; walk of PEBs |
 | ext | ext2 / ext3 / ext4 | verified (metadata_csum) | blocks_count × block_size |
-| mbr | mbr | consistent | end of the last partition; EBR chains walked |
-| gpt | gpt | verified | through the alternate header, else the last partition |
+| mbr | mbr | consistent | 512 (the table sector); the disk is described in attrs (`disk_size`), EBR chains walked and their sectors hidden via `also_covers` |
+| gpt | gpt | verified | the table's own extent: LBA 0 through the end of the entry array (primary) or entry array plus header sector (backup); the disk extent is attrs `disk_size` / `disk_offset` |
 | uimage | uimage (category kernel for kernels) | verified | 64 + data size; payload CRC checked |
 | gzip | gzip | structural | unknown |
 | xz | xz | structural (flags CRC guards it; mismatch drops to magic) | unknown |
 | lz4 | lz4 | structural | unknown |
 | zstd | zstd | structural | unknown |
 | android-sparse | android-sparse | consistent | chunk walk |
+| dtb | dtb | consistent | FDT `totalsize`; header and token stream validated ([dtb.md](dtb.md)) |
+| fit | fit | verified (crc32/md5/sha1/sha256 image hashes) | `totalsize` or the end of external image data ([fit.md](fit.md)) |
+| verity | dm-verity | consistent | superblock block + computed hash tree ([verity.md](verity.md)) |
+| luks | luks | consistent | LUKS1 payload offset; LUKS2 `hdr_size` x 2 ([luks.md](luks.md)) |
+| romfs | romfs | verified (header checksum) | full size rounded to 1 KiB ([romfs.md](romfs.md)) |
+| cramfs | cramfs (both orders) | verified (image CRC) | superblock size field ([cramfs.md](cramfs.md)) |
+| android-boot | android-boot, android-vendor-boot | consistent | sum of page-aligned sections, v0-v4 ([android-boot.md](android-boot.md)) |
+| ubifs | ubifs | verified (superblock node CRC) | `leb_size` x `leb_cnt`; aligned hits only ([ubifs.md](ubifs.md)) |
+| elf | elf | consistent | max extent of program/section headers and segments; unaligned hits must reach consistent ([elf.md](elf.md)) |
 
 Plain magics (no validator) in `core.toml`: cpio (newc/crc/odc), tar (ustar at
-257), zip, 7z, cramfs (both orders), romfs, ubifs, QNX6 (superblock magic
-`0x68191122` at 0x2000 into the partition, both orders), QNX IFS startup
-header, FIT/DTB, ELF, Android boot, PEM certificate / key / CRL labels,
+257), zip, 7z, QNX6 (superblock magic `0x68191122` at 0x2000 into the
+partition, both orders, `alignment = 4096` so copies inside other data are
+ignored), QNX IFS startup header, PEM certificate / key / CRL labels,
 OpenSSH and PGP keys. yaffs2 is deliberately absent until OOB-aware
 validation exists.
+
+`crypto.toml` holds the LUKS and dm-verity signatures. The FDT magic
+`0xd00dfeed` is claimed by two signatures: `fit-dtb` (validator `dtb`,
+format `dtb`) and `fit` (validator `fit`, format `fit`). At the same offset
+the dtb validator steps back to structural when the root has `/images`, so
+the FIT wins and the DTB lands in `also_matched`; DTB images inside a
+verified FIT are absorbed by the nesting rule.
+
+Signature keys read by validators through `Signature::extra`: `max_gap`
+(jffs2), `max_nodes` / `max_props` / `max_depth` (dtb, fit), `max_hash_bytes` (fit), `max_json`
+(luks), `max_name_len` (romfs, gzip), `ebr_max_chain` (mbr), `max_entries`
+(gpt).
 
 ## Adding a signature or validator
 

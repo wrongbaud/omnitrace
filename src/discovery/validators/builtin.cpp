@@ -18,6 +18,14 @@ OMNITRACE_DECLARE_ANCHOR(xz)
 OMNITRACE_DECLARE_ANCHOR(lz4)
 OMNITRACE_DECLARE_ANCHOR(zstd)
 OMNITRACE_DECLARE_ANCHOR(android_sparse)
+OMNITRACE_DECLARE_ANCHOR(fit)
+OMNITRACE_DECLARE_ANCHOR(verity)
+OMNITRACE_DECLARE_ANCHOR(luks)
+OMNITRACE_DECLARE_ANCHOR(romfs)
+OMNITRACE_DECLARE_ANCHOR(cramfs)
+OMNITRACE_DECLARE_ANCHOR(android_boot)
+OMNITRACE_DECLARE_ANCHOR(ubifs)
+OMNITRACE_DECLARE_ANCHOR(elf)
 
 void link_builtin_validators() {
     // Calling each (empty) anchor is enough to make the linker keep its object
@@ -34,6 +42,14 @@ void link_builtin_validators() {
     OMNITRACE_TOUCH_ANCHOR(lz4)
     OMNITRACE_TOUCH_ANCHOR(zstd)
     OMNITRACE_TOUCH_ANCHOR(android_sparse)
+    OMNITRACE_TOUCH_ANCHOR(fit)
+    OMNITRACE_TOUCH_ANCHOR(verity)
+    OMNITRACE_TOUCH_ANCHOR(luks)
+    OMNITRACE_TOUCH_ANCHOR(romfs)
+    OMNITRACE_TOUCH_ANCHOR(cramfs)
+    OMNITRACE_TOUCH_ANCHOR(android_boot)
+    OMNITRACE_TOUCH_ANCHOR(ubifs)
+    OMNITRACE_TOUCH_ANCHOR(elf)
 }
 
 }  // namespace omnitrace::discovery::detail

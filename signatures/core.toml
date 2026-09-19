@@ -50,7 +50,8 @@ hex = "8519"
 endian = "little"
 alignment = 4
 validator = "jffs2"
-description = "JFFS2 node (magic 0x1985 stored little-endian); node header CRC verified"
+max_gap = 131072
+description = "JFFS2 node (magic 0x1985 stored little-endian); node header CRC verified; nodes coalesced across gaps up to max_gap bytes"
 references = ["https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/jffs2.h"]
 
 [[signature]]
@@ -61,7 +62,8 @@ hex = "1985"
 endian = "big"
 alignment = 4
 validator = "jffs2"
-description = "JFFS2 node (magic 0x1985 stored big-endian); node header CRC verified"
+max_gap = 131072
+description = "JFFS2 node (magic 0x1985 stored big-endian); node header CRC verified; nodes coalesced across gaps up to max_gap bytes"
 
 [[signature]]
 name = "ubi"
@@ -79,7 +81,8 @@ format = "ubifs"
 category = "filesystem"
 hex = "31181006"
 endian = "little"
-description = "UBIFS node magic (superblock node at the start of a UBIFS volume)"
+validator = "ubifs"
+description = "UBIFS superblock node (common-header magic 0x06101831, node type 6); node CRC verified; accepted only at a min_io_size/512 aligned offset"
 references = ["https://elixir.bootlin.com/linux/latest/source/fs/ubifs/ubifs-media.h"]
 
 [[signature]]
@@ -99,7 +102,8 @@ format = "cramfs"
 category = "filesystem"
 hex = "453dcd28"
 endian = "little"
-description = "cramfs superblock, little-endian"
+validator = "cramfs"
+description = "cramfs superblock, little-endian; 'Compressed ROMFS' signature required, image CRC checked"
 references = ["https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/cramfs_fs.h"]
 
 [[signature]]
@@ -108,7 +112,8 @@ format = "cramfs"
 category = "filesystem"
 hex = "28cd3d45"
 endian = "big"
-description = "cramfs superblock, big-endian"
+validator = "cramfs"
+description = "cramfs superblock, big-endian; 'Compressed ROMFS' signature required, image CRC checked"
 
 [[signature]]
 name = "romfs"
@@ -116,7 +121,9 @@ format = "romfs"
 category = "filesystem"
 magic = "-rom1fs-"
 endian = "big"
-description = "romfs superblock"
+validator = "romfs"
+max_name_len = 256
+description = "romfs superblock; volume name checked, 512-byte header checksum verified"
 references = ["https://www.kernel.org/doc/Documentation/filesystems/romfs.txt"]
 
 [[signature]]
@@ -126,6 +133,7 @@ category = "filesystem"
 hex = "22111968"
 magic_offset = 0x2000
 endian = "little"
+alignment = 4096
 description = "QNX6 (Power-Safe) superblock magic 0x68191122; the first superblock sits 0x2000 bytes into the partition, after the boot block"
 references = ["https://elixir.bootlin.com/linux/latest/source/fs/qnx6/qnx6.h", "https://www.qnx.com/developers/docs/7.1/#com.qnx.doc.neutrino.sys_arch/topic/fsys_Power-Safe_filesystem.html"]
 
@@ -136,6 +144,7 @@ category = "filesystem"
 hex = "68191122"
 magic_offset = 0x2000
 endian = "big"
+alignment = 4096
 description = "QNX6 (Power-Safe) superblock magic 0x68191122, big-endian"
 
 [[signature]]
@@ -213,8 +222,26 @@ format = "dtb"
 category = "other"
 hex = "d00dfeed"
 endian = "big"
-description = "Flattened device tree blob (also U-Boot FIT images)"
+validator = "dtb"
+max_nodes = 65536
+max_props = 262144
+max_depth = 64
+description = "Flattened device tree blob; header and structure block validated, size = totalsize. A FIT (root with /images) is reported by the 'fit' signature and this one steps back to structural"
 references = ["https://devicetree-specification.readthedocs.io/en/latest/chapter5-flattened-format.html"]
+
+[[signature]]
+name = "fit"
+format = "fit"
+category = "container"
+hex = "d00dfeed"
+endian = "big"
+validator = "fit"
+max_nodes = 65536
+max_props = 262144
+max_depth = 64
+max_hash_bytes = 1073741824
+description = "U-Boot FIT image (FDT with /images); image inventory and configurations listed, crc32/md5/sha1/sha256 hashes verified, external data included in the size"
+references = ["https://docs.u-boot.org/en/latest/usage/fit/source_file_format.html"]
 
 [[signature]]
 name = "android-boot"
@@ -222,8 +249,19 @@ format = "android-boot"
 category = "container"
 magic = "ANDROID!"
 endian = "little"
-description = "Android boot image header"
+validator = "android-boot"
+description = "Android boot image header v0-v4; size = sum of page-aligned sections"
 references = ["https://source.android.com/docs/core/architecture/bootloader/boot-image-header"]
+
+[[signature]]
+name = "android-vendor-boot"
+format = "android-vendor-boot"
+category = "container"
+magic = "VNDRBOOT"
+endian = "little"
+validator = "android-boot"
+description = "Android vendor boot image header v3/v4"
+references = ["https://source.android.com/docs/core/architecture/bootloader/partitions/vendor-boot-partitions"]
 
 [[signature]]
 name = "android-sparse"
@@ -321,7 +359,8 @@ name = "elf"
 format = "elf"
 category = "other"
 hex = "7f454c46"
-description = "ELF executable, shared object or relocatable"
+validator = "elf"
+description = "ELF executable, shared object or relocatable; header validated, size from the program/section header extents; unaligned hits must reach consistent"
 references = ["https://refspecs.linuxfoundation.org/elf/elf.pdf"]
 
 # ------------------------------------------------------------------------ crypto

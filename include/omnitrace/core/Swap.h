@@ -21,7 +21,7 @@ enum class SwapKind : std::uint8_t { None, Swap16, Swap32 };
 const char* swap_kind_name(SwapKind k);
 
 class SwappedSource final : public Source {
-public:
+   public:
     SwappedSource(std::shared_ptr<const Source> parent, SwapKind kind);
     std::uint64_t size() const override;
     std::string id() const override;
@@ -31,7 +31,7 @@ public:
     SwapKind kind() const { return kind_; }
     const std::shared_ptr<const Source>& parent() const { return parent_; }
 
-private:
+   private:
     std::shared_ptr<const Source> parent_;
     SwapKind kind_;
 };
@@ -39,7 +39,7 @@ private:
 struct SwapDetection {
     SwapKind kind = SwapKind::None;
     std::uint8_t confidence = 0;  // 0-100
-    std::string evidence;         // e.g. "31 known magics and 412 ASCII runs appear only under swap32"
+    std::string evidence;  // e.g. "31 known magics and 412 ASCII runs appear only under swap32"
 };
 
 // Heuristic: sample the Span (bounded work, at most `budget` bytes examined)

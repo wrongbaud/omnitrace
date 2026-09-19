@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "Common.h"
+#include "omnitrace/core/Text.h"
 
 namespace omnitrace::output {
 
@@ -76,7 +77,11 @@ bool looks_like_non_string(const std::string& s) {
 }
 
 // Emit a string value, forcing quotes when a plain scalar would be ambiguous.
-YAML::Emitter& str(YAML::Emitter& e, const std::string& s) {
+// Every string scalar (keys included) funnels through here, so evidence bytes
+// that are not valid UTF-8 (a gzip original name, a partition label) become
+// "\xNN" escapes instead of poisoning the document (Text.h).
+YAML::Emitter& str(YAML::Emitter& e, const std::string& raw) {
+    const std::string s = sanitize_utf8(raw);
     if (looks_like_non_string(s)) {
         e << YAML::DoubleQuoted << s;
     } else {
@@ -134,9 +139,15 @@ void emit_string_seq(YAML::Emitter& e, const char* key, const std::vector<std::s
 
 void emit_string_map(YAML::Emitter& e, const char* key,
                      const std::map<std::string, std::string>& m) {
+    // Order by the *sanitized* key, not the raw one, so a manifest read back
+    // from disk (whose keys are already escaped text) re-emits byte-identical.
+    // Two raw keys that sanitize to the same text would be a duplicate YAML
+    // key; the first in raw order wins so the document stays loadable.
+    std::map<std::string, std::string> clean;
+    for (const auto& [k, v] : m) clean.emplace(sanitize_utf8(k), v);
     e << YAML::Key << key << YAML::Value;
-    begin_map(e, m.empty());
-    for (const auto& [k, v] : m) {
+    begin_map(e, clean.empty());
+    for (const auto& [k, v] : clean) {
         e << YAML::Key;
         str(e, k);
         e << YAML::Value;

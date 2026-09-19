@@ -139,4 +139,19 @@ inline bool is_pow2(std::uint64_t v) {
     return v != 0 && (v & (v - 1)) == 0;
 }
 
+// Saturating arithmetic for sizes and offsets taken from headers: a hostile
+// value never wraps, it pins at UINT64_MAX and the caller's range check fails.
+inline std::uint64_t sat_add(std::uint64_t a, std::uint64_t b) {
+    return b > UINT64_MAX - a ? UINT64_MAX : a + b;
+}
+inline std::uint64_t sat_mul(std::uint64_t a, std::uint64_t b) {
+    if (a == 0 || b == 0) return 0;
+    return a > UINT64_MAX / b ? UINT64_MAX : a * b;
+}
+
+// Shared by the partition-table validators (mbr.cpp, gpt.cpp): the sector
+// alignment every real MBR/GPT structure has. A 0x55AA or "EFI PART" at an
+// unaligned offset is data, not a table.
+constexpr std::uint64_t kPartitionTableAlignment = 512;
+
 }  // namespace omnitrace::discovery::validators

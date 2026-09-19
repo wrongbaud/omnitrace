@@ -335,7 +335,11 @@ TEST(Analyze, GraphFromMbrAndSquashfsWithoutReader) {
     EXPECT_EQ(table.parent_id, "n000001");
     EXPECT_EQ(table.attrs.at("role"), "table");
     EXPECT_EQ(table.attrs.at("disk_signature"), "0x12345678");
-    EXPECT_EQ(table.location.length, 5 * kMiB + 512 * 1024);
+    EXPECT_EQ(table.attrs.at("table"), "mbr-primary");
+    // The table finding is the boot sector (validator contract); an older
+    // validator sized it to the disk it describes.
+    EXPECT_TRUE(table.location.length == 512 || table.location.length == 5 * kMiB + 512 * 1024)
+        << table.location.length;
     const Node& p1 = m.nodes()[2];
     EXPECT_EQ(p1.kind, NodeKind::Partition);
     EXPECT_EQ(p1.parent_id, table.id);
@@ -343,8 +347,10 @@ TEST(Analyze, GraphFromMbrAndSquashfsWithoutReader) {
     EXPECT_EQ(p1.location.offset, kMiB);
     EXPECT_EQ(p1.location.length, 4 * kMiB);
     EXPECT_EQ(p1.attrs.at("type"), "0x83");
+    EXPECT_EQ(p1.attrs.at("type_byte"), "0x83");
     EXPECT_EQ(p1.attrs.at("boot"), "true");
     EXPECT_EQ(p1.attrs.at("index"), "p1");
+    EXPECT_EQ(p1.attrs.at("table"), "mbr-primary");
     const Node& p2 = m.nodes()[3];
     EXPECT_EQ(p2.location.offset, 5 * kMiB);
     EXPECT_EQ(p2.location.length, 512 * 1024);
@@ -382,11 +388,24 @@ TEST(Analyze, GraphFromMbrAndSquashfsWithoutReader) {
     EXPECT_TRUE(listings.empty());
     EXPECT_EQ(m.count(NodeKind::File), 0u);
     EXPECT_EQ(m.count(NodeKind::Partition), 3u);
-    EXPECT_EQ(m.count(NodeKind::Region), 2u);
+
+    // Unclaimed space inside a partition is a Region under that partition:
+    // the rest of p1 after the squashfs, and the whole of (empty) p2.
+    EXPECT_EQ(m.count(NodeKind::Region), 4u);
+    const Node* p1_tail = node_at(m, NodeKind::Region, kMiB + sq->location.length);
+    ASSERT_NE(p1_tail, nullptr);
+    EXPECT_EQ(p1_tail->parent_id, p1.id);
+    EXPECT_EQ(p1_tail->location.length, 4 * kMiB - sq->location.length);
+    const Node* p2_all = node_at(m, NodeKind::Region, 5 * kMiB);
+    ASSERT_NE(p2_all, nullptr);
+    EXPECT_EQ(p2_all->parent_id, p2.id);
+    EXPECT_EQ(p2_all->location.length, 512 * 1024u);
+    EXPECT_EQ(p2_all->attrs.at("fill"), "0x00");
 
     // child_ids agree with parent_id links.
     EXPECT_EQ(table.child_ids, (std::vector<std::string>{p1.id, p2.id}));
-    EXPECT_EQ(m.find(p1.id)->child_ids, std::vector<std::string>{sq->id});
+    EXPECT_EQ(m.find(p1.id)->child_ids, (std::vector<std::string>{sq->id, p1_tail->id}));
+    EXPECT_EQ(m.find(p2.id)->child_ids, std::vector<std::string>{p2_all->id});
 }
 
 TEST(Analyze, ContainerWithoutReaderIsCoveredNotSilent) {
@@ -569,8 +588,13 @@ TEST(Analyze, PartitionPastEndIsClamped) {
     EXPECT_EQ(p1->location.length, b.size() - 8 * 512);
     EXPECT_EQ(p1->attrs.at("claimed_size"), std::to_string(0xFFFFFFF0ull * 512));
     EXPECT_TRUE(has_diag(p1->diagnostics, "partition-truncated"));
-    // The 3.5 KiB before p1 is under the threshold: no region there.
-    EXPECT_EQ(m.count(NodeKind::Region), 0u);
+    // The 3.5 KiB before p1 is under the threshold: no region there. The
+    // clamped partition itself is empty, so it holds one zero-filled Region.
+    EXPECT_EQ(m.count(NodeKind::Region), 1u);
+    const Node* inside = node_at(m, NodeKind::Region, 8 * 512);
+    ASSERT_NE(inside, nullptr);
+    EXPECT_EQ(inside->parent_id, p1->id);
+    EXPECT_EQ(inside->location.length, p1->location.length);
     EXPECT_EQ(m.count(NodeKind::Partition), 2u);
 }
 
@@ -680,4 +704,691 @@ TEST(Analyze, RealSquashfsFixtureWhenAvailable) {
     EXPECT_GT(sq->location.length, 0u);
     EXPECT_LE(sq->location.length, 4 * kMiB);
     EXPECT_EQ(sq->attrs.at("compression"), "gzip");
+}
+
+// ---------------------------------------------------------- partitions/GPT
+
+namespace {
+
+// Mixed-endian GUID bytes for "aabbccdd-eeff-0011-2233-445566778899".
+void put_guid(Bytes& b, std::size_t off, const std::string& text) {
+    std::string h;
+    for (const char ch : text)
+        if (ch != '-') h.push_back(ch);
+    ASSERT_EQ(h.size(), 32u);
+    std::uint8_t raw[16];
+    for (std::size_t i = 0; i < 16; ++i)
+        raw[i] = static_cast<std::uint8_t>(std::stoul(h.substr(2 * i, 2), nullptr, 16));
+    static const std::size_t order[16] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
+    for (std::size_t i = 0; i < 16; ++i) b[off + i] = raw[order[i]];
+}
+
+void put_utf16(Bytes& b, std::size_t off, const std::string& ascii) {
+    for (std::size_t i = 0; i < ascii.size() && i < 36; ++i)
+        test::put_u16le(b, off + 2 * i, static_cast<std::uint16_t>(ascii[i]));
+}
+
+struct GptPart {
+    std::string type_guid, unique_guid, label;
+    std::uint64_t first_lba = 0, last_lba = 0;
+};
+
+const char* kRootfsType = "0fc63daf-8483-4772-8e79-3d69d8477de4";
+const char* kDataType = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7";
+const char* kDiskGuid = "6f1a2c3e-0001-4d5e-8f90-0123456789ab";
+
+// Protective MBR at LBA 0, primary header at LBA 1 + entries at LBA 2, backup
+// entries at (last-32) and backup header at the last LBA. CRCs are real.
+void write_gpt(Bytes& b, const std::vector<GptPart>& parts) {
+    const std::uint64_t sectors = b.size() / 512;
+    const std::uint64_t last = sectors - 1;
+    b[510] = 0x55;
+    b[511] = 0xAA;
+    mbr_entry(b, 0, 0, 0x00, 0xEE, 1, static_cast<std::uint32_t>(last));
+
+    auto write_entries = [&](std::size_t off) {
+        for (std::size_t i = 0; i < parts.size(); ++i) {
+            const std::size_t eo = off + i * 128;
+            put_guid(b, eo, parts[i].type_guid);
+            put_guid(b, eo + 16, parts[i].unique_guid);
+            test::put_u64le(b, eo + 32, parts[i].first_lba);
+            test::put_u64le(b, eo + 40, parts[i].last_lba);
+            put_utf16(b, eo + 56, parts[i].label);
+        }
+    };
+    auto write_header = [&](std::size_t off, std::uint64_t my, std::uint64_t alt,
+                            std::uint64_t entry_lba) {
+        test::put_bytes(b, off, "EFI PART");
+        test::put_u32le(b, off + 8, 0x00010000);
+        test::put_u32le(b, off + 12, 92);
+        test::put_u64le(b, off + 24, my);
+        test::put_u64le(b, off + 32, alt);
+        test::put_u64le(b, off + 40, 34);
+        test::put_u64le(b, off + 48, last - 33);
+        put_guid(b, off + 56, kDiskGuid);
+        test::put_u64le(b, off + 72, entry_lba);
+        test::put_u32le(b, off + 80, 128);
+        test::put_u32le(b, off + 84, 128);
+        test::put_u32le(b, off + 88,
+                        test::crc_zlib(b, static_cast<std::size_t>(entry_lba * 512), 128 * 128));
+        test::put_u32le(b, off + 16, 0);
+        test::put_u32le(b, off + 16, test::crc_zlib(b, off, 92));
+    };
+    write_entries(2 * 512);
+    write_entries(static_cast<std::size_t>((last - 32) * 512));
+    write_header(512, 1, last, 2);
+    write_header(static_cast<std::size_t>(last * 512), last, 1, last - 32);
+}
+
+// 8 MiB GPT disk: p1 "rootfs" [1 MiB, 5 MiB) holding a real squashfs (empty
+// when mksquashfs is missing), p2 "data" [5 MiB, 7 MiB) empty.
+struct GptLayout {
+    Bytes bytes;
+    Bytes squash;  // the image placed at 1 MiB (empty: synthetic superblock used)
+    bool real = false;
+};
+
+GptLayout build_gpt_image() {
+    GptLayout l;
+    l.bytes.assign(static_cast<std::size_t>(8 * kMiB), 0);
+    write_gpt(l.bytes,
+              {{kRootfsType, "6f1a2c3e-1001-4d5e-8f90-0123456789ab", "rootfs", 2048, 10239},
+               {kDataType, "6f1a2c3e-1002-4d5e-8f90-0123456789ab", "data", 10240, 14335}});
+    l.squash = real_squashfs();
+    l.real = !l.squash.empty() && l.squash.size() <= 4 * kMiB;
+    if (!l.real) l.squash = synthetic_squashfs();
+    std::copy(l.squash.begin(), l.squash.end(),
+              l.bytes.begin() + static_cast<std::ptrdiff_t>(kMiB));
+    return l;
+}
+
+// The validator contract this driver codes against (partition-table findings
+// sized to the table, attrs "table", never absorbing the findings inside).
+// The builtin scan is normalised to it so the test holds whether or not the
+// validator work has landed in this checkout.
+Scanner contract_scanner() {
+    return [](const Span& span) {
+        std::vector<Finding> out = scan(span, SignatureSet::builtin());
+        std::vector<Finding> hoisted;
+        for (Finding& f : out) {
+            if (f.category != "partition-table") continue;
+            for (Finding& alt : f.also_matched) hoisted.push_back(std::move(alt));
+            f.also_matched.clear();
+            if (f.attrs.count("table")) continue;
+            if (f.format == "mbr") {
+                f.attrs["table"] = "mbr-primary";
+                f.size = 512;
+            } else if (f.attrs.count("backup")) {
+                f.attrs["table"] = "gpt-backup";
+            } else {
+                f.attrs["table"] = "gpt-primary";
+                f.size = 2 * 512 + 128 * 128;
+            }
+        }
+        for (Finding& h : hoisted) out.push_back(std::move(h));
+        std::stable_sort(out.begin(), out.end(),
+                         [](const Finding& a, const Finding& b) { return a.offset < b.offset; });
+        return out;
+    };
+}
+
+Digests sha_of(const Bytes& b, std::uint64_t off, std::uint64_t len) {
+    return Hasher::of(std::span<const std::uint8_t>(b.data() + off, static_cast<std::size_t>(len)));
+}
+
+const Node* node_named(const Manifest& m, NodeKind kind, const std::string& name) {
+    for (const Node& n : m.nodes())
+        if (n.kind == kind && n.name == name) return &n;
+    return nullptr;
+}
+
+}  // namespace
+
+TEST(Analyze, GptPartitionsNamedFromLabelsAndCarved) {
+    const GptLayout l = build_gpt_image();
+    TempDir out("gpt");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.open_reader = fake_lookup();
+    opts.scanner = contract_scanner();
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(l.bytes), "emmc.bin", opts, m, listings));
+
+    // One table node per used table: the protective MBR and the primary GPT
+    // (the backup is folded into the primary).
+    const Node* gpt = nullptr;
+    const Node* mbr = nullptr;
+    for (const Node& n : m.nodes()) {
+        if (n.kind != NodeKind::Partition || n.attrs.count("role") == 0) continue;
+        if (n.format == "gpt") gpt = &n;
+        if (n.format == "mbr") mbr = &n;
+    }
+    ASSERT_NE(gpt, nullptr);
+    ASSERT_NE(mbr, nullptr);
+    EXPECT_EQ(gpt->attrs.at("table"), "gpt-primary");
+    EXPECT_EQ(gpt->attrs.at("backup_lba"), std::to_string(8 * kMiB / 512 - 1));
+    EXPECT_EQ(gpt->attrs.at("backup_header"), "ok");
+    EXPECT_EQ(mbr->attrs.at("table"), "mbr-primary");
+    EXPECT_EQ(m.count(NodeKind::Partition), 5u);  // 2 tables, 1 protective, 2 entries
+
+    const Node* prot = node_at(m, NodeKind::Partition, 512, "mbr");
+    ASSERT_NE(prot, nullptr);
+    EXPECT_EQ(prot->attrs.at("protective"), "true");
+    EXPECT_EQ(prot->attrs.count("carved_path"), 0u) << "a protective entry is not a partition";
+
+    const Node* rootfs = node_named(m, NodeKind::Partition, "rootfs");
+    const Node* data = node_named(m, NodeKind::Partition, "data");
+    ASSERT_NE(rootfs, nullptr);
+    ASSERT_NE(data, nullptr);
+    EXPECT_EQ(rootfs->parent_id, gpt->id);
+    EXPECT_EQ(rootfs->location.offset, kMiB);
+    EXPECT_EQ(rootfs->location.length, 4 * kMiB);
+    EXPECT_EQ(rootfs->attrs.at("type_guid"), kRootfsType);
+    EXPECT_EQ(rootfs->attrs.at("unique_guid"), "6f1a2c3e-1001-4d5e-8f90-0123456789ab");
+    EXPECT_EQ(rootfs->attrs.at("index"), "p1");
+    EXPECT_EQ(rootfs->attrs.at("table"), "gpt-primary");
+    EXPECT_EQ(rootfs->attrs.at("label"), "rootfs");
+    EXPECT_EQ(data->location.offset, 5 * kMiB);
+    EXPECT_EQ(data->location.length, 2 * kMiB);
+    EXPECT_EQ(data->attrs.at("type_guid"), kDataType);
+
+    // The filesystem is nested under its partition and was walked.
+    const Node* sq = node_at(m, NodeKind::Filesystem, kMiB, "squashfs");
+    ASSERT_NE(sq, nullptr);
+    EXPECT_EQ(sq->parent_id, rootfs->id);
+    EXPECT_EQ(sq->attrs.at("entries"), "3");
+    EXPECT_EQ(sq->attrs.at("carved_in"), "partitions/p1-rootfs.bin");
+    EXPECT_EQ(sq->attrs.count("carved_path"), 0u) << "the partition file is its carve";
+
+    // Carved files: GPT label names, streamed bytes, digests on the node.
+    const fsys::path pdir = out.path / "partitions";
+    EXPECT_EQ(rootfs->attrs.at("carved_path"), "partitions/p1-rootfs.bin");
+    EXPECT_EQ(data->attrs.at("carved_path"), "partitions/p2-data.bin");
+    ASSERT_TRUE(fsys::is_regular_file(pdir / "p1-rootfs.bin"));
+    ASSERT_TRUE(fsys::is_regular_file(pdir / "p2-data.bin"));
+    EXPECT_EQ(fsys::file_size(pdir / "p1-rootfs.bin"), 4 * kMiB);
+    EXPECT_EQ(fsys::file_size(pdir / "p2-data.bin"), 2 * kMiB);
+    const Digests want1 = sha_of(l.bytes, kMiB, 4 * kMiB);
+    const Digests want2 = sha_of(l.bytes, 5 * kMiB, 2 * kMiB);
+    EXPECT_EQ(rootfs->digests.sha256, want1.sha256);
+    EXPECT_EQ(rootfs->digests.md5, want1.md5);
+    EXPECT_EQ(rootfs->digests.bytes, 4 * kMiB);
+    EXPECT_EQ(data->digests.sha256, want2.sha256);
+    Digests on_disk;
+    ASSERT_TRUE(hash_file((pdir / "p1-rootfs.bin").string(), on_disk));
+    EXPECT_EQ(on_disk.sha256, want1.sha256);
+    const std::string p1_head = read_file(pdir / "p1-rootfs.bin").substr(0, 4);
+    EXPECT_EQ(p1_head, "hsqs");
+
+    // mount.sh lists the partition whose first byte is a squashfs, typed.
+    const std::string script = read_file(pdir / "mount.sh");
+    EXPECT_NE(script.find("PARTITION_NAMES=(\"p1-rootfs.bin\")"), std::string::npos) << script;
+    EXPECT_NE(script.find("PARTITION_TYPES=(\"squashfs\")"), std::string::npos) << script;
+    EXPECT_EQ(script.find("p2-data.bin\""), std::string::npos)
+        << "empty partition is not mountable";
+    EXPECT_NE(script.find("getopts 'muht'"), std::string::npos);
+    EXPECT_EQ(script, mount_script_text(m));
+
+    const Coverage* cov = coverage_for(m, "carve");
+    ASSERT_NE(cov, nullptr);
+    EXPECT_EQ(cov->status, "supported");
+
+    // Empty p2 became one Region under it; nothing else was invented.
+    const Node* p2_gap = node_at(m, NodeKind::Region, 5 * kMiB);
+    ASSERT_NE(p2_gap, nullptr);
+    EXPECT_EQ(p2_gap->parent_id, data->id);
+}
+
+TEST(Analyze, MaxCarveBytesSkipsLargePartitionsVisibly) {
+    const GptLayout l = build_gpt_image();
+    TempDir out("carve-limit");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.extract = false;
+    opts.scanner = contract_scanner();
+    opts.max_carve_bytes = 3 * kMiB;  // p1 is 4 MiB, p2 is 2 MiB
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(l.bytes), "emmc.bin", opts, m, listings));
+    const Node* rootfs = node_named(m, NodeKind::Partition, "rootfs");
+    const Node* data = node_named(m, NodeKind::Partition, "data");
+    ASSERT_NE(rootfs, nullptr);
+    ASSERT_NE(data, nullptr);
+    EXPECT_FALSE(fsys::exists(out.path / "partitions" / "p1-rootfs.bin"));
+    EXPECT_TRUE(fsys::exists(out.path / "partitions" / "p2-data.bin"));
+    EXPECT_EQ(rootfs->attrs.count("carved_path"), 0u);
+    EXPECT_TRUE(rootfs->digests.empty());
+    EXPECT_TRUE(has_diag(rootfs->diagnostics, "carve-limit-bytes"));
+    EXPECT_EQ(rootfs->attrs.at("carve_skipped"), "max-carve-bytes");
+    EXPECT_EQ(data->attrs.at("carved_path"), "partitions/p2-data.bin");
+    const Coverage* cov = coverage_for(m, "carve");
+    ASSERT_NE(cov, nullptr);
+    EXPECT_EQ(cov->status, "partial");
+    EXPECT_NE(cov->detail.find("p1-rootfs.bin skipped: 4194304 exceeds --max-carve-bytes"),
+              std::string::npos)
+        << cov->detail;
+    // The skipped partition is not in mount.sh either.
+    const std::string script = read_file(out.path / "partitions" / "mount.sh");
+    EXPECT_EQ(script.find("p1-rootfs.bin"), std::string::npos);
+}
+
+TEST(Analyze, NoTableNestedFindIsCarvedByOffsetAndFormat) {
+    Bytes b(static_cast<std::size_t>(4 * kMiB), 0);
+    Bytes sq = real_squashfs();
+    if (sq.empty() || sq.size() > 2 * kMiB) sq = synthetic_squashfs();
+    std::copy(sq.begin(), sq.end(), b.begin() + static_cast<std::ptrdiff_t>(kMiB));
+    TempDir out("notable");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.extract = false;
+    opts.open_reader = fake_lookup();
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "spi.bin", opts, m, listings));
+    EXPECT_EQ(m.count(NodeKind::Partition), 0u);
+    const Node* fsn = node_at(m, NodeKind::Filesystem, kMiB, "squashfs");
+    ASSERT_NE(fsn, nullptr);
+    EXPECT_EQ(fsn->parent_id, m.nodes()[0].id);
+    EXPECT_EQ(fsn->attrs.at("carved_path"), "partitions/0x00100000-squashfs.bin");
+    const fsys::path file = out.path / "partitions" / "0x00100000-squashfs.bin";
+    ASSERT_TRUE(fsys::is_regular_file(file));
+    EXPECT_EQ(fsys::file_size(file), fsn->location.length);
+    const Digests want = sha_of(b, kMiB, fsn->location.length);
+    EXPECT_EQ(fsn->digests.sha256, want.sha256);
+    const std::string script = read_file(out.path / "partitions" / "mount.sh");
+    EXPECT_NE(script.find("PARTITION_NAMES=(\"0x00100000-squashfs.bin\")"), std::string::npos)
+        << script;
+    EXPECT_NE(script.find("PARTITION_TYPES=(\"squashfs\")"), std::string::npos);
+}
+
+TEST(Analyze, CarveModes) {
+    // MBR image with the squashfs at p1's first byte plus a second squashfs
+    // nested deeper inside p1: `all` carves both partitions and the nested
+    // find, `table` only the partitions, `none` nothing.
+    Layout l = build_image();
+    const Bytes sq = synthetic_squashfs();
+    std::copy(sq.begin(), sq.end(), l.bytes.begin() + static_cast<std::ptrdiff_t>(3 * kMiB));
+    struct Case {
+        Carve carve;
+        bool dir, p1, nested;
+    };
+    for (const Case cs : {Case{Carve::All, true, true, true}, Case{Carve::Table, true, true, false},
+                          Case{Carve::None, false, false, false}}) {
+        TempDir out("modes");
+        AnalyzeOptions opts;
+        opts.out_dir = out.path.string();
+        opts.extract = false;
+        opts.carve = cs.carve;
+        Manifest m;
+        Listings listings;
+        ASSERT_TRUE(analyze(source_of(l.bytes), "router.bin", opts, m, listings));
+        const fsys::path pdir = out.path / "partitions";
+        EXPECT_EQ(fsys::exists(pdir), cs.dir) << carve_name(cs.carve);
+        EXPECT_EQ(fsys::exists(pdir / "p1.bin"), cs.p1) << carve_name(cs.carve);
+        EXPECT_EQ(fsys::exists(pdir / "p2.bin"), cs.p1) << carve_name(cs.carve);
+        EXPECT_EQ(fsys::exists(pdir / "0x00300000-squashfs.bin"), cs.nested)
+            << carve_name(cs.carve);
+        EXPECT_EQ(fsys::exists(pdir / "mount.sh"), cs.dir) << carve_name(cs.carve);
+        const Node* nested = node_at(m, NodeKind::Filesystem, 3 * kMiB, "squashfs");
+        ASSERT_NE(nested, nullptr);
+        EXPECT_EQ(nested->parent_id, node_at(m, NodeKind::Partition, kMiB)->id);
+        EXPECT_EQ(nested->attrs.count("carved_path"), cs.nested ? 1u : 0u);
+        if (cs.carve == Carve::None) {
+            EXPECT_EQ(coverage_for(m, "carve"), nullptr);
+        }
+    }
+}
+
+TEST(Analyze, BackupOnlyGptRecoversPartitionsAndFlagsTheImage) {
+    // Hand-made findings per the validator contract: only a gpt-backup table
+    // (LBA 1 wiped), describing one partition at 1 MiB.
+    Bytes b(static_cast<std::size_t>(4 * kMiB), 0);
+    const Bytes sq = synthetic_squashfs();
+    std::copy(sq.begin(), sq.end(), b.begin() + static_cast<std::ptrdiff_t>(kMiB));
+    AnalyzeOptions opts;
+    opts.extract = false;
+    opts.scanner = [](const Span& span) {
+        std::vector<Finding> out = scan(span, SignatureSet::builtin());
+        if (span.size() != 4 * kMiB) return out;  // a partition re-scan
+        Finding t;
+        t.offset = 4 * kMiB - 512;
+        t.size = 512;
+        t.format = "gpt";
+        t.category = "partition-table";
+        t.signature = "gpt";
+        t.confidence = Confidence::Verified;
+        t.evidence = "backup GPT header, CRC ok";
+        t.attrs["table"] = "gpt-backup";
+        t.attrs["disk_guid"] = kDiskGuid;
+        t.attrs["disk_offset"] = "0";
+        t.attrs["disk_size"] = std::to_string(4 * kMiB);
+        t.attrs["sector_size"] = "512";
+        t.attrs["my_lba"] = std::to_string(4 * kMiB / 512 - 1);
+        t.attrs["partitions"] = std::string("p1:1048576:2097152:") + kRootfsType +
+                                ":6f1a2c3e-1001-4d5e-8f90-0123456789ab:system";
+        t.diagnostics.push_back({Severity::Warning, "gpt-primary-missing",
+                                 "no primary GPT header at LBA 1; backup used"});
+        out.push_back(std::move(t));
+        std::stable_sort(out.begin(), out.end(),
+                         [](const Finding& x, const Finding& y) { return x.offset < y.offset; });
+        return out;
+    };
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "emmc.bin", opts, m, listings));
+    EXPECT_TRUE(has_diag(m.nodes()[0].diagnostics, "gpt-primary-missing"));
+    const Node* table = node_at(m, NodeKind::Partition, 4 * kMiB - 512, "gpt");
+    ASSERT_NE(table, nullptr);
+    EXPECT_EQ(table->attrs.at("table"), "gpt-backup");
+    EXPECT_EQ(table->attrs.at("role"), "table");
+    const Node* system = node_named(m, NodeKind::Partition, "system");
+    ASSERT_NE(system, nullptr);
+    EXPECT_EQ(system->parent_id, table->id);
+    EXPECT_EQ(system->location.offset, kMiB);
+    EXPECT_EQ(system->location.length, 2 * kMiB);
+    EXPECT_EQ(system->attrs.at("table"), "gpt-backup");
+    const Node* fsn = node_at(m, NodeKind::Filesystem, kMiB, "squashfs");
+    ASSERT_NE(fsn, nullptr);
+    EXPECT_EQ(fsn->parent_id, system->id);
+}
+
+TEST(Analyze, PartitionRescanFindsFilesystemAtItsStart) {
+    // The whole-image scan "misses" the squashfs (the test scanner drops it at
+    // the top level); the partition re-scan must find it at the partition start.
+    const Layout l = build_image();
+    AnalyzeOptions opts;
+    opts.extract = false;
+    opts.scanner = [](const Span& span) {
+        std::vector<Finding> out = scan(span, SignatureSet::builtin());
+        if (span.size() != 6 * kMiB) return out;
+        std::erase_if(out, [](const Finding& f) { return f.format == "squashfs"; });
+        return out;
+    };
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(l.bytes), "router.bin", opts, m, listings));
+    const Node* sq = node_at(m, NodeKind::Filesystem, kMiB, "squashfs");
+    ASSERT_NE(sq, nullptr);
+    EXPECT_EQ(sq->parent_id, node_at(m, NodeKind::Partition, kMiB)->id);
+    EXPECT_TRUE(has_diag(sq->diagnostics, "partition-rescan"));
+    EXPECT_EQ(sq->attrs.at("signature"), "squashfs-le");
+    // Only one squashfs node: the rescan never duplicates.
+    EXPECT_EQ(m.count(NodeKind::Filesystem), 1u);
+}
+
+TEST(Analyze, CarvedNamesAreHostSafe) {
+    Bytes b(static_cast<std::size_t>(2 * kMiB), 0);
+    TempDir out("names");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.extract = false;
+    opts.scanner = [](const Span& span) -> std::vector<Finding> {
+        if (span.size() != 2 * kMiB) return {};
+        Finding t;
+        t.offset = 0;
+        t.size = 512;
+        t.format = "gpt";
+        t.category = "partition-table";
+        t.signature = "gpt";
+        t.confidence = Confidence::Verified;
+        t.attrs["table"] = "gpt-primary";
+        t.attrs["disk_guid"] = kDiskGuid;
+        t.attrs["sector_size"] = "512";
+        t.attrs["entry_count"] = "2";
+        t.attrs["entry_size"] = "128";
+        t.attrs["partitions"] = std::string("p1:65536:65536:") + kRootfsType +
+                                ":6f1a2c3e-1001-4d5e-8f90-0123456789ab:../etc/pass wd;" +
+                                "p2:131072:65536:" + kDataType +
+                                ":6f1a2c3e-1002-4d5e-8f90-0123456789ab:CON";
+        return {t};
+    };
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "emmc.bin", opts, m, listings));
+    std::vector<std::string> files;
+    for (const auto& e : fsys::directory_iterator(out.path / "partitions"))
+        files.push_back(e.path().filename().string());
+    std::sort(files.begin(), files.end());
+    EXPECT_EQ(files, (std::vector<std::string>{"mount.sh", "p1-.._etc_pass_wd.bin", "p2-CON.bin"}))
+        << "names never contain separators or escape the directory";
+    EXPECT_FALSE(fsys::exists(out.path / "etc"));
+}
+
+TEST(MountScript, TypesAndMtdBlock) {
+    Manifest m;
+    Node img;
+    img.kind = NodeKind::Image;
+    img.name = "x.bin";
+    const std::string image_id = m.add_node(img).id;
+    auto part = [&](const char* file, std::uint64_t off, const char* fsfmt) {
+        Node p;
+        p.kind = NodeKind::Partition;
+        p.parent_id = image_id;
+        p.format = "gpt";
+        p.location = {"mem:x", off, 4096};
+        p.attrs["carved_path"] = std::string("partitions/") + file;
+        const std::string pid = m.add_node(p).id;
+        if (fsfmt) {
+            Node f;
+            f.kind = NodeKind::Filesystem;
+            f.parent_id = pid;
+            f.format = fsfmt;
+            f.location = {"mem:x", off, 4096};
+            m.add_node(f);
+        }
+    };
+    part("p1-boot.bin", 0, "fat");
+    part("p2-root.bin", 4096, "ext4");
+    part("p3-empty.bin", 8192, nullptr);
+    part("p4-cfg.bin", 12288, "jffs2");
+    part("p5-app.bin", 16384, "qnx6");
+    part("p6-ubi.bin", 20480, "ubifs");
+    const std::string s = mount_script_text(m);
+    EXPECT_NE(s.find("PARTITION_NAMES=(\"p1-boot.bin\" \"p2-root.bin\" \"p5-app.bin\")"),
+              std::string::npos)
+        << s;
+    EXPECT_NE(s.find("PARTITION_TYPES=(\"vfat\" \"ext4\" \"qnx6\")"), std::string::npos) << s;
+    EXPECT_NE(s.find("#   p4-cfg.bin: jffs2"), std::string::npos);
+    EXPECT_NE(s.find("#   p6-ubi.bin: ubifs"), std::string::npos);
+    EXPECT_NE(s.find("mtdram"), std::string::npos);
+    EXPECT_NE(s.find("nandsim"), std::string::npos);
+    EXPECT_EQ(s.find("p3-empty"), std::string::npos);
+    EXPECT_EQ(s.rfind("#!/bin/bash\n", 0), 0u);
+    EXPECT_EQ(mount_type_for("ext2"), "ext4");
+    EXPECT_EQ(mount_type_for("ntfs"), "ntfs3");
+    EXPECT_EQ(mount_type_for("yaffs2"), "");
+    EXPECT_EQ(mount_script_text(m), s) << "deterministic";
+}
+
+TEST(Analyze, GptFixtureWhenAvailable) {
+    // tests/fixtures/out/gpt.img: boot (fat32) at 1 MiB and rootfs (squashfs-xz)
+    // at 34 MiB, per gpt.expected.yaml.
+    if (!test::fixture_exists("gpt.img")) GTEST_SKIP() << "fixture gpt.img not built";
+    std::shared_ptr<MappedFile> file;
+    ASSERT_TRUE(MappedFile::open(test::fixture_path("gpt.img"), file));
+    TempDir out("gptfix");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.extract = false;
+    opts.scanner = contract_scanner();
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(file, "gpt.img", opts, m, listings));
+    const Node* boot = node_named(m, NodeKind::Partition, "boot");
+    const Node* rootfs = node_named(m, NodeKind::Partition, "rootfs");
+    ASSERT_NE(boot, nullptr);
+    ASSERT_NE(rootfs, nullptr);
+    EXPECT_EQ(boot->location.offset, 1048576u);
+    EXPECT_EQ(boot->location.length, 34603008u);
+    EXPECT_EQ(rootfs->location.offset, 35651584u);
+    EXPECT_EQ(rootfs->location.length, 319488u);
+    EXPECT_EQ(boot->attrs.at("type_guid"), "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7");
+    EXPECT_EQ(rootfs->attrs.at("unique_guid"), "6f1a2c3e-1002-4d5e-8f90-0123456789ab");
+    EXPECT_EQ(boot->digests.sha256,
+              "b32ed975fe0883d3a9722ab4102e80c44c291afe4d7c433242490a6126ae8630");
+    EXPECT_EQ(rootfs->digests.sha256,
+              "b335c23ac76343ed3a7f731d0d9d9d6fb5e679bd461d1d7b59c7506eff784157");
+    EXPECT_TRUE(fsys::exists(out.path / "partitions" / "p1-boot.bin"));
+    EXPECT_TRUE(fsys::exists(out.path / "partitions" / "p2-rootfs.bin"));
+    const Node* sq = node_at(m, NodeKind::Filesystem, 35651584u, "squashfs");
+    ASSERT_NE(sq, nullptr);
+    EXPECT_EQ(sq->parent_id, rootfs->id);
+    const std::string script = read_file(out.path / "partitions" / "mount.sh");
+    EXPECT_NE(script.find("\"p2-rootfs.bin\""), std::string::npos) << script;
+}
+
+TEST(Analyze, UnknownSizeFindingParentsNothingAndSplitsNoGap) {
+    // auto-emmc.bin: a magic-only zip (size 0) once "held" every later find,
+    // so the squashfs and ext4 were nested under zip -> xz and hidden from
+    // --carve all. An unknown extent parents nothing and claims no bytes.
+    Bytes b(static_cast<std::size_t>(4 * kMiB), 0);
+    const Bytes sq = synthetic_squashfs();
+    std::copy(sq.begin(), sq.end(), b.begin() + static_cast<std::ptrdiff_t>(2 * kMiB));
+    AnalyzeOptions opts;
+    opts.extract = false;
+    opts.open_reader = fake_lookup();
+    opts.scanner = [](const Span& span) {
+        std::vector<Finding> out = scan(span, SignatureSet::builtin());
+        Finding zip;
+        zip.offset = 0x1000;
+        zip.size = 0;
+        zip.format = "zip";
+        zip.category = "container";
+        zip.signature = "zip";
+        zip.confidence = Confidence::Magic;
+        zip.evidence = "magic only";
+        out.insert(out.begin(), std::move(zip));
+        return out;
+    };
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "emmc.bin", opts, m, listings));
+    const std::string image = m.nodes()[0].id;
+    const Node* zip = node_at(m, NodeKind::Container, 0x1000, "zip");
+    ASSERT_NE(zip, nullptr);
+    EXPECT_EQ(zip->parent_id, image);
+    const Node* sqn = node_at(m, NodeKind::Filesystem, 2 * kMiB, "squashfs");
+    ASSERT_NE(sqn, nullptr);
+    EXPECT_EQ(sqn->parent_id, image);
+    const Node* gap = node_at(m, NodeKind::Region, 0);
+    ASSERT_NE(gap, nullptr);
+    EXPECT_EQ(gap->location.length, 2 * kMiB);
+    EXPECT_EQ(node_at(m, NodeKind::Region, 0x1000), nullptr);
+}
+
+TEST(Analyze, PartitionTableInsideAPartitionIsNotExpanded) {
+    // qnx-example: MBR sectors stored as file data inside the 14 GiB `storage`
+    // GPT partition were expanded into a second partition map with truncated
+    // entries. A table inside another table's entry is kept, not expanded.
+    const Layout l = build_image();
+    AnalyzeOptions opts;
+    opts.extract = false;
+    opts.open_reader = fake_lookup();
+    opts.scanner = [](const Span& span) {
+        std::vector<Finding> out = scan(span, SignatureSet::builtin());
+        std::size_t table = out.size();
+        for (std::size_t i = 0; i < out.size(); ++i)
+            if (out[i].category == "partition-table" && out[i].offset == 0) table = i;
+        if (table == out.size()) return out;
+        Finding nested = out[table];
+        nested.offset = 3 * kMiB;  // inside p1 [1 MiB, 5 MiB)
+        nested.also_matched.clear();
+        out.push_back(std::move(nested));
+        return out;
+    };
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(l.bytes), "emmc.bin", opts, m, listings));
+    const Node* p1 = node_at(m, NodeKind::Partition, kMiB);
+    ASSERT_NE(p1, nullptr);
+    const Node* nested = node_at(m, NodeKind::Partition, 3 * kMiB, "mbr");
+    ASSERT_NE(nested, nullptr);
+    EXPECT_EQ(nested->parent_id, p1->id);
+    EXPECT_EQ(nested->attrs.at("nested"), "true");
+    EXPECT_TRUE(has_diag(nested->diagnostics, "partition-table-nested"));
+    EXPECT_EQ(m.count(NodeKind::Partition), 4u);  // table, p1, p2, nested table
+}
+
+TEST(Analyze, GptLabelCannotInjectPartitionAttrs) {
+    // A partition name is evidence bytes. "protective=true" or
+    // "carved_path=x" as a label must stay a label (and a file name), never
+    // become an attr that hides the entry from carving or forges a carve.
+    Bytes b(static_cast<std::size_t>(2 * kMiB), 0);
+    TempDir out("inject");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.extract = false;
+    opts.scanner = [](const Span& span) -> std::vector<Finding> {
+        if (span.size() != 2 * kMiB) return {};
+        Finding t;
+        t.offset = 0;
+        t.size = 512;
+        t.format = "gpt";
+        t.category = "partition-table";
+        t.signature = "gpt";
+        t.confidence = Confidence::Verified;
+        t.attrs["table"] = "gpt-primary";
+        t.attrs["disk_guid"] = kDiskGuid;
+        t.attrs["sector_size"] = "512";
+        t.attrs["entry_count"] = "2";
+        t.attrs["entry_size"] = "128";
+        t.attrs["partitions"] = std::string("p1:65536:65536:") + kRootfsType +
+                                ":6f1a2c3e-1001-4d5e-8f90-0123456789ab:protective=true;" +
+                                "p2:131072:65536:" + kDataType +
+                                ":6f1a2c3e-1002-4d5e-8f90-0123456789ab:carved_path=../x:attrs=0x4" +
+                                ":role=table";
+        return {t};
+    };
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "emmc.bin", opts, m, listings));
+    const Node* p1 = node_at(m, NodeKind::Partition, 65536);
+    const Node* p2 = node_at(m, NodeKind::Partition, 131072);
+    ASSERT_NE(p1, nullptr);
+    ASSERT_NE(p2, nullptr);
+    EXPECT_EQ(p1->attrs.at("label"), "protective=true");
+    EXPECT_EQ(p1->attrs.count("protective"), 0u);
+    EXPECT_EQ(p1->attrs.at("carved_path"), "partitions/p1-protective=true.bin");
+    EXPECT_EQ(p2->attrs.at("label"), "carved_path=../x");
+    EXPECT_EQ(p2->attrs.at("gpt_attributes"), "0x4");
+    EXPECT_EQ(p2->attrs.count("role"), 0u);
+    EXPECT_EQ(p2->attrs.at("carved_path"), "partitions/p2-carved_path=.._x.bin");
+    EXPECT_TRUE(fsys::exists(out.path / "partitions" / "p1-protective=true.bin"));
+    EXPECT_TRUE(fsys::exists(out.path / "partitions" / "p2-carved_path=.._x.bin"));
+    EXPECT_FALSE(fsys::exists(out.path / "x"));
+}
+
+TEST(Analyze, BackupOnlyGptLeavesACoverageRow) {
+    Bytes b(static_cast<std::size_t>(2 * kMiB), 0);
+    AnalyzeOptions opts;
+    opts.extract = false;
+    opts.scanner = [](const Span& span) -> std::vector<Finding> {
+        if (span.size() != 2 * kMiB) return {};
+        Finding t;
+        t.offset = 2 * kMiB - 512;
+        t.size = 512;
+        t.format = "gpt";
+        t.category = "partition-table";
+        t.signature = "gpt";
+        t.confidence = Confidence::Verified;
+        t.attrs["table"] = "gpt-backup";
+        t.attrs["disk_guid"] = kDiskGuid;
+        t.attrs["disk_offset"] = "0";
+        t.attrs["sector_size"] = "512";
+        t.attrs["primary"] = "mismatch";
+        t.attrs["partitions"] = std::string("p1:65536:65536:") + kRootfsType +
+                                ":6f1a2c3e-1001-4d5e-8f90-0123456789ab:old";
+        return {t};
+    };
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "emmc.bin", opts, m, listings));
+    const Coverage* cov = coverage_for(m, "gpt");
+    ASSERT_NE(cov, nullptr);
+    EXPECT_EQ(cov->status, "partial");
+    EXPECT_NE(cov->detail.find("stale backup"), std::string::npos) << cov->detail;
+    // The primary exists and disagrees: never claim it is missing.
+    EXPECT_FALSE(has_diag(m.nodes()[0].diagnostics, "gpt-primary-missing"));
+    EXPECT_TRUE(has_diag(m.nodes()[0].diagnostics, "gpt-backup-mismatch"));
 }

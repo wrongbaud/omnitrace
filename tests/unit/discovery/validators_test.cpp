@@ -513,10 +513,17 @@ TEST(MbrValidator, PrimariesAndEbrChain) {
     EXPECT_EQ(f[0].offset, 0u);
     EXPECT_EQ(f[0].confidence, Confidence::Consistent);
     EXPECT_EQ(f[0].attrs.at("partitions"),
-              "p1:4096:51200:0x83:boot;p2:61440:102400:0x05;p3:62464:5120:0x83:logical;p4:72704:"
+              "p1:4096:51200:0x83:boot;p2:61440:102400:0x05;p5:62464:5120:0x83:logical;p6:72704:"
               "10240:0x0c:logical");
     EXPECT_EQ(f[0].attrs.at("disk_signature"), "0xcafebabe");
-    EXPECT_EQ(f[0].size, (120u + 200u) * 512u);
+    EXPECT_EQ(f[0].attrs.at("table"), "mbr-primary");
+    EXPECT_EQ(f[0].attrs.at("disk_offset"), "0");
+    // The finding is the table sector; the disk it describes is an attr.
+    EXPECT_EQ(f[0].size, 512u);
+    EXPECT_EQ(f[0].attrs.at("disk_size"), std::to_string((120u + 200u) * 512u));
+    // The two EBRs are members of this table, not tables of their own.
+    EXPECT_EQ(f[0].attrs.at("also_covers"),
+              std::to_string(120 * 512) + ":512;" + std::to_string(140 * 512) + ":512");
 }
 
 TEST(MbrValidator, HostileTables) {
@@ -532,7 +539,8 @@ TEST(MbrValidator, HostileTables) {
     auto f = scan_one(b, "mbr");
     ASSERT_EQ(f.size(), 1u);
     EXPECT_EQ(f[0].confidence, Confidence::Structural);
-    EXPECT_EQ(f[0].size, b.size());
+    EXPECT_EQ(f[0].size, 512u);
+    EXPECT_EQ(f[0].attrs.at("disk_size"), std::to_string((8ull + 0xFFFFFFF0ull) * 512));
     EXPECT_EQ(f[0].diagnostics[0].code, "mbr-partition-truncated");
 
     mbr_entry(b, 0, 0, 0x00, 0x83, 8, 10);
@@ -554,6 +562,23 @@ TEST(MbrValidator, HostileTables) {
     f = scan_one(loop, "mbr");
     ASSERT_EQ(f.size(), 1u);
     EXPECT_EQ(f[0].attrs.at("partition_count"), "2");
+    EXPECT_EQ(f[0].attrs.at("partitions"), "p1:5120:20480:0x0f;p5:5632:1024:0x83:logical");
+
+    // Entries whose status byte is not 0x00/0x80, or that start past the data,
+    // are not partitions: a table with nothing else is rejected.
+    Bytes junk(512 * 64, 0);
+    junk[510] = 0x55;
+    junk[511] = 0xAA;
+    mbr_entry(junk, 0, 0, 0x12, 0x83, 8, 10);       // bad status
+    mbr_entry(junk, 0, 1, 0x00, 0x83, 100000, 10);  // starts past the data
+    mbr_entry(junk, 0, 2, 0x80, 0x07, 8, 0);        // zero length
+    EXPECT_TRUE(scan_one(junk, "mbr").empty());
+    mbr_entry(junk, 0, 3, 0x00, 0x83, 20, 10);  // one sane entry rescues it
+    f = scan_one(junk, "mbr");
+    ASSERT_EQ(f.size(), 1u);
+    EXPECT_EQ(f[0].confidence, Confidence::Structural);
+    EXPECT_EQ(f[0].attrs.at("partitions"), "p4:10240:5120:0x83");
+    EXPECT_TRUE(has_diag(f[0], "mbr-entry-invalid"));
 }
 
 TEST(MbrValidator, Fixture) {
@@ -563,6 +588,12 @@ TEST(MbrValidator, Fixture) {
     ASSERT_NE(f, nullptr);
     EXPECT_EQ(f->confidence, Confidence::Consistent);
     EXPECT_EQ(f->attrs.at("partitions"), "p1:1048576:16777216:0x83:boot;p2:17825792:319488:0x83");
+    EXPECT_EQ(f->size, 512u);
+    EXPECT_EQ(f->attrs.at("disk_size"), std::to_string(17825792 + 319488));
+    // The ext4 inside p1 stays a top-level finding beside the table.
+    const Finding* ext = test::find_at(found, 1048576);
+    ASSERT_NE(ext, nullptr);
+    EXPECT_EQ(ext->format, "ext4");
 }
 
 // --------------------------------------------------------------------- gpt
@@ -602,11 +633,17 @@ Bytes gpt_image(std::uint32_t entries = 128) {
     }
     test::put_u32le(b, h + 88, test::crc_zlib(b, e, static_cast<std::size_t>(entries) * 128));
     test::put_u32le(b, h + 16, test::crc_zlib(b, h, 92));
-    // Backup header at the last sector.
+    // Backup header at the last sector, its entry array immediately before it.
     const std::size_t bh = static_cast<std::size_t>((sectors - 1) * 512);
+    const std::size_t array_bytes = static_cast<std::size_t>(entries) * 128;
+    const std::size_t be = bh - ((array_bytes + 511) / 512) * 512;
+    std::copy(b.begin() + static_cast<std::ptrdiff_t>(e),
+              b.begin() + static_cast<std::ptrdiff_t>(e + array_bytes),
+              b.begin() + static_cast<std::ptrdiff_t>(be));
     std::copy(b.begin() + 512, b.begin() + 512 + 92, b.begin() + static_cast<std::ptrdiff_t>(bh));
     test::put_u64le(b, bh + 24, sectors - 1);
     test::put_u64le(b, bh + 32, 1);
+    test::put_u64le(b, bh + 72, be / 512);
     test::put_u32le(b, bh + 16, 0);
     test::put_u32le(b, bh + 16, test::crc_zlib(b, bh, 92));
     return b;
@@ -619,7 +656,14 @@ TEST(GptValidator, VerifiedWithEntriesAndBackup) {
     const Finding* g = test::find_at(found, 0, "gpt");
     ASSERT_NE(g, nullptr);
     EXPECT_EQ(g->confidence, Confidence::Verified);
-    EXPECT_EQ(g->size, b.size());
+    // LBA 0 (protective MBR) + header sector + 128 * 128 bytes of entries.
+    EXPECT_EQ(g->size, 0x4400u);
+    EXPECT_EQ(g->attrs.at("table"), "gpt-primary");
+    EXPECT_EQ(g->attrs.at("disk_offset"), "0");
+    EXPECT_EQ(g->attrs.at("disk_size"), std::to_string(b.size()));
+    EXPECT_EQ(g->attrs.at("header_lba"), "1");
+    EXPECT_EQ(g->attrs.at("entries_lba"), "2");
+    EXPECT_EQ(g->attrs.at("backup"), "valid");
     EXPECT_EQ(g->attrs.at("disk_guid"), "a3a2a1a0-a5a4-a7a6-a8a9-aaabacadaeaf");
     EXPECT_EQ(g->attrs.at("partitions"),
               "p1:32768:1015808:0fc63daf-8483-4772-8e79-3d69d8477de4:03020100-0504-0706-0809-"
@@ -630,16 +674,25 @@ TEST(GptValidator, VerifiedWithEntriesAndBackup) {
     ASSERT_EQ(g->also_matched.size(), 1u);  // protective MBR at the same offset
     EXPECT_EQ(g->also_matched[0].format, "mbr");
     EXPECT_EQ(g->also_matched[0].attrs.at("protective"), "true");
-    const Finding* backup = test::find_at(found, b.size() - 512, "gpt");
+    // Backup: entry array (32 sectors) + header sector, one finding.
+    const Finding* backup = test::find_at(found, b.size() - 33 * 512, "gpt");
     ASSERT_NE(backup, nullptr);
-    EXPECT_EQ(backup->attrs.at("backup"), "true");
+    EXPECT_EQ(backup->size, 33u * 512u);
+    EXPECT_EQ(backup->attrs.at("table"), "gpt-backup");
+    EXPECT_EQ(backup->attrs.at("primary"), "valid");
+    EXPECT_EQ(backup->attrs.at("partitions"), g->attrs.at("partitions"));
+    EXPECT_EQ(backup->attrs.at("disk_offset"), "0");
+    EXPECT_EQ(backup->attrs.at("disk_size"), std::to_string(b.size()));
     EXPECT_EQ(backup->confidence, Confidence::Verified);
+    EXPECT_TRUE(has_diag(*backup, "gpt-backup"));
+    EXPECT_FALSE(has_diag(*backup, "gpt-primary-missing"));
+    EXPECT_EQ(found.size(), 2u);
 }
 
-// Blank the backup header so corruption tests see one finding.
+// Blank the backup header and its array so corruption tests see one finding.
 Bytes gpt_no_backup() {
     Bytes b = gpt_image();
-    std::fill(b.end() - 512, b.end(), 0);
+    std::fill(b.end() - 33 * 512, b.end(), 0);
     return b;
 }
 
@@ -683,13 +736,22 @@ TEST(GptValidator, CorruptedAndHostile) {
     ASSERT_EQ(f.size(), 1u);
     EXPECT_EQ(f[0].diagnostics[0].code, "gpt-truncated-header");
 
-    // Truncated disk: the alternate header lies beyond the data.
+    // Truncated disk: the alternate header lies beyond the data. The table
+    // itself is intact, so its finding keeps its own extent and confidence.
     b = gpt_image();
     b.resize(1 << 20);
     f = scan_one(b, "gpt");
     ASSERT_EQ(f.size(), 1u);
-    EXPECT_EQ(f[0].size, b.size());
-    EXPECT_TRUE(has_diag(f[0], "gpt-truncated"));
+    EXPECT_EQ(f[0].size, 0x4400u);
+    EXPECT_EQ(f[0].confidence, Confidence::Verified);
+    EXPECT_EQ(f[0].attrs.at("disk_size"), std::to_string(4096 * 512));
+    EXPECT_EQ(f[0].attrs.at("backup"), "outside");
+    EXPECT_TRUE(has_diag(f[0], "gpt-disk-truncated"));
+
+    // Unaligned "EFI PART" in data is not a header.
+    b = gpt_no_backup();
+    b.insert(b.begin(), 7, 0);
+    EXPECT_TRUE(scan_one(b, "gpt").empty());
 }
 
 TEST(GptValidator, Fixture) {
@@ -700,6 +762,17 @@ TEST(GptValidator, Fixture) {
     EXPECT_EQ(f->confidence, Confidence::Verified);
     EXPECT_EQ(f->attrs.at("partition_count"), "2");
     EXPECT_EQ(f->attrs.at("disk_guid"), "6f1a2c3e-0001-4d5e-8f90-0123456789ab");
+    EXPECT_EQ(f->size, 0x4400u);
+    EXPECT_EQ(f->attrs.at("disk_size"), std::to_string(36717056));
+    EXPECT_EQ(f->attrs.at("backup"), "valid");
+    // The backup at LBA 71712 is its own finding and agrees with the primary.
+    const Finding* backup = test::find_at(found, 71712 * 512 - 32 * 512, "gpt");
+    ASSERT_NE(backup, nullptr);
+    EXPECT_EQ(backup->attrs.at("table"), "gpt-backup");
+    EXPECT_EQ(backup->attrs.at("primary"), "valid");
+    EXPECT_EQ(backup->attrs.at("partitions"), f->attrs.at("partitions"));
+    // Nothing in the disk was swallowed by either table.
+    EXPECT_NE(test::find_at(found, 35651584, "squashfs"), nullptr);
 }
 
 // ------------------------------------------------------------------ uimage

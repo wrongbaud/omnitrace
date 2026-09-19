@@ -13,6 +13,13 @@
 // at Consistent or better is not re-validated: formats made of repeated nodes
 // (JFFS2, UBI, tar) would otherwise cost O(n^2) and produce one finding per
 // node. See docs/formats/signatures.md.
+//
+// Conflict resolution treats partition tables specially: a table finding is
+// only ever absorbed by another partition table (a protective MBR under its
+// GPT), never by a filesystem or container that happens to start at the same
+// offset or to claim the bytes around it. A table's own extent is small (one
+// sector to a few KiB) so the normal rule still suppresses stray magics that
+// land inside its entry array. See docs/formats/partition-tables.md.
 #include <algorithm>
 #include <cstring>
 #include <sstream>
@@ -84,6 +91,42 @@ std::uint64_t end_of(const Finding& f) {
     return f.size > UINT64_MAX - f.offset ? UINT64_MAX : f.offset + f.size;
 }
 
+struct Range {
+    std::uint64_t offset = 0;
+    std::uint64_t end = 0;
+};
+
+// attrs["also_covers"] = "offset:length;offset:length;..." (decimal, Span
+// relative). Anything unparsable is ignored: a malformed hint only costs a
+// duplicate finding, never a crash.
+std::vector<Range> parse_ranges(const std::string& text) {
+    std::vector<Range> out;
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        std::size_t item_end = text.find(';', pos);
+        if (item_end == std::string::npos) item_end = text.size();
+        const std::string item = text.substr(pos, item_end - pos);
+        pos = item_end + 1;
+        const std::size_t colon = item.find(':');
+        if (colon == std::string::npos) continue;
+        std::uint64_t v[2] = {0, 0};
+        bool ok = colon > 0 && colon + 1 < item.size();
+        for (int k = 0; k < 2 && ok; ++k) {
+            const std::string field = k == 0 ? item.substr(0, colon) : item.substr(colon + 1);
+            for (const char ch : field) {
+                if (ch < '0' || ch > '9' || v[k] > (UINT64_MAX - 9) / 10) {
+                    ok = false;
+                    break;
+                }
+                v[k] = v[k] * 10 + static_cast<std::uint64_t>(ch - '0');
+            }
+        }
+        if (!ok || v[1] == 0) continue;
+        out.push_back({v[0], v[1] > UINT64_MAX - v[0] ? UINT64_MAX : v[0] + v[1]});
+    }
+    return out;
+}
+
 // Total order used for output and for resolution.
 bool before(const Finding& a, const Finding& b) {
     if (a.offset != b.offset) return a.offset < b.offset;
@@ -91,6 +134,16 @@ bool before(const Finding& a, const Finding& b) {
     if (a.size != b.size) return a.size > b.size;
     if (a.signature != b.signature) return a.signature < b.signature;
     return a.format < b.format;
+}
+
+bool is_partition_table(const Finding& f) {
+    return f.category == "partition-table";
+}
+
+// May `owner` take `f` into its also_matched? A partition table is only ever
+// absorbed by another partition table; anything else follows the normal rule.
+bool may_absorb(const Finding& owner, const Finding& f) {
+    return !is_partition_table(f) || is_partition_table(owner);
 }
 
 std::vector<Finding> resolve(std::vector<Finding> in) {
@@ -104,14 +157,20 @@ std::vector<Finding> resolve(std::vector<Finding> in) {
         const std::uint64_t f_end = end_of(f);
         while (!open.empty() && end_of(kept[open.back()]) <= f.offset) open.pop_back();
         std::optional<std::size_t> owner;
-        // Exact same-offset duplicate: the first in sort order (higher
-        // confidence, then larger, then name) already sits at kept.back().
-        if (!kept.empty() && kept.back().offset == f.offset) {
-            owner = kept.size() - 1;
-        } else {
+        // Exact same-offset duplicate: the first eligible in sort order (higher
+        // confidence, then larger, then name) is among the kept findings at
+        // this offset, which are contiguous at the back of `kept`.
+        for (std::size_t j = kept.size(); j-- > 0 && kept[j].offset == f.offset;) {
+            if (may_absorb(kept[j], f)) {
+                owner = j;
+                break;
+            }
+        }
+        if (!owner) {
             for (auto it = open.rbegin(); it != open.rend(); ++it) {
                 const Finding& k = kept[*it];
-                if (k.confidence > f.confidence && f.offset >= k.offset && f_end <= end_of(k)) {
+                if (k.confidence > f.confidence && f.offset >= k.offset && f_end <= end_of(k) &&
+                    may_absorb(k, f)) {
                     owner = *it;
                     break;
                 }
@@ -146,8 +205,13 @@ std::vector<Finding> scan(const Span& span, const SignatureSet& sigs, const Scan
             if (validators[i] == nullptr) validator_missing[i] = 1;
         }
     }
-    // Per signature: end of the last accepted finding at >= Consistent.
+    // Per signature: end of the last accepted finding at >= Consistent, plus
+    // any member ranges a validator declared through attrs["also_covers"]
+    // (the EBRs of an MBR chain: each is a 0x55AA sector that would otherwise
+    // be reported as a table of its own). Hits arrive in offset order, so
+    // ranges are dropped once passed.
     std::vector<std::uint64_t> covered_until(sigs.signatures.size(), 0);
+    std::vector<std::vector<Range>> also_covered(sigs.signatures.size());
     bool hit_limit = false;
 
     auto on_hit = [&](std::uint64_t hit, std::uint32_t si) {
@@ -156,6 +220,14 @@ std::vector<Finding> scan(const Span& span, const SignatureSet& sigs, const Scan
         const std::uint64_t start = hit - sig.magic_offset;
         if (sig.alignment > 1 && (start % sig.alignment) != 0) return;
         if (start < covered_until[si]) return;
+        if (!also_covered[si].empty()) {
+            auto& ranges = also_covered[si];
+            ranges.erase(std::remove_if(ranges.begin(), ranges.end(),
+                                        [&](const Range& r) { return r.end <= start; }),
+                         ranges.end());
+            for (const Range& r : ranges)
+                if (start >= r.offset && start < r.end) return;
+        }
 
         std::optional<Finding> f;
         if (validators[si] != nullptr) {
@@ -181,6 +253,9 @@ std::vector<Finding> scan(const Span& span, const SignatureSet& sigs, const Scan
         f->evidence = f->evidence.empty() ? ev : ev + "; " + f->evidence;
         if (f->confidence >= Confidence::Consistent && f->size > 0 && f->offset == start)
             covered_until[si] = end_of(*f);
+        if (const auto it = f->attrs.find("also_covers"); it != f->attrs.end())
+            for (const Range& r : parse_ranges(it->second))
+                if (r.offset > start) also_covered[si].push_back(r);
         out.push_back(std::move(*f));
         if (out.size() >= opts.max_hits) hit_limit = true;
     };

@@ -11,12 +11,20 @@
 
 #include "Common.h"
 #include "omnitrace/core/Diagnostics.h"
+#include "omnitrace/core/Text.h"
 
 namespace omnitrace::output {
 
 namespace {
 
 using detail::dec;
+
+// Every evidence-derived string is sanitized to valid UTF-8 first (Text.h),
+// then Markdown-escaped; the two steps compose (an escape's backslash is
+// itself escaped) so the document is always valid UTF-8 and valid Markdown.
+std::string esc(const std::string& s) {
+    return md_escape(sanitize_utf8(s));
+}
 
 std::string tier_label(std::uint8_t score) {
     return std::string(confidence_tier(confidence_from_score(score))) + " (" + dec(score) + ")";
@@ -45,13 +53,13 @@ std::string join_argv(const std::vector<std::string>& argv) {
 }
 
 std::string dash_if_empty(const std::string& s) {
-    return s.empty() ? "-" : md_escape(s);
+    return s.empty() ? "-" : esc(s);
 }
 
 std::string diagnostics_table(const std::vector<Diagnostic>& ds) {
     std::vector<std::vector<std::string>> rows;
     for (const Diagnostic& d : ds) {
-        rows.push_back({severity_name(d.severity), md_escape(d.code), md_escape(d.message)});
+        rows.push_back({severity_name(d.severity), esc(d.code), esc(d.message)});
     }
     return md_table({"Severity", "Code", "Message"}, rows);
 }
@@ -195,7 +203,7 @@ std::string summary_markdown(const Manifest& m) {
     {
         std::vector<std::vector<std::string>> rows;
         for (const Evidence& ev : m.evidence) {
-            rows.push_back({md_escape(ev.id), md_escape(ev.path),
+            rows.push_back({esc(ev.id), esc(ev.path),
                             human_bytes(ev.size) + " (" + dec(ev.size) + ")",
                             dash_if_empty(ev.digests.md5), dash_if_empty(ev.digests.sha1),
                             dash_if_empty(ev.digests.sha256), dash_if_empty(ev.acquired_at),
@@ -222,9 +230,9 @@ std::string summary_markdown(const Manifest& m) {
         walk(m, [&](const Node& n, std::size_t depth) {
             if (!is_structural(n.kind)) return;
             out += std::string(depth * 2, ' ');
-            out += "- `" + n.id + "` " + node_kind_name(n.kind);
-            if (!n.format.empty()) out += " " + md_escape(n.format);
-            if (!n.name.empty()) out += " \"" + md_escape(n.name) + "\"";
+            out += "- `" + esc(n.id) + "` " + node_kind_name(n.kind);
+            if (!n.format.empty()) out += " " + esc(n.format);
+            if (!n.name.empty()) out += " \"" + esc(n.name) + "\"";
             out += " @ " + hex(n.location.offset) + " " + size_cell(n.location.length);
             out += " [" + tier_label(n.confidence) + "]\n";
             ++lines;
@@ -236,7 +244,7 @@ std::string summary_markdown(const Manifest& m) {
     {
         std::vector<std::vector<std::string>> rows;
         for (const Coverage& c : m.coverage) {
-            rows.push_back({md_escape(c.format), md_escape(c.status), md_escape(c.detail)});
+            rows.push_back({esc(c.format), esc(c.status), esc(c.detail)});
         }
         out += md_table({"Format", "Status", "Detail"}, rows);
     }
@@ -253,7 +261,7 @@ std::string partitions_markdown(const Manifest& m) {
         if (!is_structural(n.kind)) return;
         rows.push_back({hex(n.location.offset), size_cell(n.location.length),
                         node_kind_name(n.kind), dash_if_empty(n.format), tier_label(n.confidence),
-                        std::string(depth * 2, ' ') + "`" + n.id + "` " + md_escape(n.name),
+                        std::string(depth * 2, ' ') + "`" + esc(n.id) + "` " + esc(n.name),
                         dec(warning_count(n.diagnostics))});
     });
     out += md_table({"Offset", "Size", "Kind", "Format", "Confidence", "Name", "Warnings"}, rows);
@@ -262,7 +270,7 @@ std::string partitions_markdown(const Manifest& m) {
 
 std::string listing_markdown(const std::string& fs_node_id,
                              const std::vector<EntryResult>& entries) {
-    std::string out = "# Listing for `" + md_escape(fs_node_id) + "`\n\n";
+    std::string out = "# Listing for `" + esc(fs_node_id) + "`\n\n";
     std::vector<std::vector<std::string>> rows;
     for (const EntryResult& r : entries) {
         const FileMeta& f = r.meta;
@@ -276,9 +284,9 @@ std::string listing_markdown(const std::string& fs_node_id,
             if (mtime.empty()) mtime = detail::dec_signed(*f.mtime);
         }
         std::string sha = "-";
-        if (!r.digests.sha256.empty()) sha = r.digests.sha256.substr(0, 12);
-        std::string path = md_escape(f.path);
-        if (!f.link_target.empty()) path += " -> " + md_escape(f.link_target);
+        if (!r.digests.sha256.empty()) sha = esc(r.digests.sha256.substr(0, 12));
+        std::string path = esc(f.path);
+        if (!f.link_target.empty()) path += " -> " + esc(f.link_target);
         rows.push_back({path, entry_kind_name(f.kind), dec(f.size), detail::mode_octal(f.mode),
                         dec(f.uid) + ":" + dec(f.gid), mtime, sha, flags, dec(f.version)});
     }

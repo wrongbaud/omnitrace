@@ -1,0 +1,23 @@
+# crypto.toml — encrypted-volume and integrity-metadata signatures.
+# Schema and validator contract: docs/formats/signatures.md
+
+[[signature]]
+name = "luks"
+format = "luks"
+category = "crypto"
+hex = "4c554b53babe"
+endian = "big"
+validator = "luks"
+max_json = 4194304
+description = "LUKS1/LUKS2 encrypted-volume header; cipher, mode, hash and payload offset reported; size = header area (LUKS1 payload offset, LUKS2 hdr_size x 2)"
+references = ["https://gitlab.com/cryptsetup/cryptsetup/-/wikis/LUKS-standard/on-disk-format.pdf", "https://gitlab.com/cryptsetup/LUKS2-docs"]
+
+[[signature]]
+name = "dm-verity"
+format = "dm-verity"
+category = "crypto"
+hex = "766572697479 0000"
+endian = "little"
+validator = "verity"
+description = "dm-verity hash-device superblock (\"verity\\0\\0\"); algorithm, block sizes, data block count and salt reported; size = superblock block + hash tree"
+references = ["https://docs.kernel.org/admin-guide/device-mapper/verity.html", "https://gitlab.com/cryptsetup/cryptsetup/-/blob/main/lib/verity/verity.c"]

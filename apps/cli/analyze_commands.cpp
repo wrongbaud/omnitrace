@@ -1,8 +1,12 @@
 // analyze_commands.cpp — `omnitrace scan` and `omnitrace analyze`.
 //
 // scan:    findings only, as an aligned table or JSON.
-// analyze: the Phase 0 case directory (DEVELOPMENT_PLAN.md §6): manifest.yaml,
-//          summary.md, partitions.md, filesystems/<id>/{listing.yaml,listing.md,files/}.
+// analyze: the case directory (docs/CASE_LAYOUT.md). Default "corpus" layout:
+//          INFO.yaml (+ manifest.yaml alias), INFO.md, flash/SOURCE.yaml,
+//          partitions/{<name>.bin,mount.sh}, filesystems/<id>/{listing.yaml,
+//          listing.md,files/}, plus summary.md / partitions.md for
+//          compatibility. "flat" is the Phase 0 layout: manifest.yaml,
+//          summary.md, partitions.md, filesystems/ and nothing carved.
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -19,9 +23,11 @@
 
 #include "commands.h"
 #include "omnitrace/core/Clock.h"
+#include "omnitrace/core/Hash.h"
 #include "omnitrace/core/Manifest.h"
 #include "omnitrace/core/Source.h"
 #include "omnitrace/core/Span.h"
+#include "omnitrace/core/Text.h"
 #include "omnitrace/discovery/Recurse.h"
 #include "omnitrace/discovery/Signature.h"
 #include "omnitrace/filesystems/Filesystem.h"
@@ -117,7 +123,7 @@ std::string attrs_text(const std::map<std::string, std::string>& attrs) {
     std::string s;
     for (const auto& [k, v] : attrs) {
         if (!s.empty()) s += ' ';
-        s += k + "=" + v;
+        s += sanitize_utf8(k) + "=" + sanitize_utf8(v);
     }
     return s;
 }
@@ -129,19 +135,20 @@ nlohmann::json finding_json(const discovery::Finding& f) {
     j["offset"] = f.offset;
     j["offset_hex"] = output::hex(f.offset);
     j["size"] = f.size;
-    j["format"] = f.format;
-    j["category"] = f.category;
-    j["signature"] = f.signature;
+    j["format"] = sanitize_utf8(f.format);
+    j["category"] = sanitize_utf8(f.category);
+    j["signature"] = sanitize_utf8(f.signature);
     j["confidence"] = static_cast<int>(f.confidence);
     j["tier"] = confidence_tier(f.confidence);
-    j["evidence"] = f.evidence;
+    j["evidence"] = sanitize_utf8(f.evidence);
     j["endian"] = endian_name(f.endian);
     j["attrs"] = nlohmann::json::object();
-    for (const auto& [k, v] : f.attrs) j["attrs"][k] = v;
+    for (const auto& [k, v] : f.attrs) j["attrs"][sanitize_utf8(k)] = sanitize_utf8(v);
     j["diagnostics"] = nlohmann::json::array();
     for (const Diagnostic& d : f.diagnostics)
-        j["diagnostics"].push_back(
-            {{"severity", severity_name(d.severity)}, {"code", d.code}, {"message", d.message}});
+        j["diagnostics"].push_back({{"severity", severity_name(d.severity)},
+                                    {"code", sanitize_utf8(d.code)},
+                                    {"message", sanitize_utf8(d.message)}});
     j["also_matched"] = nlohmann::json::array();
     for (const discovery::Finding& alt : f.also_matched)
         j["also_matched"].push_back(finding_json(alt));
@@ -153,7 +160,7 @@ void cmd_scan(const std::string& path, bool json) {
     const auto findings = discovery::scan(Span::whole(file), discovery::SignatureSet::builtin());
     if (json) {
         nlohmann::json out;
-        out["image"] = path;
+        out["image"] = sanitize_utf8(path);
         out["size"] = file->size();
         out["findings"] = nlohmann::json::array();
         for (const auto& f : findings) out["findings"].push_back(finding_json(f));
@@ -162,8 +169,9 @@ void cmd_scan(const std::string& path, bool json) {
     }
     std::vector<std::vector<std::string>> rows;
     for (const auto& f : findings) {
-        rows.push_back({output::hex(f.offset), f.size ? dec(f.size) : "?", f.format,
-                        confidence_tier(f.confidence), f.evidence, attrs_text(f.attrs)});
+        rows.push_back({output::hex(f.offset), f.size ? dec(f.size) : "?", sanitize_utf8(f.format),
+                        confidence_tier(f.confidence), sanitize_utf8(f.evidence),
+                        attrs_text(f.attrs)});
     }
     std::printf("%s: %s, %zu finding(s)\n\n", path.c_str(),
                 output::human_bytes(file->size()).c_str(), findings.size());
@@ -175,12 +183,127 @@ void cmd_scan(const std::string& path, bool json) {
 
 struct AnalyzeArgs {
     std::string image, out;
+    std::string layout = "corpus";  // corpus | flat
+    std::string carve = "all";      // none | table | all
+    std::uint64_t max_carve_bytes = 4ull << 30;
+    bool copy_image = false;
     bool no_extract = false, history = false;
     Limits limits;
 };
 
+discovery::Carve carve_from(const std::string& s) {
+    if (s == "none") return discovery::Carve::None;
+    if (s == "table") return discovery::Carve::Table;
+    return discovery::Carve::All;
+}
+
+// YAML double-quoted scalar: always valid UTF-8, never breaks the document.
+std::string yaml_quote(const std::string& raw) {
+    std::string s = sanitize_utf8(raw);
+    std::string out = "\"";
+    for (const char ch : s) {
+        switch (ch) {
+            case '"':
+                out += "\\\"";
+                break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            default:
+                out.push_back(ch);
+        }
+    }
+    return out + "\"";
+}
+
+// flash/SOURCE.yaml: where the evidence came from and what it hashes to.
+std::string source_yaml(const Evidence& ev, const std::string& copied_to) {
+    std::string y = "schema: omnitrace-source/1\n";
+    y += "path: " + yaml_quote(ev.path) + "\n";
+    y += "name: " + yaml_quote(std::filesystem::path(ev.path).filename().string()) + "\n";
+    y += "size: " + dec(ev.size) + "\n";
+    y += "md5: " + ev.digests.md5 + "\n";
+    y += "sha1: " + ev.digests.sha1 + "\n";
+    y += "sha256: " + ev.digests.sha256 + "\n";
+    y += "acquired_at: " + yaml_quote(ev.acquired_at) + "\n";
+    y += "copy: " + (copied_to.empty() ? std::string("null") : yaml_quote(copied_to)) + "\n";
+    return y;
+}
+
+// INFO.md: the summary, the partition map, what was carved, and coverage.
+std::string info_markdown(const Manifest& m) {
+    std::string out = output::summary_markdown(m);
+    out += "\n" + output::partitions_markdown(m);
+    out += "\n# Partitions carved\n\n";
+    std::vector<std::vector<std::string>> rows;
+    for (const Node& n : m.nodes()) {
+        const auto carved = n.attrs.find("carved_path");
+        const auto skipped = n.attrs.find("carve_skipped");
+        if (carved == n.attrs.end() && skipped == n.attrs.end()) continue;
+        const std::string kind =
+            std::string(node_kind_name(n.kind)) + (n.format.empty() ? "" : "/" + n.format);
+        rows.push_back(
+            {carved != n.attrs.end() ? output::md_escape(sanitize_utf8(carved->second)) : "-",
+             output::hex(n.location.offset),
+             output::human_bytes(n.location.length) + " (" + dec(n.location.length) + ")",
+             output::md_escape(sanitize_utf8(kind)),
+             n.digests.sha256.empty() ? "-" : n.digests.sha256,
+             output::md_escape(sanitize_utf8(n.name)),
+             skipped != n.attrs.end() ? "skipped: " + skipped->second : ""});
+    }
+    out += output::md_table({"File", "Offset", "Size", "Kind", "SHA-256", "Node", "Note"}, rows);
+    out += "\n# Coverage\n\n";
+    std::vector<std::vector<std::string>> cov;
+    for (const Coverage& c : m.coverage)
+        cov.push_back({output::md_escape(sanitize_utf8(c.format)),
+                       output::md_escape(sanitize_utf8(c.status)),
+                       output::md_escape(sanitize_utf8(c.detail))});
+    out += output::md_table({"Format", "Status", "Detail"}, cov);
+    return out;
+}
+
+// manifest.yaml beside INFO.yaml: a symlink where the host allows it, a copy
+// otherwise (Windows, or a filesystem without symlinks).
+void alias_manifest(const std::filesystem::path& out, const std::string& yaml) {
+    const std::filesystem::path alias = out / "manifest.yaml";
+    std::error_code ec;
+    std::filesystem::remove(alias, ec);
+#ifndef _WIN32
+    std::filesystem::create_symlink("INFO.yaml", alias, ec);
+    if (!ec) return;
+    spdlog::debug("symlink manifest.yaml -> INFO.yaml failed ({}); writing a copy", ec.message());
+#endif
+    write_text(alias, yaml);
+}
+
+// --copy-image: flash/<name> is a verified byte copy of the evidence.
+std::string copy_image_into(const std::filesystem::path& flash, const std::string& image,
+                            const Evidence& ev) {
+    const std::string name =
+        safe_filename_component(std::filesystem::path(image).filename().string(), 255);
+    const std::filesystem::path dst = flash / name;
+    std::error_code ec;
+    std::filesystem::copy_file(image, dst, std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) fail("cannot copy image to '" + dst.string() + "': " + ec.message());
+    Digests d;
+    if (const Status st = hash_file(dst.string(), d); !st)
+        fail("cannot hash the copy: " + st.error);
+    if (d.sha256 != ev.digests.sha256) fail("the copy in flash/ does not hash like the evidence");
+    return "flash/" + name;
+}
+
 void cmd_analyze(const AnalyzeArgs& a) {
     const auto file = open_image(a.image);
+    const bool corpus = a.layout != "flat";
     std::error_code ec;
     std::filesystem::create_directories(a.out, ec);
     if (ec) fail("cannot create '" + a.out + "': " + ec.message());
@@ -196,9 +319,13 @@ void cmd_analyze(const AnalyzeArgs& a) {
     opts.extract = !a.no_extract;
     opts.history = a.history;
     opts.limits = a.limits;
+    opts.carve = corpus ? carve_from(a.carve) : discovery::Carve::None;
+    opts.max_carve_bytes = a.max_carve_bytes;
     opts.open_reader = [](const std::string& format) {
         return fs::FilesystemRegistry::instance().create(format);
     };
+    if (!corpus && a.carve != "none")
+        spdlog::debug("--layout flat: nothing is carved (--carve {} ignored)", a.carve);
 
     discovery::Listings listings;
     if (const Status st = discovery::analyze(file, a.image, opts, m, listings); !st) fail(st.error);
@@ -207,7 +334,21 @@ void cmd_analyze(const AnalyzeArgs& a) {
 
     const std::filesystem::path out(a.out);
     const std::string yaml = output::manifest_to_yaml(m);
-    write_text(out / "manifest.yaml", yaml);
+    if (corpus) {
+        write_text(out / "INFO.yaml", yaml);
+        alias_manifest(out, yaml);
+        write_text(out / "INFO.md", info_markdown(m));
+        const std::filesystem::path flash = out / "flash";
+        std::filesystem::create_directories(flash, ec);
+        if (ec) fail("cannot create '" + flash.string() + "': " + ec.message());
+        std::string copied;
+        if (a.copy_image && !m.evidence.empty())
+            copied = copy_image_into(flash, a.image, m.evidence.back());
+        if (!m.evidence.empty())
+            write_text(flash / "SOURCE.yaml", source_yaml(m.evidence.back(), copied));
+    } else {
+        write_text(out / "manifest.yaml", yaml);
+    }
     write_text(out / "summary.md", output::summary_markdown(m));
     write_text(out / "partitions.md", output::partitions_markdown(m));
     for (const auto& [fs_id, entries] : listings) {
@@ -221,9 +362,11 @@ void cmd_analyze(const AnalyzeArgs& a) {
     // Integrity: what we wrote must read back as the same graph.
     Manifest back;
     if (const Status st = output::manifest_from_yaml(yaml, back); !st)
-        fail("manifest.yaml does not re-parse: " + st.error);
+        fail(std::string(corpus ? "INFO.yaml" : "manifest.yaml") +
+             " does not re-parse: " + st.error);
     if (output::manifest_to_yaml(back) != yaml)
-        fail("manifest.yaml does not round-trip byte-identically");
+        fail(std::string(corpus ? "INFO.yaml" : "manifest.yaml") +
+             " does not round-trip byte-identically");
 
     std::vector<std::vector<std::string>> rows;
     for (const Node& n : m.nodes()) {
@@ -237,7 +380,8 @@ void cmd_analyze(const AnalyzeArgs& a) {
         rows.push_back({n.id, node_kind_name(n.kind), output::hex(n.location.offset),
                         n.location.length ? output::human_bytes(n.location.length) : "?",
                         n.format.empty() ? "-" : n.format,
-                        confidence_tier(confidence_from_score(n.confidence)), n.name, extra});
+                        confidence_tier(confidence_from_score(n.confidence)), sanitize_utf8(n.name),
+                        extra});
     }
     std::printf("%s: %s, sha256 %s\n\n", a.image.c_str(), output::human_bytes(file->size()).c_str(),
                 m.evidence.empty() ? "-" : m.evidence.back().digests.sha256.c_str());
@@ -250,10 +394,23 @@ void cmd_analyze(const AnalyzeArgs& a) {
         "region(s)\n",
         m.nodes().size(), m.count(NodeKind::Partition), m.count(NodeKind::Container),
         m.count(NodeKind::Filesystem), m.count(NodeKind::File), m.count(NodeKind::Region));
-    for (const Coverage& c : m.coverage)
-        std::printf("coverage: %s %s%s%s\n", c.format.c_str(), c.status.c_str(),
-                    c.detail.empty() ? "" : " - ", c.detail.c_str());
-    std::printf("case directory: %s\n", out.string().c_str());
+    for (const Node& n : m.nodes()) {
+        const auto it = n.attrs.find("carved_path");
+        if (it != n.attrs.end())
+            std::printf("carved: %s (%s, sha256 %s)\n", sanitize_utf8(it->second).c_str(),
+                        output::human_bytes(n.location.length).c_str(), n.digests.sha256.c_str());
+        const auto sk = n.attrs.find("carve_skipped");
+        if (sk != n.attrs.end())
+            std::printf("carve skipped: %s %s (%s): %s\n", n.id.c_str(),
+                        sanitize_utf8(n.name).c_str(),
+                        output::human_bytes(n.location.length).c_str(), sk->second.c_str());
+    }
+    for (const Coverage& c : m.coverage)  // details may quote reader errors: evidence bytes
+        std::printf("coverage: %s %s%s%s\n", sanitize_utf8(c.format).c_str(),
+                    sanitize_utf8(c.status).c_str(), c.detail.empty() ? "" : " - ",
+                    sanitize_utf8(c.detail).c_str());
+    std::printf("case directory: %s (%s layout)\n", out.string().c_str(),
+                corpus ? "corpus" : "flat");
 }
 
 }  // namespace
@@ -277,6 +434,27 @@ void register_analyze_commands(CLI::App& app) {
         ->required()
         ->check(CLI::ExistingFile);
     analyze->add_option("-o,--out", args->out, "Case directory (created)")->required();
+    analyze
+        ->add_option("--layout", args->layout,
+                     "corpus: INFO.yaml/INFO.md, flash/, partitions/ (default); flat: "
+                     "manifest.yaml, summary.md, partitions.md, filesystems/ only")
+        ->check(CLI::IsMember({"corpus", "flat"}))
+        ->capture_default_str();
+    analyze
+        ->add_option("--carve", args->carve,
+                     "What to carve into partitions/: none, table (partition-table entries) "
+                     "or all (entries plus nested finds)")
+        ->check(CLI::IsMember({"none", "table", "all"}))
+        ->capture_default_str();
+    analyze
+        ->add_option("--max-carve-bytes", args->max_carve_bytes,
+                     "Largest file to carve (bytes; suffixes K/M/G/T are 1024-based); larger "
+                     "partitions are skipped with a coverage row")
+        ->transform(CLI::AsSizeValue(false))
+        ->capture_default_str();
+    analyze->add_flag("--copy-image", args->copy_image,
+                      "Copy the image into flash/ (verified by hash); by default only "
+                      "flash/SOURCE.yaml refers to it");
     analyze->add_flag("--no-extract", args->no_extract, "List filesystems without writing files");
     analyze->add_flag("--history", args->history,
                       "Recover superseded and deleted versions when the format keeps them");

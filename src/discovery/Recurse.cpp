@@ -1,20 +1,26 @@
 // Recurse.cpp — the analysis driver. See Recurse.h for the contract.
 //
-// Node insertion order is the offset order of the things found, so the same
-// image always yields the same ids and the same manifest.yaml. Every offset
-// arithmetic saturates; every reader failure becomes a Diagnostic on the node
-// it belongs to and a Coverage row, never an exception or a skipped finding.
+// Node insertion order is: partition tables and their entries first (they are
+// the map every other finding is placed on), then every other finding and gap
+// in byte order, so the same image always yields the same ids and the same
+// manifest.yaml. Every offset arithmetic saturates; every reader or host
+// failure becomes a Diagnostic on the node it belongs to and a Coverage row,
+// never an exception or a skipped finding.
 #include "omnitrace/discovery/Recurse.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <map>
+#include <set>
 #include <system_error>
 
 #include "omnitrace/core/Hash.h"
 #include "omnitrace/core/Span.h"
+#include "omnitrace/core/Swap.h"
+#include "omnitrace/core/Text.h"
 
 namespace omnitrace::discovery {
 
@@ -31,6 +37,13 @@ std::string dec(std::uint64_t v) {
 std::string hex(std::uint64_t v) {
     char buf[32];
     std::snprintf(buf, sizeof buf, "0x%llx", static_cast<unsigned long long>(v));
+    return buf;
+}
+
+// "0x" + at least eight hex digits: the carved-file prefix for nested finds.
+std::string hex08(std::uint64_t v) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "0x%08llx", static_cast<unsigned long long>(v));
     return buf;
 }
 
@@ -78,6 +91,12 @@ std::string attr_or(const std::map<std::string, std::string>& attrs, const char*
     return it == attrs.end() ? fallback : it->second;
 }
 
+bool has_diag(const std::vector<Diagnostic>& ds, const char* code) {
+    for (const Diagnostic& d : ds)
+        if (d.code == code) return true;
+    return false;
+}
+
 // --------------------------------------------------------------- structures
 
 // A byte range [offset, end) that is accounted for and therefore not a gap.
@@ -96,9 +115,17 @@ struct Extent {
 // One partition entry parsed from a partition-table finding's attrs.
 struct PartSpec {
     std::string index;        // "p1"
-    std::uint64_t start = 0;  // relative to the table finding
+    std::uint64_t start = 0;  // relative to LBA 0 of the disk the table describes
     std::uint64_t size = 0;
     std::map<std::string, std::string> attrs;
+};
+
+// One partition entry node of the span being analysed.
+struct PartInfo {
+    std::string id;
+    std::string index;
+    std::uint64_t start = 0, end = 0;  // span-relative; end == start when unusable
+    bool protective = false;           // MBR 0xEE covering a GPT: not a real partition
 };
 
 // Mutable state for one analyze() call. Readers never see it.
@@ -106,6 +133,7 @@ struct Ctx {
     const AnalyzeOptions& opts;
     Manifest& out;
     Listings& listings;
+    std::string image_id;
     std::uint64_t files_used = 0;  // run-wide Limits accounting across every walk
     std::uint64_t bytes_used = 0;
     std::map<std::string, std::size_t> coverage_index;  // format -> row in out.coverage
@@ -129,14 +157,31 @@ void set_coverage(Ctx& c, const std::string& format, const std::string& status,
     if (!detail.empty()) row.detail = detail;
 }
 
-// Innermost structural node whose range contains [offset, end); `fallback`
+// The "carve" row accumulates: every skipped or failed carve is listed.
+void carve_partial(Ctx& c, const std::string& detail) {
+    const auto it = c.coverage_index.find("carve");
+    if (it == c.coverage_index.end()) {
+        set_coverage(c, "carve", "partial", detail);
+        return;
+    }
+    Coverage& row = c.out.coverage[it->second];
+    if (row.status != "partial") {
+        row.status = "partial";
+        row.detail = detail;
+    } else if (!row.detail.empty()) {
+        row.detail += "; " + detail;
+    } else {
+        row.detail = detail;
+    }
+}
+
+// Innermost structural node whose range contains `offset`; `fallback`
 // otherwise. Ties go to the most recently added node (the most nested one).
-std::string parent_for(const Ctx& c, std::uint64_t offset, std::uint64_t end,
-                       const std::string& fallback) {
+std::string parent_for(const Ctx& c, std::uint64_t offset, const std::string& fallback) {
     std::string best = fallback;
     std::uint64_t best_len = UINT64_MAX;
     for (const Extent& e : c.extents) {
-        if (offset < e.offset || end > e.end) continue;
+        if (offset < e.offset || offset >= e.end) continue;
         const std::uint64_t len = e.end - e.offset;
         if (len <= best_len) {
             best_len = len;
@@ -158,7 +203,7 @@ NodeKind kind_for(const Finding& f) {
 std::string name_for(const Finding& f) {
     for (const char* key : {"label", "volume_name", "name"}) {
         const auto it = f.attrs.find(key);
-        if (it != f.attrs.end() && !it->second.empty()) return it->second;
+        if (it != f.attrs.end() && !it->second.empty()) return sanitize_utf8(it->second);
     }
     return f.format;
 }
@@ -187,6 +232,19 @@ Node node_from_finding(const Finding& f, const Span& span, const std::string& pa
     return n;
 }
 
+// A finding of unknown size (0) has no extent: it claims no bytes and parents
+// nothing, so a magic-only zip does not swallow every find after it (auto-emmc:
+// the squashfs and ext4 were nested under a size-0 zip -> xz chain).
+std::uint64_t end_of(const Finding& f, const Span& span) {
+    if (f.size == 0) return std::min(f.offset, span.size());
+    return std::min(sat_add(f.offset, f.size), span.size());
+}
+
+std::vector<Finding> run_scanner(const Ctx& c, const Span& span) {
+    if (c.opts.scanner) return c.opts.scanner(span);
+    return scan(span, SignatureSet::builtin(), c.opts.scan);
+}
+
 // -------------------------------------------------------- partition tables
 
 // attrs["partitions"] is "p1:start:size:type[:...];p2:..." (see validators/mbr.cpp
@@ -201,7 +259,7 @@ std::vector<PartSpec> parse_partitions(const Finding& f, std::vector<Diagnostic>
         const auto size = fields.size() > 2 ? parse_u64(fields[2]) : std::nullopt;
         if (fields.size() < 4 || !start || !size) {
             diags.push_back({Severity::Warning, "partition-entry-unparsable",
-                             "cannot parse partition entry '" + item + "'"});
+                             "cannot parse partition entry '" + sanitize_utf8(item) + "'"});
             continue;
         }
         PartSpec p;
@@ -209,18 +267,30 @@ std::vector<PartSpec> parse_partitions(const Finding& f, std::vector<Diagnostic>
         p.start = *start;
         p.size = *size;
         p.attrs["type"] = fields[3];
+        if (f.format == "gpt")
+            p.attrs["type_guid"] = fields[3];
+        else
+            p.attrs["type_byte"] = fields[3];
+        // Positional fields first (a GPT label is evidence bytes and may
+        // itself contain '='), then only the keys and flags the validators
+        // emit: anything else would let a partition name inject attrs such as
+        // protective=true, role=table or carved_path=... into the node.
         for (std::size_t i = 4; i < fields.size(); ++i) {
             const std::string& fld = fields[i];
+            if (f.format == "gpt" && i == 4) {
+                p.attrs["unique_guid"] = fld;
+                continue;
+            }
+            if (f.format == "gpt" && i == 5) {
+                if (!fld.empty()) p.attrs["label"] = sanitize_utf8(fld);
+                continue;
+            }
             const std::size_t eq = fld.find('=');
             if (eq != std::string::npos) {
-                p.attrs[fld.substr(0, eq)] = fld.substr(eq + 1);
-            } else if (f.format == "gpt" && i == 4) {
-                p.attrs["unique_guid"] = fld;
-            } else if (f.format == "gpt" && i == 5) {
-                p.attrs["name"] = fld;
-            } else if (!fld.empty()) {
-                p.attrs[fld] = "true";  // mbr flags: boot, logical
+                if (fld.substr(0, eq) == "attrs") p.attrs["gpt_attributes"] = fld.substr(eq + 1);
+                continue;
             }
+            if (fld == "boot" || fld == "logical") p.attrs[fld] = "true";  // mbr flags
         }
         out.push_back(std::move(p));
     }
@@ -243,6 +313,63 @@ std::uint64_t table_metadata_bytes(const Finding& f) {
     }
     if (f.size != 0 && claim > f.size) claim = f.size;
     return claim;
+}
+
+// "mbr-primary" | "gpt-primary" | "gpt-backup", from the validator's attrs
+// (contract) or, for an older validator, from its backup marker.
+std::string table_role(const Finding& f) {
+    const std::string t = attr_or(f.attrs, "table", "");
+    if (!t.empty()) return t;
+    if (f.format == "gpt" && attr_or(f.attrs, "backup", "") == "true") return "gpt-backup";
+    return f.format + "-primary";
+}
+
+// Span-relative offset of LBA 0 of the disk a table describes.
+std::uint64_t disk_base(const Finding& f, const std::string& role) {
+    if (const auto v = parse_u64(attr_or(f.attrs, "disk_offset", ""))) return *v;
+    return role == "gpt-backup" ? 0 : f.offset;
+}
+
+// A used table in this span, after GPT primary/backup folding.
+struct TableUse {
+    std::size_t finding = 0;
+    std::optional<std::size_t> folded_backup;  // gpt-backup absorbed into this primary
+    std::string role;
+};
+
+// Fold GPT backups into their primaries (same disk_guid); a backup with no
+// primary is used on its own. Every other table is used as is.
+std::vector<TableUse> choose_tables(const std::vector<Finding>& findings) {
+    std::vector<TableUse> use;
+    std::set<std::size_t> folded;
+    for (std::size_t i = 0; i < findings.size(); ++i) {
+        const Finding& f = findings[i];
+        if (f.category != "partition-table" || f.format != "gpt") continue;
+        if (table_role(f) != "gpt-primary") continue;
+        const std::string guid = attr_or(f.attrs, "disk_guid", "");
+        if (guid.empty()) continue;
+        for (std::size_t j = 0; j < findings.size(); ++j) {
+            const Finding& b = findings[j];
+            if (j == i || b.category != "partition-table" || b.format != "gpt") continue;
+            if (table_role(b) != "gpt-backup" || attr_or(b.attrs, "disk_guid", "") != guid)
+                continue;
+            if (folded.insert(j).second) {
+                use.push_back({i, j, "gpt-primary"});
+                break;
+            }
+        }
+    }
+    for (std::size_t i = 0; i < findings.size(); ++i) {
+        const Finding& f = findings[i];
+        if (f.category != "partition-table" || folded.count(i)) continue;
+        bool already = false;
+        for (const TableUse& u : use) already = already || u.finding == i;
+        if (!already) use.push_back({i, std::nullopt, table_role(f)});
+    }
+    std::sort(use.begin(), use.end(), [&](const TableUse& a, const TableUse& b) {
+        return findings[a.finding].offset < findings[b.finding].offset;
+    });
+    return use;
 }
 
 // ------------------------------------------------------------- filesystems
@@ -342,7 +469,7 @@ void process_filesystem(Ctx& c, const Span& span, const Finding& f, const std::s
                              f.format + " reader rejected the structure: " + st.error});
         } else {
             const fs::FilesystemInfo info = reader->info();
-            if (!info.label.empty()) attrs["label"] = info.label;
+            if (!info.label.empty()) attrs["label"] = sanitize_utf8(info.label);
             if (info.block_size != 0) attrs["block_size"] = dec(info.block_size);
             if (!info.compression.empty()) attrs["compression"] = info.compression;
             for (const auto& [k, v] : info.attrs) attrs.emplace(k, v);
@@ -444,6 +571,19 @@ Node gap_node(const Span& span, std::uint64_t off, std::uint64_t len,
     return n;
 }
 
+// Bytes a structure starting at offset 0 must present for any builtin
+// signature to match there: the farthest magic end. A partition whose first
+// that-many bytes are one repeated value cannot hold a finding at its start.
+std::uint64_t leading_magic_reach() {
+    static const std::uint64_t reach = [] {
+        std::uint64_t r = 1;
+        for (const Signature& s : SignatureSet::builtin().signatures)
+            r = std::max(r, sat_add(s.magic_offset, s.magic.size()));
+        return r;
+    }();
+    return reach;
+}
+
 // ---------------------------------------------------------------- the pass
 
 // Something to turn into a node, keyed by offset so nodes appear in byte order.
@@ -452,7 +592,25 @@ struct Item {
     bool is_gap = false;
     std::size_t finding = 0;  // index into findings when !is_gap
     std::uint64_t gap_len = 0;
+    std::string gap_parent;  // partition id, or empty for the span's parent
 };
+
+// Gaps between merged claims, reported to `items` under `parent`.
+void note_gaps(const Ctx& c, std::vector<Claim> claims, std::uint64_t from, std::uint64_t to,
+               const std::string& parent, std::vector<Item>& items) {
+    std::sort(claims.begin(), claims.end(), [](const Claim& a, const Claim& b) {
+        return a.offset != b.offset ? a.offset < b.offset : a.end > b.end;
+    });
+    std::uint64_t cursor = from;
+    auto gap = [&](std::uint64_t a, std::uint64_t b) {
+        if (b > a && b - a >= c.opts.min_region_bytes) items.push_back({a, true, 0, b - a, parent});
+    };
+    for (const Claim& cl : claims) {
+        if (cl.offset > cursor) gap(cursor, cl.offset);
+        cursor = std::max(cursor, cl.end);
+    }
+    gap(cursor, to);
+}
 
 // Analyze one Span whose bytes belong to `parent_id`. Phase 1a will call this
 // again for Container payloads and extracted files, with depth + 1.
@@ -463,108 +621,220 @@ void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::s
                                          dec(c.opts.limits.max_depth) + ") under " + parent_id});
         return;
     }
-    const std::vector<Finding> findings = scan(span, SignatureSet::builtin(), c.opts.scan);
+    std::vector<Finding> findings = run_scanner(c, span);
+    bool any_gpt = false;
+    for (const Finding& f : findings)
+        any_gpt = any_gpt || (f.category == "partition-table" && f.format == "gpt");
 
-    // Pass 1: parse partition tables and build the claim map.
-    std::vector<std::vector<PartSpec>> parts(findings.size());
-    std::vector<std::vector<Diagnostic>> part_diags(findings.size());
-    std::vector<Claim> claims;
-    for (std::size_t i = 0; i < findings.size(); ++i) {
-        const Finding& f = findings[i];
-        if (f.category == "partition-table") {
-            parts[i] = parse_partitions(f, part_diags[i]);
-            claims.push_back(
-                {f.offset, std::min(sat_add(f.offset, table_metadata_bytes(f)), span.size())});
-            for (const PartSpec& p : parts[i]) {
-                const std::uint64_t start = sat_add(f.offset, p.start);
-                if (start >= span.size()) continue;
-                claims.push_back({start, std::min(sat_add(start, p.size), span.size())});
+    // Pass 1: partition tables become nodes first; they are the map.
+    std::vector<Claim> top_claims;
+    std::vector<PartInfo> parts;
+    for (const TableUse& use : choose_tables(findings)) {
+        const Finding& f = findings[use.finding];
+        // A table that starts inside an entry of a table already used at this
+        // level (an MBR sector stored as file data in a GPT partition, a disk
+        // image inside a filesystem) describes some other disk: keep it as a
+        // table node with no entries instead of a second partition map.
+        std::string enclosing;
+        for (const PartInfo& p : parts)
+            if (!p.protective && f.offset >= p.start && f.offset < p.end) enclosing = p.index;
+        if (!enclosing.empty()) {
+            Node n =
+                node_from_finding(f, span, parent_for(c, f.offset, parent_id), NodeKind::Partition);
+            n.name = f.format + " partition table";
+            n.attrs["role"] = "table";
+            n.attrs["table"] = use.role;
+            n.attrs["nested"] = "true";
+            n.diagnostics.push_back({Severity::Info, "partition-table-nested",
+                                     f.format + " table at " + hex(span.absolute(f.offset)) +
+                                         " lies inside partition " + enclosing +
+                                         "; its entries describe another disk and were not "
+                                         "expanded"});
+            c.out.add_node(std::move(n));
+            continue;
+        }
+        std::vector<Diagnostic> part_diags;
+        const std::vector<PartSpec> specs = parse_partitions(f, part_diags);
+        top_claims.push_back(
+            {f.offset, std::min(sat_add(f.offset, table_metadata_bytes(f)), span.size())});
+
+        Node n =
+            node_from_finding(f, span, parent_for(c, f.offset, parent_id), NodeKind::Partition);
+        n.name = f.format + " partition table";
+        n.attrs["role"] = "table";
+        n.attrs["table"] = use.role;
+        for (Diagnostic& d : part_diags) n.diagnostics.push_back(std::move(d));
+        if (use.folded_backup) {
+            const Finding& b = findings[*use.folded_backup];
+            const std::uint64_t sector =
+                parse_u64(attr_or(b.attrs, "sector_size", "512")).value_or(512);
+            const std::string lba = attr_or(b.attrs, "my_lba", "");
+            n.attrs["backup_lba"] = !lba.empty() ? lba : dec(b.offset / (sector ? sector : 512));
+            n.attrs["backup_offset"] = hex(span.absolute(b.offset));
+            if (!has_diag(b.diagnostics, "gpt-header-crc-mismatch")) {
+                n.attrs["backup_header"] = "ok";
+            } else {
+                n.attrs["backup_header"] = "crc-mismatch";
+                n.diagnostics.push_back({Severity::Warning, "gpt-backup-crc-mismatch",
+                                         "backup GPT header at " + hex(span.absolute(b.offset)) +
+                                             " has a CRC mismatch"});
             }
-        } else {
-            const std::uint64_t end =
-                f.size == 0 ? span.size() : std::min(sat_add(f.offset, f.size), span.size());
-            claims.push_back({f.offset, end});
+            top_claims.push_back({b.offset, end_of(b, span)});
+        }
+        if (use.role == "gpt-backup") {
+            // Only the backup survived: the primary at LBA 1 is gone, or it
+            // describes another disk (attrs primary=mismatch). Say so on the
+            // image, where an examiner looks first, and in Coverage (rule 7:
+            // a recovered table is never a silent success).
+            Node* img = c.out.find(c.image_id);
+            bool copied = false;
+            for (const Diagnostic& d : f.diagnostics) {
+                if (d.code != "gpt-primary-missing") continue;
+                if (img) img->diagnostics.push_back(d);
+                copied = true;
+            }
+            const bool stale = attr_or(f.attrs, "primary", "") == "mismatch";
+            if (!copied) {
+                const Diagnostic d{
+                    Severity::Warning, stale ? "gpt-backup-mismatch" : "gpt-primary-missing",
+                    std::string(stale ? "the primary GPT header describes a different disk or "
+                                        "entry array; a second partition map was recovered "
+                                        "from the backup header at "
+                                      : "no primary GPT header; partitions recovered from the "
+                                        "backup header at ") +
+                        hex(span.absolute(f.offset))};
+                n.diagnostics.push_back(d);
+                if (img) img->diagnostics.push_back(d);
+            }
+            set_coverage(c, "gpt", "partial",
+                         std::string(stale ? "stale backup header expanded at "
+                                           : "primary header missing; partitions recovered from "
+                                             "the backup header at ") +
+                             hex(span.absolute(f.offset)));
+        }
+        const std::string table_id = c.out.add_node(std::move(n)).id;
+        const std::uint64_t base = disk_base(f, use.role);
+
+        for (const PartSpec& p : specs) {
+            Node pn;
+            pn.kind = NodeKind::Partition;
+            pn.parent_id = table_id;
+            pn.name = attr_or(p.attrs, "label", p.index);
+            pn.format = f.format;
+            const std::uint64_t start = sat_add(base, p.start);
+            std::uint64_t length = p.size;
+            pn.confidence = static_cast<std::uint8_t>(f.confidence);
+            pn.evidence = f.format + " entry " + p.index;
+            pn.attrs = p.attrs;
+            pn.attrs["index"] = p.index;
+            pn.attrs["table"] = use.role;
+            PartInfo info;
+            info.index = p.index;
+            info.protective = f.format == "mbr" && any_gpt && p.attrs.count("type") &&
+                              p.attrs.at("type") == "0xee";
+            if (info.protective) {
+                pn.attrs["protective"] = "true";
+                pn.diagnostics.push_back({Severity::Info, "partition-protective",
+                                          "protective MBR entry covering the GPT; the GPT "
+                                          "entries are the partitions"});
+            }
+            if (start >= span.size()) {
+                pn.location = {span.source_id(), span.absolute(std::min(start, span.size())), 0};
+                pn.diagnostics.push_back({Severity::Warning, "partition-outside-image",
+                                          "entry starts at " + hex(span.absolute(start)) +
+                                              ", past the end of the data"});
+                pn.confidence = static_cast<std::uint8_t>(Confidence::Magic);
+                info.id = c.out.add_node(std::move(pn)).id;
+                info.start = info.end = start;
+                parts.push_back(std::move(info));
+                continue;
+            }
+            if (length > span.size() - start) {
+                pn.attrs["claimed_size"] = dec(length);
+                length = span.size() - start;
+                pn.diagnostics.push_back({Severity::Warning, "partition-truncated",
+                                          "entry extends past the end of the data; clamped to " +
+                                              dec(length) + " bytes"});
+            }
+            pn.location = {span.source_id(), span.absolute(start), length};
+            info.id = c.out.add_node(std::move(pn)).id;
+            info.start = start;
+            info.end = info.protective ? start : start + length;
+            if (!info.protective && length > 0) {
+                c.extents.push_back({info.id, start, start + length});
+                top_claims.push_back({start, start + length});
+            }
+            parts.push_back(std::move(info));
         }
     }
-    std::sort(claims.begin(), claims.end(), [](const Claim& a, const Claim& b) {
-        return a.offset != b.offset ? a.offset < b.offset : a.end > b.end;
+
+    // Pass 2: a partition with nothing at its first byte is scanned on its
+    // own Span (a finding at offset 0 of the partition is kept).
+    std::vector<Finding> rescanned;
+    for (const PartInfo& p : parts) {
+        if (p.protective || p.end <= p.start) continue;
+        bool found = false;
+        for (const Finding& f : findings) found = found || f.offset == p.start;
+        if (found) continue;
+        const std::uint64_t reach = std::min(leading_magic_reach(), p.end - p.start);
+        if (!uniform_fill(span, p.start, reach).empty()) continue;  // erased/zero: nothing there
+        for (Finding f : run_scanner(c, span.sub(p.start, p.end - p.start))) {
+            if (f.offset != 0 || f.category == "partition-table") continue;
+            f.offset = p.start;
+            for (Finding& alt : f.also_matched) alt.offset = sat_add(alt.offset, p.start);
+            f.diagnostics.push_back({Severity::Info, "partition-rescan",
+                                     "found by scanning partition " + p.index +
+                                         " on its own; the whole-image scan missed it"});
+            rescanned.push_back(std::move(f));
+        }
+    }
+    for (Finding& f : rescanned) findings.push_back(std::move(f));
+    std::stable_sort(findings.begin(), findings.end(), [](const Finding& a, const Finding& b) {
+        if (a.offset != b.offset) return a.offset < b.offset;
+        if (a.confidence != b.confidence) return a.confidence > b.confidence;
+        return a.size > b.size;
     });
 
-    // Pass 2: gaps between merged claims.
+    // Pass 3: claims and gaps, at the top level and inside every partition.
     std::vector<Item> items;
-    for (std::size_t i = 0; i < findings.size(); ++i)
-        items.push_back({findings[i].offset, false, i, 0});
-    std::uint64_t cursor = 0;
-    auto note_gap = [&](std::uint64_t from, std::uint64_t to) {
-        if (to > from && to - from >= c.opts.min_region_bytes)
-            items.push_back({from, true, 0, to - from});
-    };
-    for (const Claim& cl : claims) {
-        if (cl.offset > cursor) note_gap(cursor, cl.offset);
-        cursor = std::max(cursor, cl.end);
+    std::vector<std::vector<Claim>> part_claims(parts.size());
+    for (std::size_t i = 0; i < findings.size(); ++i) {
+        const Finding& f = findings[i];
+        if (f.category == "partition-table") continue;
+        items.push_back({f.offset, false, i, 0, {}});
+        if (f.size == 0) continue;  // unknown extent: claims nothing, splits no gap
+        const std::uint64_t f_end = end_of(f, span);
+        bool inside = false;
+        for (std::size_t p = 0; p < parts.size(); ++p) {
+            if (parts[p].protective || f.offset < parts[p].start || f.offset >= parts[p].end)
+                continue;
+            part_claims[p].push_back({f.offset, std::min(f_end, parts[p].end)});
+            inside = true;
+        }
+        if (!inside) top_claims.push_back({f.offset, f_end});
     }
-    note_gap(cursor, span.size());
+    note_gaps(c, top_claims, 0, span.size(), {}, items);
+    for (std::size_t p = 0; p < parts.size(); ++p) {
+        if (parts[p].protective || parts[p].end <= parts[p].start) continue;
+        note_gaps(c, part_claims[p], parts[p].start, parts[p].end, parts[p].id, items);
+    }
     std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
         if (a.offset != b.offset) return a.offset < b.offset;
         return a.is_gap < b.is_gap;  // a finding at the same offset comes first
     });
 
-    // Pass 3: nodes, in byte order.
+    // Pass 4: nodes, in byte order.
     for (const Item& it : items) {
         if (it.is_gap) {
-            const std::string parent = parent_for(c, it.offset, it.offset + it.gap_len, parent_id);
+            const std::string parent = it.gap_parent.empty() ? parent_id : it.gap_parent;
             c.out.add_node(gap_node(span, it.offset, it.gap_len, parent));
             continue;
         }
         const Finding& f = findings[it.finding];
-        const std::uint64_t f_end =
-            f.size == 0 ? span.size() : std::min(sat_add(f.offset, f.size), span.size());
-        const std::string parent = parent_for(c, f.offset, f_end, parent_id);
+        const std::uint64_t f_end = end_of(f, span);
+        const std::string parent = parent_for(c, f.offset, parent_id);
         const NodeKind kind = kind_for(f);
         Node n = node_from_finding(f, span, parent, kind);
-
-        if (kind == NodeKind::Partition) {
-            n.name = f.format + " partition table";
-            n.attrs["role"] = "table";
-            for (Diagnostic& d : part_diags[it.finding]) n.diagnostics.push_back(std::move(d));
-            const std::string table_id = c.out.add_node(std::move(n)).id;
-            for (const PartSpec& p : parts[it.finding]) {
-                Node pn;
-                pn.kind = NodeKind::Partition;
-                pn.parent_id = table_id;
-                pn.name = attr_or(p.attrs, "name", p.index);
-                pn.format = f.format;
-                const std::uint64_t start = sat_add(f.offset, p.start);
-                std::uint64_t length = p.size;
-                pn.confidence = static_cast<std::uint8_t>(f.confidence);
-                pn.evidence = f.format + " entry " + p.index;
-                pn.attrs = p.attrs;
-                pn.attrs["index"] = p.index;
-                if (start >= span.size()) {
-                    pn.location = {span.source_id(), span.absolute(std::min(start, span.size())),
-                                   0};
-                    pn.diagnostics.push_back({Severity::Warning, "partition-outside-image",
-                                              "entry starts at " + hex(span.absolute(start)) +
-                                                  ", past the end of the data"});
-                    pn.confidence = static_cast<std::uint8_t>(Confidence::Magic);
-                    c.out.add_node(std::move(pn));
-                    continue;
-                }
-                if (length > span.size() - start) {
-                    pn.attrs["claimed_size"] = dec(length);
-                    length = span.size() - start;
-                    pn.diagnostics.push_back(
-                        {Severity::Warning, "partition-truncated",
-                         "entry extends past the end of the data; clamped to " + dec(length) +
-                             " bytes"});
-                }
-                pn.location = {span.source_id(), span.absolute(start), length};
-                const std::string pid = c.out.add_node(std::move(pn)).id;
-                c.extents.push_back({pid, start, start + length});
-            }
-            continue;
-        }
-
         if (kind == NodeKind::Container) {
             // Rule 7: a container we recognise but do not open (Phase 1a) is a
             // Coverage row and a Diagnostic, never a silent node.
@@ -582,7 +852,353 @@ void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::s
     }
 }
 
+// ------------------------------------------------------------------ carving
+
+constexpr std::size_t kCarveChunk = 8u << 20;  // I/O buffer, not a limit
+
+// Stream [node.location] of `whole` to `path`, hashing as it goes. Empty
+// string on success, otherwise the reason (the partial file is removed).
+std::string carve_bytes(const Span& whole, const Node& n, const std::filesystem::path& path,
+                        Digests& digests, bool& short_read) {
+    const Span src = whole.sub(n.location.offset, n.location.length);
+    short_read = false;
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return "cannot open '" + path.string() + "' for writing";
+    Hasher h;
+    std::vector<std::uint8_t> buf(
+        static_cast<std::size_t>(std::min<std::uint64_t>(kCarveChunk, src.size())));
+    std::uint64_t done = 0;
+    while (done < src.size()) {
+        const std::size_t got = src.read(done, std::span<std::uint8_t>(buf.data(), buf.size()));
+        if (got == 0) {
+            short_read = true;
+            break;
+        }
+        f.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(got));
+        if (!f) {
+            f.close();
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            return "short write to '" + path.string() + "'";
+        }
+        h.update(std::span<const std::uint8_t>(buf.data(), got));
+        done += got;
+    }
+    f.close();
+    digests = h.finish();
+    return {};
+}
+
+// The GPT label / index name of a partition entry node, or the offset-format
+// name of a nested find, made safe for every host and unique in `used`.
+std::string carved_file_name(const Node& n, bool is_entry, std::set<std::string>& used) {
+    std::string stem;
+    if (is_entry) {
+        stem = attr_or(n.attrs, "index", "p");
+        std::string label = attr_or(n.attrs, "label", "");
+        for (char& ch : label)
+            if (ch == ' ' || ch == '\t') ch = '_';
+        if (!label.empty()) stem += "-" + label;
+    } else {
+        stem = hex08(n.location.offset) + "-" + n.format;
+    }
+    // Bytes carved from a word-swapped view are the corrected bytes; say so
+    // in the name (source id "<image>|swap16" or "<image>|swap32").
+    const std::size_t bar = n.location.source_id.find_last_of('|');
+    if (bar != std::string::npos) {
+        const std::string tag = n.location.source_id.substr(bar + 1);
+        if (tag == "swap16" || tag == "swap32") stem += "-" + tag;
+    }
+    stem = safe_filename_component(stem);
+    std::string name = stem + ".bin";
+    for (std::uint64_t k = 2; !used.insert(name).second; ++k) name = stem + "~" + dec(k) + ".bin";
+    return name;
+}
+
+// Post-pass over the finished graph: carve partition entries and nested finds
+// into <out_dir>/partitions/, then write mount.sh.
+void carve_all(Ctx& c, const Span& whole) {
+    if (c.opts.carve == Carve::None || c.opts.out_dir.empty()) return;
+    const std::filesystem::path dir = std::filesystem::path(c.opts.out_dir) / "partitions";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        const std::string why = "cannot create '" + dir.string() + "': " + ec.message();
+        carve_partial(c, why);
+        c.out.diagnostics.push_back({Severity::Error, "carve-dir-failed", why});
+        return;
+    }
+
+    std::set<std::string> used;
+    std::vector<std::string> ids;
+    for (const Node& n : c.out.nodes()) ids.push_back(n.id);
+    bool any_ok = false;
+    for (const std::string& id : ids) {
+        Node* n = c.out.find(id);
+        if (!n) continue;
+        bool is_entry = false;
+        if (n->kind == NodeKind::Partition) {
+            if (attr_or(n->attrs, "role", "") == "table") continue;
+            if (attr_or(n->attrs, "protective", "") == "true") continue;
+            if (has_diag(n->diagnostics, "partition-outside-image")) continue;
+            is_entry = true;
+        } else {
+            if (c.opts.carve != Carve::All) continue;
+            if (n->kind != NodeKind::Filesystem && n->kind != NodeKind::Container &&
+                n->kind != NodeKind::Region)
+                continue;
+            if (n->format.empty()) continue;  // an unidentified gap, not a find
+            const Node* parent = c.out.find(n->parent_id);
+            if (!parent) continue;
+            if (parent->kind == NodeKind::Partition) {
+                if (parent->location.offset == n->location.offset) {
+                    // The partition file is this filesystem's carve.
+                    const std::string in = attr_or(parent->attrs, "carved_path", "");
+                    if (!in.empty()) n->attrs["carved_in"] = in;
+                    continue;
+                }
+            } else if (parent->kind != NodeKind::Image) {
+                continue;  // inside a filesystem/container: reachable through its extraction
+            }
+        }
+        if (n->location.length == 0) {
+            n->diagnostics.push_back(
+                {Severity::Info, "carve-unknown-size", "extent unknown; not carved"});
+            continue;
+        }
+        const std::string name = carved_file_name(*n, is_entry, used);
+        if (n->location.length > c.opts.max_carve_bytes) {
+            const std::string why = name + " skipped: " + dec(n->location.length) +
+                                    " exceeds --max-carve-bytes (" + dec(c.opts.max_carve_bytes) +
+                                    ")";
+            carve_partial(c, why);
+            n->diagnostics.push_back({Severity::Warning, "carve-limit-bytes", why});
+            n->attrs["carve_skipped"] = "max-carve-bytes";
+            continue;
+        }
+        Digests d;
+        bool short_read = false;
+        const std::string err = carve_bytes(whole, *n, dir / name, d, short_read);
+        if (!err.empty()) {
+            carve_partial(c, name + ": " + err);
+            n->diagnostics.push_back({Severity::Error, "carve-write-failed", err});
+            continue;
+        }
+        n->digests = d;
+        n->attrs["carved_path"] = "partitions/" + name;
+        if (short_read) {
+            const std::string why =
+                name + " short: " + dec(d.bytes) + " of " + dec(n->location.length) + " bytes";
+            carve_partial(c, why);
+            n->diagnostics.push_back({Severity::Warning, "carve-short-read", why});
+            n->attrs["truncated"] = "true";
+        } else {
+            any_ok = true;
+        }
+    }
+    if (any_ok) set_coverage(c, "carve", "supported", "");
+
+    const std::filesystem::path script = dir / "mount.sh";
+    std::ofstream f(script, std::ios::binary | std::ios::trunc);
+    const std::string text = mount_script_text(c.out);
+    if (f) f.write(text.data(), static_cast<std::streamsize>(text.size()));
+    if (!f) {
+        const std::string why = "cannot write '" + script.string() + "'";
+        carve_partial(c, why);
+        c.out.diagnostics.push_back({Severity::Error, "carve-mount-script-failed", why});
+        return;
+    }
+    f.close();
+    std::filesystem::permissions(script,
+                                 std::filesystem::perms::owner_exec |
+                                     std::filesystem::perms::group_exec |
+                                     std::filesystem::perms::others_exec,
+                                 std::filesystem::perm_options::add, ec);  // best effort
+}
+
 }  // namespace
+
+// ------------------------------------------------------------------- public
+
+const char* carve_name(Carve c) {
+    switch (c) {
+        case Carve::None:
+            return "none";
+        case Carve::Table:
+            return "table";
+        case Carve::All:
+            return "all";
+    }
+    return "all";
+}
+
+std::string mount_type_for(const std::string& format) {
+    if (format == "ext2" || format == "ext3" || format == "ext4" || format == "ext") return "ext4";
+    if (format == "squashfs") return "squashfs";
+    if (format == "qnx6") return "qnx6";
+    if (format == "fat" || format == "fat12" || format == "fat16" || format == "fat32")
+        return "vfat";
+    if (format == "exfat") return "exfat";
+    if (format == "ntfs") return "ntfs3";
+    if (format == "cramfs") return "cramfs";
+    if (format == "romfs") return "romfs";
+    return {};
+}
+
+std::string mount_script_text(const Manifest& m) {
+    // (file name, filesystem format) for every carved file that holds a
+    // filesystem at its first byte.
+    std::vector<std::pair<std::string, std::string>> mountable, mtd;
+    for (const Node& n : m.nodes()) {
+        const std::string path = attr_or(n.attrs, "carved_path", "");
+        if (path.empty()) continue;
+        std::string format;
+        if (n.kind == NodeKind::Filesystem) {
+            format = n.format;
+        } else if (n.kind == NodeKind::Partition) {
+            for (const Node* ch : m.children_of(n.id))
+                if (ch->kind == NodeKind::Filesystem && ch->location.offset == n.location.offset) {
+                    format = ch->format;
+                    break;
+                }
+        }
+        if (format.empty()) continue;
+        const std::string file = basename_of(path);
+        const std::string type = mount_type_for(format);
+        if (!type.empty())
+            mountable.emplace_back(file, type);
+        else if (format == "jffs2" || format == "ubifs" || format == "yaffs2")
+            mtd.emplace_back(file, format);
+    }
+    auto quoted = [](const std::string& s) {
+        std::string q = "\"";
+        for (const char ch : s) {
+            if (ch == '"' || ch == '\\' || ch == '$' || ch == '`') q.push_back('\\');
+            q.push_back(ch);
+        }
+        return q + "\"";
+    };
+    std::string names, types;
+    for (const auto& [file, type] : mountable) {
+        if (!names.empty()) {
+            names += ' ';
+            types += ' ';
+        }
+        names += quoted(file);
+        types += quoted(type);
+    }
+
+    std::string s;
+    s += "#!/bin/bash\n";
+    s += "# Generated by omnitrace from the examiner's mount template. Mounts every\n";
+    s += "# carved partition in this directory that holds a loop-mountable filesystem.\n";
+    s += "# Directory to directly mount partitions\n";
+    s += "MOUNT_DIR=\"mounts\"\n";
+    s += "# Directory to place tarballs of mounted filesystems\n";
+    s += "FSDIR=\"filesystems\"\n";
+    s += "# Carved files that hold a filesystem, in image order\n";
+    s += "PARTITION_NAMES=(" + names + ")\n";
+    s += "# The mount -t type for each entry above\n";
+    s += "PARTITION_TYPES=(" + types + ")\n";
+    if (!mtd.empty()) {
+        s += "#\n";
+        s += "# Flash filesystems below cannot be loop-mounted; attach them to an MTD\n";
+        s += "# device first (sizes in KiB; erase size must match the image):\n";
+        s += "#   jffs2:  modprobe mtdram total_size=<KiB> erase_size=<KiB>\n";
+        s += "#           modprobe mtdblock; dd if=<file> of=/dev/mtdblock0\n";
+        s += "#           mount -t jffs2 /dev/mtdblock0 <dir>\n";
+        s += "#   ubifs:  modprobe nandsim ...; ubiformat /dev/mtd0 -f <file>\n";
+        s += "#           ubiattach -m 0; mount -t ubifs ubi0:<volume> <dir>\n";
+        s += "#   yaffs2: modprobe nandsim ...; nandwrite -o /dev/mtd0 <file>\n";
+        s += "#           mount -t yaffs2 /dev/mtdblock0 <dir>\n";
+        for (const auto& [file, format] : mtd) s += "#   " + file + ": " + format + "\n";
+    }
+    s += "\n";
+    s += "help()\n{\n";
+    s += "\techo \"Generic Mount Script\"\n";
+    s += "\techo \"  This script will attempt to mount the partitions in this folder\"\n";
+    s += "\techo \"  Arguments: -m -u -h -t\"\n";
+    s += "\techo \"  Example: ./mount.sh -m\"\n";
+    s += "\techo \"  The example above will attempt to mount the partitions locally\"\n";
+    s += "\techo \"  Example: ./mount.sh -u\"\n";
+    s += "\techo \"  The example above will attempt to unmount the partitions locally\"\n";
+    s += "\techo \"  Example: ./mount.sh -t\"\n";
+    s += "\techo \"  The example above will attempt to generate tarballs for mounted "
+         "filesystems\"\n";
+    s += "}\n\n";
+    s += "check_mount_dir()\n{\n";
+    s += "\techo \"Checking for mount directory\"\n";
+    s += "\tif test -d \"$MOUNT_DIR\"; then\n";
+    s += "\t\techo \"Mount directory exists, attempting to mount partitions\"\n";
+    s += "\telse\n";
+    s += "\t\techo \"Creating mount directory: $MOUNT_DIR\"\n";
+    s += "\t\tmkdir \"$MOUNT_DIR\"\n";
+    s += "\tfi\n";
+    s += "}\n\n";
+    s += "check_partition_folders()\n{\n";
+    s += "    for part in \"${!PARTITION_NAMES[@]}\"\n    do\n";
+    s += "        if test -d \"$MOUNT_DIR/${PARTITION_NAMES[$part]}\"; then\n";
+    s += "            echo \"Mount directory exists for partition: ${PARTITION_NAMES[$part]}\"\n";
+    s += "        else\n";
+    s += "            echo \"Creating mount directory for partition: "
+         "${PARTITION_NAMES[$part]}\"\n";
+    s += "            mkdir \"$MOUNT_DIR/${PARTITION_NAMES[$part]}\"\n";
+    s += "        fi\n";
+    s += "    done\n";
+    s += "}\n\n";
+    s += "mount_partitions()\n{\n";
+    s += "    for part in \"${!PARTITION_NAMES[@]}\"\n    do\n";
+    s += "        echo \"Attempting to mount ${PARTITION_NAMES[$part]} fstype: "
+         "${PARTITION_TYPES[$part]} at: $MOUNT_DIR/${PARTITION_NAMES[$part]}\"\n";
+    s += "        sudo mount -t \"${PARTITION_TYPES[$part]}\" -o loop,ro "
+         "\"${PARTITION_NAMES[$part]}\" \"$MOUNT_DIR/${PARTITION_NAMES[$part]}\"\n";
+    s += "    done\n";
+    s += "}\n\n";
+    s += "generate_fs_tarballs()\n{\n";
+    s += "    if test -d \"$FSDIR\"; then\n";
+    s += "            echo \"Filesystem directory exists, attempting to create filesystem "
+         "tarballs\"\n";
+    s += "    else\n";
+    s += "            echo \"Creating filesystem directory: $FSDIR\"\n";
+    s += "            mkdir \"$FSDIR\"\n";
+    s += "    fi\n";
+    s += "    for part in \"${!PARTITION_NAMES[@]}\"\n    do\n";
+    s += "        sudo tar cvf \"$FSDIR/${PARTITION_NAMES[$part]}.tar\" "
+         "\"$MOUNT_DIR/${PARTITION_NAMES[$part]}\"\n";
+    s += "    done\n";
+    s += "    echo \"Tar operations complete, filesystems can be found in $FSDIR\"\n";
+    s += "}\n\n";
+    s += "unmount_partitions()\n{\n";
+    s += "    for part in \"${!PARTITION_NAMES[@]}\"\n    do\n";
+    s += "        sudo umount \"$MOUNT_DIR/${PARTITION_NAMES[$part]}\"\n";
+    s += "    done\n";
+    s += "}\n\n";
+    s += "while getopts 'muht' opt; do\n";
+    s += "    case \"$opt\" in\n";
+    s += "        m)\n";
+    s += "            echo \"Attempting to mount partitions\"\n";
+    s += "            check_mount_dir\n";
+    s += "            check_partition_folders\n";
+    s += "            mount_partitions\n";
+    s += "            echo \"Mount Results:\"\n";
+    s += "            mount | grep \"$MOUNT_DIR\"\n";
+    s += "            ;;\n";
+    s += "        u)\n";
+    s += "            echo \"Unmounting!\"\n";
+    s += "            unmount_partitions\n";
+    s += "            ;;\n";
+    s += "        t)\n";
+    s += "            echo \"Attempting to create tarballs of mounted filesystems\"\n";
+    s += "            generate_fs_tarballs\n";
+    s += "            ;;\n";
+    s += "        h)\n";
+    s += "            help\n";
+    s += "            ;;\n";
+    s += "    esac\n";
+    s += "done\n";
+    s += "if [ $OPTIND -eq 1 ]; then help ; fi\n";
+    return s;
+}
 
 Status analyze(const std::shared_ptr<const Source>& image, const std::string& evidence_path,
                const AnalyzeOptions& opts, Manifest& out, Listings& listings) {
@@ -590,8 +1206,7 @@ Status analyze(const std::shared_ptr<const Source>& image, const std::string& ev
     if (opts.extract && opts.out_dir.empty())
         return Status::fail("analyze-no-out-dir: extraction needs out_dir");
 
-    const Span whole = Span::whole(image);
-    const Digests digests = hash_span(whole);
+    const Digests digests = hash_span(Span::whole(image));
 
     Evidence ev;
     ev.id = "e" + dec(out.evidence.size() + 1);
@@ -602,7 +1217,7 @@ Status analyze(const std::shared_ptr<const Source>& image, const std::string& ev
 
     Node img;
     img.kind = NodeKind::Image;
-    img.name = basename_of(evidence_path);
+    img.name = sanitize_utf8(basename_of(evidence_path));
     if (img.name.empty()) img.name = image->id();
     img.format = "raw";
     img.location = {image->id(), 0, image->size()};
@@ -615,10 +1230,50 @@ Status analyze(const std::shared_ptr<const Source>& image, const std::string& ev
             {Severity::Warning, "analyze-empty-image", "the image has no bytes"});
     const std::string image_id = out.add_node(std::move(img)).id;
 
-    Ctx ctx{opts, out, listings, 0, 0, {}, {}};
+    // EXTENSION POINT: word-swap detection. A caller-supplied image_view hook
+    // wins; otherwise detect_word_swap (core/Swap.h) decides whether the
+    // dumper reversed the bytes of every 16- or 32-bit word, and the whole
+    // analysis (scan, partitions, walks, carves) runs on the corrected view.
+    // Nodes found there carry "<image-id>|swap32" in location.source; the
+    // Image node itself keeps the evidence's own id and records the decision.
+    std::shared_ptr<const Source> view = image;
+    if (opts.image_view) {
+        if (Node* n = out.find(image_id)) {
+            std::shared_ptr<const Source> chosen = opts.image_view(image, *n);
+            if (chosen) view = std::move(chosen);
+        }
+    } else if (Node* n = out.find(image_id)) {
+        const SwapDetection d = detect_word_swap(Span::whole(image));
+        if (d.kind != SwapKind::None) {
+            const std::string kind = swap_kind_name(d.kind);
+            n->attrs["word_swap"] = kind;
+            n->attrs["word_swap_confidence"] = dec(d.confidence);
+            n->diagnostics.push_back({Severity::Warning, "image-word-swapped", d.evidence});
+            const std::uint64_t word = d.kind == SwapKind::Swap16 ? 2 : 4;
+            if (image->size() % word != 0)
+                n->diagnostics.push_back({Severity::Info, "image-word-swap-tail",
+                                          "image size " + dec(image->size()) +
+                                              " is not a multiple of " + dec(word) + "; the last " +
+                                              dec(image->size() % word) +
+                                              " byte(s) are passed through unswapped"});
+            bool have_row = false;
+            for (Coverage& row : out.coverage) {
+                if (row.format != "word-swap") continue;
+                row.status = "supported";
+                row.detail = kind + " applied";
+                have_row = true;
+            }
+            if (!have_row) out.coverage.push_back({"word-swap", "supported", kind + " applied"});
+            view = std::make_shared<SwappedSource>(image, d.kind);
+        }
+    }
+    const Span whole = Span::whole(view);
+
+    Ctx ctx{opts, out, listings, image_id, 0, 0, {}, {}};
     for (std::size_t i = 0; i < out.coverage.size(); ++i)
         ctx.coverage_index.emplace(out.coverage[i].format, i);
     analyze_span(ctx, whole, image_id, 0);
+    carve_all(ctx, whole);
     return Status::success();
 }
 
