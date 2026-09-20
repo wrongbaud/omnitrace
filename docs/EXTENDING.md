@@ -399,6 +399,15 @@ Two things worth copying from `StreamReader`:
   reach manifests without a catalogue entry. `StreamReader` uses layer-scoped
   literals (`container-decompress-failed`, ...) for exactly that reason.
 
+If a validator already parses the format, **do not parse it twice in two
+places**: move the parser to `src/core/` and have both call it. `FitReader` and
+the `dtb`/`fit` validators share `omnitrace::fdt`
+([core/Fdt.h](../include/omnitrace/core/Fdt.h)) that way -- the validator scores
+the tree and checks the hashes, the reader extracts what `/images` points at,
+and neither owns the walk. A diagnostic code the shared parser assigns and
+another layer emits is catalogued correctly; `scripts/gen_docs.py` joins those
+two halves across files.
+
 How to verify: `./build/linux-gcc/src/containers/test_containers`, and
 `ContainerRegistry::instance().create("<format>")` returning non-null.
 

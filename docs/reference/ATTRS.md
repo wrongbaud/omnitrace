@@ -195,24 +195,24 @@ Source: `src/discovery/validators/fit.cpp` (18 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `compatible` | `src/discovery/validators/fit.cpp:339` | root compatible strings, comma-joined (dtb) |
-| `configurations` | `src/discovery/validators/fit.cpp:522` | name:kernel=..,fdt=..,ramdisk=..;... from /configurations (fit) |
-| `default_configuration` | `src/discovery/validators/fit.cpp:524` | /configurations/default (fit) |
-| `description` | `src/discovery/validators/fit.cpp:421` | root description property (fit) |
-| `hash_failed` | `src/discovery/validators/fit.cpp:527` | image hash nodes that did not match (fit) |
-| `hash_ok` | `src/discovery/validators/fit.cpp:526` | image hash nodes verified (fit) |
-| `hash_unsupported` | `src/discovery/validators/fit.cpp:528` | hash nodes with an unchecked algorithm or skipped by max_hash_bytes (fit) |
-| `image_count` | `src/discovery/validators/fit.cpp:505` | subnodes of /images (fit) |
-| `images` | `src/discovery/validators/fit.cpp:504` | name:offset:size:type:compression;... offset relative to the FIT start, missing when outside the data (fit) |
-| `images_without_hash` | `src/discovery/validators/fit.cpp:529` | images with no hash subnode (fit) |
-| `model` | `src/discovery/validators/fit.cpp:337` | root model property (dtb) |
-| `nodes` | `src/discovery/validators/fit.cpp:330` | nodes parsed from the structure block |
-| `properties` | `src/discovery/validators/fit.cpp:331` | properties parsed from the structure block |
-| `strings_size` | `src/discovery/validators/fit.cpp:301` | FDT size_dt_strings |
-| `struct_size` | `src/discovery/validators/fit.cpp:300` | FDT size_dt_struct |
-| `timestamp` | `src/discovery/validators/fit.cpp:422` | root timestamp property (fit) |
-| `totalsize` | `src/discovery/validators/fit.cpp:299` | FDT totalsize |
-| `version` | `src/discovery/validators/fit.cpp:298` | FDT header version |
+| `compatible` | `src/discovery/validators/fit.cpp:123` | root compatible strings, comma-joined (dtb) |
+| `configurations` | `src/discovery/validators/fit.cpp:306` | name:kernel=..,fdt=..,ramdisk=..;... from /configurations (fit) |
+| `default_configuration` | `src/discovery/validators/fit.cpp:308` | /configurations/default (fit) |
+| `description` | `src/discovery/validators/fit.cpp:205` | root description property (fit) |
+| `hash_failed` | `src/discovery/validators/fit.cpp:311` | image hash nodes that did not match (fit) |
+| `hash_ok` | `src/discovery/validators/fit.cpp:310` | image hash nodes verified (fit) |
+| `hash_unsupported` | `src/discovery/validators/fit.cpp:312` | hash nodes with an unchecked algorithm or skipped by max_hash_bytes (fit) |
+| `image_count` | `src/discovery/validators/fit.cpp:289` | subnodes of /images (fit) |
+| `images` | `src/discovery/validators/fit.cpp:288` | name:offset:size:type:compression;... offset relative to the FIT start, missing when outside the data (fit) |
+| `images_without_hash` | `src/discovery/validators/fit.cpp:313` | images with no hash subnode (fit) |
+| `model` | `src/discovery/validators/fit.cpp:121` | root model property (dtb) |
+| `nodes` | `src/discovery/validators/fit.cpp:114` | nodes parsed from the structure block |
+| `properties` | `src/discovery/validators/fit.cpp:115` | properties parsed from the structure block |
+| `strings_size` | `src/discovery/validators/fit.cpp:85` | FDT size_dt_strings |
+| `struct_size` | `src/discovery/validators/fit.cpp:84` | FDT size_dt_struct |
+| `timestamp` | `src/discovery/validators/fit.cpp:206` | root timestamp property (fit) |
+| `totalsize` | `src/discovery/validators/fit.cpp:83` | FDT totalsize |
+| `version` | `src/discovery/validators/fit.cpp:82` | FDT header version |
 
 ## validator `gpt`
 

@@ -1,9 +1,10 @@
 # Flattened device tree (DTB)
 
-Validator `dtb` in `src/discovery/validators/fit.cpp` (shared FDT parser),
-signature `fit-dtb` in `signatures/core.toml` (format `dtb`, category
-`other`; the name is historical, the signature now validates plain DTBs and
-steps back for FIT images).
+Validator `dtb` in `src/discovery/validators/fit.cpp` (it shares the FDT
+parser in `include/omnitrace/core/Fdt.h` with the `fit` validator and the FIT
+reader), signature `fit-dtb` in `signatures/core.toml` (format `dtb`,
+category `other`; the name is historical, the signature now validates plain
+DTBs and steps back for FIT images).
 
 ## On-disk layout
 

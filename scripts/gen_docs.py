@@ -339,8 +339,14 @@ def codes_in(expr: str, constants: dict[str, str]) -> list[str]:
     return found
 
 
-def scan_diagnostics(path: Path) -> tuple[list[Site], list[Site]]:
-    """All Diagnostic construction sites and Status failure codes in one file."""
+def scan_diagnostics(path: Path) -> tuple[list[Site], list[Site], list[tuple], list[tuple]]:
+    """Diagnostic sites, Status codes, and the loose ends of indirect codes.
+
+    The last two are the halves of a code that is assigned to a variable in one
+    place and emitted in another: unresolved uses (the emit had no matching
+    assignment in this file) and every assignment this file makes.
+    collect_diagnostics() joins them across files.
+    """
     text = strip_comments(read(path))
     file = rel(path)
     constants = {
@@ -381,18 +387,29 @@ def scan_diagnostics(path: Path) -> tuple[list[Site], list[Site]]:
         record(args[1], m.group(1).lower(), line_of(text, m.start()), message_template(args[2]))
 
     # Indirect codes: the variable passed to diag() is assigned a literal or a
-    # constant elsewhere in the file (SquashfsReader `code`, fit.cpp `t.problem`).
+    # constant somewhere else (SquashfsReader `code`, fit.cpp `t.problem`).
+    # Assignments in this file win; what is left over is joined across files by
+    # collect_diagnostics(), because a parser may assign a code in one layer and
+    # be emitted from another (omnitrace::fdt assigns `t.problem`, the dtb and
+    # fit validators emit it).
+    assigns: list[tuple[str, str, str, int]] = []  # (var, code, file, line)
+    for m in re.finditer(r"(?<![\w=!<>])\*?(\w+)\s*=(?!=)\s*(\"" + KEBAB + r"\"|kCode\w+)", text):
+        for code in codes_in(m.group(2), constants):
+            assigns.append((m.group(1), code, file, line_of(text, m.start())))
+
     by_var: dict[str, list[tuple[str, int]]] = {}
     for var, sev, line, _message in indirect:
         by_var.setdefault(var, []).append((sev, line))
+    unresolved: list[tuple[str, str, str, int]] = []  # (var, severity, file, line)
     for var, uses in by_var.items():
-        pat = re.compile(r"(?<!\w)\*?" + re.escape(var) + r"\s*=\s*(\"" + KEBAB + r"\"|kCode\w+)")
-        emitted = ", ".join(f"{file}:{line}" for _sev, line in sorted(set(uses), key=lambda u: u[1]))
-        message = f"(assigned to `{var}`; emitted at {emitted})"
-        for a in pat.finditer(text):
-            for code in codes_in(a.group(1), constants):
-                for sev in sorted({u[0] for u in uses}):
-                    sites.append(Site(code, sev, file, line_of(text, a.start()), message))
+        here = [a for a in assigns if a[0] == var]
+        if not here:
+            unresolved += [(var, sev, file, line) for sev, line in sorted(set(uses))]
+            continue
+        message = indirect_message(var, [(file, line) for _sev, line in uses])
+        for _var, code, afile, aline in here:
+            for sev in sorted({u[0] for u in uses}):
+                sites.append(Site(code, sev, afile, aline, message))
 
     statuses: list[Site] = []
     for m in re.finditer(r"\bfail_code\s*\(\s*\"(" + KEBAB + r")\"\s*,\s*", text):
@@ -405,18 +422,44 @@ def scan_diagnostics(path: Path) -> tuple[list[Site], list[Site]]:
         msg = message_template(args[0]) if args else "..."
         msg = msg[len(m.group(1)) + 1 :].strip() if msg.startswith(m.group(1) + ":") else msg
         statuses.append(Site(m.group(1), "status", file, line_of(text, m.start()), msg))
-    return sites, statuses
+    return sites, statuses, unresolved, assigns
+
+
+def indirect_message(var: str, sites: list[tuple[str, int]]) -> str:
+    """The message for a code that reaches a manifest through a variable.
+
+    `sites` is (file, line) for every place the variable is emitted, which may
+    be in more than one file once the parser lives in its own layer.
+    """
+    at = ", ".join(f"{f}:{line}" for f, line in sorted(set(sites)))
+    return f"(assigned to `{var}`; emitted at {at})"
 
 
 def collect_diagnostics() -> tuple[dict[str, list[Site]], dict[str, list[Site]]]:
     diags: dict[str, list[Site]] = {}
     statuses: dict[str, list[Site]] = {}
+    unresolved: list[tuple[str, str, str, int]] = []
+    assigns: list[tuple[str, str, str, int]] = []
     for path in sources():
-        d, s = scan_diagnostics(path)
+        d, s, u, a = scan_diagnostics(path)
         for site in d:
             diags.setdefault(site.code, []).append(site)
         for site in s:
             statuses.setdefault(site.code, []).append(site)
+        unresolved += u
+        assigns += a
+    # Cross-file indirect codes: an emit whose variable is never assigned in
+    # its own file takes the assignments any other file makes to that name.
+    by_var: dict[str, list[tuple[str, str, int]]] = {}
+    for var, sev, file, line in unresolved:
+        by_var.setdefault(var, []).append((sev, file, line))
+    for var, uses in by_var.items():
+        # One message naming every file that emits the code, so a reader of
+        # the catalogue sees both halves.
+        message = indirect_message(var, [(f, line) for _sev, f, line in uses])
+        for _var, code, afile, aline in (a for a in assigns if a[0] == var):
+            for sev in sorted({u[0] for u in uses}):
+                diags.setdefault(code, []).append(Site(code, sev, afile, aline, message))
     for table in (diags, statuses):
         for code in table:
             table[code].sort(key=lambda s: (s.file, s.line))

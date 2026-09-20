@@ -1,15 +1,17 @@
 // Container.h — archives, compressed streams, and wrapper formats (tar, zip,
-// cpio, gzip/xz/lz4/zstd, uImage, FIT, Android sparse/boot). Same shape as
-// FilesystemReader: open over a Span, walk into a Sink. Single-payload wrappers
-// (gzip, uImage) emit exactly one entry named by the format ("payload").
+// cpio, gzip/bzip2/xz/lzma/lz4/zstd, uImage, FIT, Android sparse/boot). Same
+// shape as FilesystemReader: open over a Span, walk into a Sink. Single-payload
+// wrappers (gzip, uImage) emit exactly one entry named by the format
+// ("payload").
 /// @file Container.h
 /// @brief `container::ContainerReader`, the contract for archive, compressed
 /// stream and wrapper readers, and its registry.
 ///
-/// State today: the interface and registry exist, but no container reader is
-/// registered (src/containers/Registry.cpp), so `discovery::analyze` reports
-/// every Container node as an "unsupported" Coverage row. The shape mirrors
-/// `fs::FilesystemReader`; thread-safety rules are the same.
+/// Readers are registered from src/containers/ and linked in by
+/// `link_builtin_containers()` (src/containers/Registry.cpp); a Container node
+/// whose format has none is an "unsupported" Coverage row from
+/// `discovery::analyze`. The shape mirrors `fs::FilesystemReader`;
+/// thread-safety rules are the same.
 #pragma once
 #include <functional>
 #include <map>
@@ -19,7 +21,7 @@
 #include "omnitrace/filesystems/Filesystem.h"
 
 /// @namespace omnitrace::container
-/// @brief Container readers (none registered yet) and their registry.
+/// @brief Container readers and their registry.
 namespace omnitrace::container {
 
 using omnitrace::fs::WalkOptions;

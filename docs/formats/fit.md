@@ -1,8 +1,10 @@
 # U-Boot FIT image
 
 `src/discovery/validators/fit.cpp` (validator `fit`, signature `fit` in
-`signatures/core.toml`, format `fit`, category `container`). The FDT parser
-in the same file also backs the `dtb` validator ([dtb.md](dtb.md)).
+`signatures/core.toml`, format `fit`, category `container`), which also backs
+the `dtb` validator ([dtb.md](dtb.md)), and `src/containers/fit/FitReader.cpp`
+(reader `fit`). Both read the tree through the shared FDT parser in
+`include/omnitrace/core/Fdt.h`.
 
 ## On-disk layout
 
@@ -38,6 +40,32 @@ DTB images inside the FIT are absorbed into `also_matched` once the FIT is
 verified. When the FIT cannot be verified (no hashes, or only unsupported
 algorithms) inner DTBs stay visible as equal-confidence nested findings.
 
+## Reader
+
+`FitReader` emits one entry per `/images/<name>` subnode, named after the
+node made into a single host-safe component (`kernel`, `ramdisk-1`,
+`fdt@1`): a node name is evidence and must never steer where the Sink
+writes, and two names that collapse to the same component are kept apart
+with a `_2` suffix. Each entry carries the image's `description`, `type`,
+`os`, `arch`, `compression`, `load` and `entry` in `FileMeta::extra`, plus
+`storage` = `inline` or `external`.
+
+`open()` refuses anything whose root has no `/images`: a plain device tree
+is a structure to report, not a container to walk.
+
+Payloads are emitted **as stored**. `compression` says how each one is
+packed, but decoding here would duplicate the stream readers, and the
+analysis pass re-scans everything a walk writes -- so a gzip ramdisk resolves
+one level down, and a `cpio` inside it one level below that:
+
+```
+fit -> ramdisk (gzip, as stored) -> gzip -> payload -> cpio -> /etc/passwd
+```
+
+An image whose external payload is outside the node's bytes (a carved
+partition that cut it off) is reported as `fit-data-missing` and produces no
+entry: a missing payload is never invented as zeros.
+
 ## Attributes
 
 `description`, `timestamp`, `version`, `totalsize`, `struct_size`,
@@ -58,20 +86,36 @@ algorithms) inner DTBs stay visible as equal-confidence nested findings.
 | `fit-hash-mismatch` | warning | a hash does not match its payload |
 | `fit-hash-unsupported` | info | a hash uses an algorithm not checked here (sha512, ...), or was skipped by `max_hash_bytes` |
 | `fit-limit-hash-bytes` | warning | the payloads named by hash nodes exceed `max_hash_bytes`; the remaining hashes were not verified |
+| `container-section-truncated` | warning | an image's payload ends before the length the tree claims (reader) |
+| `container-sink-error` | warning | the Sink refused an image (reader) |
 
 Limits from the signature: `max_nodes`, `max_props`, `max_depth`,
 `max_hash_bytes` (bytes one FIT may hash while verifying its images, default
 1 GiB; a hostile FIT could otherwise name thousands of multi-GiB payloads
-inside a large image).
+inside a large image). The reader is handed a Span, not a Signature, so it
+walks with the `omnitrace::fdt` defaults (`core/Fdt.h`: 65536 nodes, 262144
+properties, 64 deep) -- a tree that the validator accepted under raised
+limits may therefore come back partial, with the `fdt-limit-*` code saying so
+and what was parsed still emitted.
 
 ## Verified on
+
+* `mkimage -f image.its` and `mkimage -E -f image.its` (u-boot-tools 2026.07),
+  covering both payload encodings: all three images byte-identical to
+  `dumpimage -T flat_dt -p N`, and the extracted digests equal to the hash
+  values `dumpimage -l` prints. The gzip ramdisk resolved on to its cpio.
+
 
 * `spi-example` at `0x30000`: 3 images (fdt, kernel, ramdisk), sha256 hashes
   verified, 3979178 bytes; previously two magic-only `dtb` hits.
 * `audio-example` at `0x8001b4`: 22 images, crc32 hashes verified,
-  11946312 bytes.
+  11946312 bytes. All 22 extracted payloads hash to the values stored in the
+  tree; the lz4 rootfs image resolves on through gzip to a 46-entry cpio
+  initramfs.
 
 ## Known gaps
 
 * Signature nodes are listed by their presence only; no RSA/ECDSA check.
 * sha512 hashes are counted as unsupported.
+* The reader does not re-check the hash subnodes; the validator has already
+  done that, and its result is on the node.

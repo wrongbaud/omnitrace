@@ -144,12 +144,30 @@ a Span in 8 MiB chunks so a 4 GiB image is never mapped whole, and
 ### Compression codecs
 
 `compress::Codec` ([Compression.h:28](../include/omnitrace/core/Compression.h#L28))
-covers zlib, deflate, gzip, xz, lzma-alone, lz4 (frame and legacy), zstd,
-LZO1X and JFFS2 rtime. `decompress()` takes an explicit `max_out` and fails
+covers zlib, deflate, gzip, xz, lzma-alone, bzip2, lz4 (frame and legacy),
+zstd, LZO1X and JFFS2 rtime. `decompress()` takes an explicit `max_out` and fails
 with `decompress-cap` instead of growing; `decompress_exact()` is the
 block-oriented variant filesystems use. The dispatch is at
 [Compression.cpp:470](../src/core/Compression.cpp#L470); LZO and rtime are
 own implementations in `src/core/lzo1x.cpp` and `src/core/rtime.cpp`.
+
+### Flattened device trees
+
+`omnitrace::fdt` ([Fdt.h](../include/omnitrace/core/Fdt.h)) parses the DTB
+binary format: `read_header()`
+([Fdt.cpp:31](../src/core/Fdt.cpp#L31)) and `header_problem()`
+([Fdt.cpp:50](../src/core/Fdt.cpp#L50)) screen the ten-u32 header, and
+`walk()` ([Fdt.cpp:68](../src/core/Fdt.cpp#L68)) turns the token stream into
+a `Tree` ([Fdt.h:97](../include/omnitrace/core/Fdt.h#L97)) of nodes,
+properties and the two lookup indexes, bounded by `Limits`
+([Fdt.h:85](../include/omnitrace/core/Fdt.h#L85)).
+
+It is in core because two layers read the same bytes: the `dtb` and `fit`
+validators score the structure, and `container::FitReader` extracts what a
+FIT's `/images` node points at. A walk that stops early still returns what it
+parsed, with `Tree::problem` naming the diagnostic code -- the validators
+report that code, so the parser's failure modes reach a manifest from another
+layer (see the cross-file note in `scripts/gen_docs.py`).
 
 ### Node, FileMeta, Location
 
