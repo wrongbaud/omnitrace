@@ -7,6 +7,8 @@ set(FETCHCONTENT_QUIET OFF)
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(LibLZMA REQUIRED)
+# CMake ships FindBZip2; vcpkg exports the same BZip2::BZip2 target.
+find_package(BZip2 REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
 # lz4 / zstd: vcpkg exports CMake configs; distros usually only ship pkg-config.

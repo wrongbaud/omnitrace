@@ -17,7 +17,7 @@ so it cannot drift from the code the way a table written here would.
 
 Today that is 52 signatures over 36 format ids, 27 validators, 7 filesystem
 readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and 9
-container readers: `gzip`, `xz`, `lzma`, `lz4` and `zstd` (one
+container readers: `gzip`, `bzip2`, `xz`, `lzma`, `lz4` and `zstd` (one
 `StreamReader`), `tar`, `cpio`, `zip`, `uimage`, `android-boot` and
 `android-vendor-boot` and `android-sparse`.
 `--history` is recovered by the ext, JFFS2 and QNX6 readers.
@@ -52,9 +52,11 @@ recursion). See the section above.
    (which is really UBI volume reassembly, and pairs with the UBIFS reader
    below). `src/containers/` holds six readers over twelve formats and
    `tests/unit/containers/` the test shapes.
-2. **bzip2 and LZO stream support**, the last two compressed formats with no
-   signature. Both need a new third-party dependency (libbz2, liblzo2), which
-   is a decision rather than an omission -- see `docs/ARCHITECTURE.md`.
+2. **The lzop file format** (`89 4c 5a 4f 00 0d 0a 1a 0a`), the last
+   compressed format with no signature. It needs no new dependency -- the
+   in-tree LZO1X decoder already serves SquashFS and JFFS2 -- but it is a
+   multi-block container rather than a single-payload stream, so it is shaped
+   like `CpioReader` rather than `StreamReader`.
 3. **UBIFS and YAFFS2 readers**, both with history (UBIFS sqnum order, YAFFS2
    sequence numbers); fixtures `ubifs.img`, `ubi.img`, `yaffs2.img`,
    `yaffs2-yaffsecc.img` exist.

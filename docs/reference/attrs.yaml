@@ -85,6 +85,11 @@ src/discovery/validators/android_sparse.cpp:
   total_blocks: total_blks from the header
   total_chunks: total_chunks from the header
 
+src/discovery/validators/bzip2.cpp:
+  block_size: block size in bytes, from the header's digit times 100 kB
+  empty: true when the header is followed by the end-of-stream magic rather than a block
+  level: the header's block-size digit, 1..9
+
 src/discovery/validators/cpio.cpp:
   data_bytes: total bytes of member data the archive holds
   entries: members counted before the TRAILER!!! member

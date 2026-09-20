@@ -857,3 +857,27 @@ TEST(SparseContainer, OpenRejectsWhatIsNotSparse) {
     std::shared_ptr<const Source> keep2;
     EXPECT_FALSE(make("android-sparse")->open(span_of(reversed, keep2)));
 }
+
+// ------------------------------------------------------------------- bzip2
+
+TEST(StreamContainer, Bzip2IsRegisteredAndScreensItsHeader) {
+    const auto formats = ContainerRegistry::instance().formats();
+    EXPECT_NE(std::find(formats.begin(), formats.end(), "bzip2"), formats.end());
+
+    std::shared_ptr<const Source> keep;
+    const Bytes junk(64, 0x5A);
+    EXPECT_FALSE(make("bzip2")->open(span_of(junk, keep)));
+
+    // "BZh" with a body that is not a stream opens (the reader screens on the
+    // magic; the validator is what checks the digit and the block magic) and
+    // then fails to decode rather than emitting a bogus payload.
+    Bytes head(512, 0x00);
+    head[0] = 'B'; head[1] = 'Z'; head[2] = 'h'; head[3] = '9';
+    std::shared_ptr<const Source> keep2;
+    auto reader = make("bzip2");
+    ASSERT_TRUE(reader->open(span_of(head, keep2)));
+    ListingSink sink(true, Limits{});
+    fs::WalkResult r;
+    EXPECT_FALSE(reader->walk(sink, fs::WalkOptions{}, r));
+    EXPECT_TRUE(r.entries_out.empty());
+}

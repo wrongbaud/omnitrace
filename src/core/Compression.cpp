@@ -11,6 +11,7 @@
 #include <lz4.h>
 #include <lz4frame.h>
 #include <lzma.h>
+#include <bzlib.h>
 #include <zlib.h>
 #include <zstd.h>
 #include <zstd_errors.h>
@@ -34,6 +35,8 @@ const char* codec_name(Codec c) {
             return "xz";
         case Codec::Lzma:
             return "lzma";
+        case Codec::Bzip2:
+            return "bzip2";
         case Codec::Lz4:
             return "lz4";
         case Codec::Lz4Legacy:
@@ -98,6 +101,12 @@ bool starts_with_le32(std::span<const std::uint8_t> in, std::size_t off, std::ui
 
 bool is_gzip_header(std::span<const std::uint8_t> in, std::size_t off) {
     return in.size() - off >= 2 && in[off] == 0x1f && in[off + 1] == 0x8b;
+}
+
+bool is_bzip2_header(std::span<const std::uint8_t> in, std::size_t off) {
+    // "BZh" then the block-size digit '1'..'9'.
+    return in.size() - off >= 4 && in[off] == 'B' && in[off + 1] == 'Z' && in[off + 2] == 'h' &&
+           in[off + 3] >= '1' && in[off + 3] <= '9';
 }
 
 bool is_xz_header(std::span<const std::uint8_t> in, std::size_t off) {
@@ -193,6 +202,65 @@ Status inflate_zlib(std::span<const std::uint8_t> in, std::vector<std::uint8_t>*
     inflateEnd(&zs);
     // `ip` is one past the last byte the stream (or the last concatenated
     // member) used, which is the stream's extent in the enclosing image.
+    if (consumed != nullptr) *consumed = ip;
+    if (produced != nullptr) *produced = ap.size();
+    return result;
+}
+
+// ---------------------------------------------------------------- libbz2
+
+// bzip2 has no streaming "skip to next member" call: BZ2_bzDecompress reports
+// BZ_STREAM_END and stops. Concatenated streams (bzip2 -c a b > c, and every
+// pbzip2 output) are one logical file, so the decoder is torn down and rebuilt
+// at each boundary, exactly as bunzip2 does.
+Status inflate_bzip2(std::span<const std::uint8_t> in, std::vector<std::uint8_t>* out,
+                     std::uint64_t max_out, std::uint64_t* consumed = nullptr,
+                     std::uint64_t* produced = nullptr) {
+    if (in.empty()) return Status::fail(kEmpty);
+    Appender ap = out != nullptr ? Appender(*out, max_out) : Appender(max_out);
+    std::size_t ip = 0;
+    Status result = Status::success();
+    for (;;) {
+        bz_stream bs{};
+        if (BZ2_bzDecompressInit(&bs, 0, 0) != BZ_OK) {
+            result = Status::fail(kInit);
+            break;
+        }
+        bool member_done = false;
+        for (;;) {
+            const std::size_t avail_in =
+                std::min<std::size_t>(in.size() - ip, std::numeric_limits<unsigned>::max());
+            bs.next_in = const_cast<char*>(reinterpret_cast<const char*>(in.data() + ip));
+            bs.avail_in = static_cast<unsigned>(avail_in);
+            const std::size_t win = ap.window();
+            bs.next_out = reinterpret_cast<char*>(ap.scratch());
+            bs.avail_out = static_cast<unsigned>(win);
+            const int rc = BZ2_bzDecompress(&bs);
+            ip += avail_in - bs.avail_in;
+            const std::size_t got = win - bs.avail_out;
+            if (!ap.commit(got)) {
+                result = Status::fail(kCap);
+                break;
+            }
+            if (rc == BZ_STREAM_END) {
+                member_done = true;
+                break;
+            }
+            if (rc != BZ_OK) {
+                result = Status::fail(rc == BZ_MEM_ERROR ? kInit : kCorrupt);
+                break;
+            }
+            if (bs.avail_in == 0 && ip >= in.size() && got == 0) {
+                result = Status::fail(kTruncated);
+                break;
+            }
+        }
+        BZ2_bzDecompressEnd(&bs);
+        if (!result || !member_done) break;
+        // Another member may follow; anything else is trailing data.
+        if (is_bzip2_header(in, ip)) continue;
+        break;
+    }
     if (consumed != nullptr) *consumed = ip;
     if (produced != nullptr) *produced = ap.size();
     return result;
@@ -509,6 +577,8 @@ Status decompress_impl(Codec c, std::span<const std::uint8_t> in, std::vector<st
             return inflate_zlib(in, &out, max_out, -15, consumed);
         case Codec::Gzip:
             return inflate_zlib(in, &out, max_out, 15 + 16, consumed);
+        case Codec::Bzip2:
+            return inflate_bzip2(in, &out, max_out, consumed);
         case Codec::Xz:
             return inflate_lzma(in, &out, max_out, true, consumed);
         case Codec::Lzma:
@@ -556,6 +626,8 @@ Status stream_length(Codec c, std::span<const std::uint8_t> in, std::uint64_t ma
             return inflate_lzma(in, nullptr, max_out, true, &consumed, &produced);
         case Codec::Lzma:
             return inflate_lzma(in, nullptr, max_out, false, &consumed, &produced);
+        case Codec::Bzip2:
+            return inflate_bzip2(in, nullptr, max_out, &consumed, &produced);
         case Codec::Lz4:
             // Only the frame format has an extent; a raw block is the whole
             // input by definition and has no header to measure.

@@ -69,6 +69,10 @@ android-boot-truncated-header:
   meaning: fewer bytes than the header needs after the magic
   action: magic-tier hit at the end of the data; usually noise
 
+bzip2-truncated-header:
+  meaning: fewer than 4 bytes were available for the bzip2 header
+  action: magic-tier hit at the end of the data; nothing was lost
+
 carve-dir-failed:
   meaning: partitions/ could not be created; nothing was carved
   action: fix the host path or permissions and re-run

@@ -6,6 +6,7 @@
   "dependencies": [
     "zlib",
     "liblzma",
+    "bzip2",
     "lz4",
     "zstd",
     { "name": "openssl", "default-features": false },

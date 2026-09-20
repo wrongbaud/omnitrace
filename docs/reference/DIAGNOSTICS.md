@@ -17,7 +17,7 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 `INFO.yaml` uses). A code listed with two severities is emitted at both;
 `where` names every site, `message` is the literal with runtime parts as `...`.
 
-279 diagnostic codes, 29 status codes.
+280 diagnostic codes, 29 status codes.
 
 ## Diagnostics
 
@@ -36,6 +36,7 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 | `android-boot-empty` | warning | `src/discovery/validators/android_boot.cpp:203` | kernel_size and ramdisk_size are both zero | kernel_size and ramdisk_size are both zero | the header carries no payload; look for the real boot image elsewhere |
 | `android-boot-truncated` | warning | `src/discovery/validators/android_boot.cpp:97`, `src/discovery/validators/android_boot.cpp:211` | declared sections (... bytes) extend past the available data | the page-aligned sections extend past the available data; size clamped | the dump or partition is short; expect a partial kernel or ramdisk |
 | `android-boot-truncated-header` | warning | `src/discovery/validators/android_boot.cpp:65`, `src/discovery/validators/android_boot.cpp:117`, `src/discovery/validators/android_boot.cpp:135` (+1 more) | fewer than 2112 bytes available for the vendor boot header | fewer bytes than the header needs after the magic | magic-tier hit at the end of the data; usually noise |
+| `bzip2-truncated-header` | warning | `src/discovery/validators/bzip2.cpp:37` | fewer than 4 bytes available for the header | fewer than 4 bytes were available for the bzip2 header | magic-tier hit at the end of the data; nothing was lost |
 | `carve-dir-failed` | error | `src/discovery/Recurse.cpp:1211` | ... | partitions/ could not be created; nothing was carved | fix the host path or permissions and re-run |
 | `carve-limit-bytes` | warning | `src/discovery/Recurse.cpp:1258` | ... | the node is larger than --max-carve-bytes and was not written | re-run with a larger --max-carve-bytes or carve the range with dd from location.offset |
 | `carve-mount-script-failed` | error | `src/discovery/Recurse.cpp:1291` | ... | partitions/mount.sh could not be written | fix the host path; the carved files themselves are intact |

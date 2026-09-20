@@ -1,19 +1,20 @@
-# Compressed streams: gzip, xz, lzma, lz4, zstd
+# Compressed streams: gzip, bzip2, xz, lzma, lz4, zstd
 
-This page is for examiners who meet `gzip` / `xz` / `lzma` / `lz4` / `zstd`
-findings. After reading it you know what each validator checks, how the extent
+This page is for examiners who meet `gzip` / `bzip2` / `xz` / `lzma` / `lz4`
+/ `zstd` findings. After reading it you know what each validator checks, how the extent
 of a stream is found at all, how conflict resolution hides the streams that
 make up a filesystem, and what is not decoded yet.
 
-All five have a reader (`src/containers/stream/StreamReader.{h,cpp}`, one
+All six have a reader (`src/containers/stream/StreamReader.{h,cpp}`, one
 class registered for every format id) and a validator that sizes them.
 
-Five validators, one per stream format, all in `src/discovery/validators/`
+Six validators, one per stream format, all in `src/discovery/validators/`
 and registered from `signatures/core.toml` with category `compressed`:
 
 | format | signature | magic | validator |
 |---|---|---|---|
 | `gzip` | `gzip` | `1f 8b 08` | `gzip.cpp` (`gzip`) |
+| `bzip2` | `bzip2` | `BZh` + a digit (see below) | `bzip2.cpp` (`bzip2`) |
 | `xz` | `xz` | `fd 37 7a 58 5a 00` | `xz.cpp` (`xz`) |
 | `lzma` | `lzma-lc3-lp0-pb2`, `lzma-lc1-lp2-pb2` | none (see below) | `lzma.cpp` (`lzma`) |
 | `lz4` | `lz4-frame` | `04 22 4d 18` | `lz4.cpp` (`lz4`) |
@@ -34,8 +35,8 @@ The walk is bounded from the TOML, never from a constant in the validator:
 so a small stream claiming to expand forever is abandoned, and `max_payload`
 (4 GiB) is the absolute ceiling.
 
-gzip, xz, lz4 and zstd all allow streams or frames to be concatenated, and
-every decoder here follows them, so a measurement covers the whole run. That
+gzip, bzip2, xz, lz4 and zstd all allow streams or frames to be concatenated,
+and every decoder here follows them, so a measurement covers the whole run. That
 also means the validator and the reader cannot disagree: they call the same
 function on the same bytes. Trailing data after the last stream the decoder
 accepts is not claimed. A raw lz4 block has no frame header and is not
@@ -66,6 +67,32 @@ real but truncated `.lzma` is missed — the price of a format with no magic.
 This is what completes the router chain: a uImage payload is usually LZMA-alone,
 so `uImage -> lzma -> the kernel` and everything the kernel embeds (a device
 tree, an initramfs cpio, ELF sections) is now reachable.
+
+## bzip2
+
+Header: `BZh` then one digit `1`..`9`, the block size in units of 100 kB.
+What follows is a bit stream, but its first field lands on a byte boundary
+because the header is a whole number of bytes: either a compressed block,
+which starts with the 48-bit magic `31 41 59 26 53 59` (pi in BCD), or the
+end-of-stream magic `17 72 45 38 50 90` (the square root of pi) for an empty
+stream.
+
+| tier | assigned when |
+|---|---|
+| rejected | the digit is not `1`..`9`, or neither 48-bit magic follows it |
+| structural | header and block magic valid, stream not measurable |
+| consistent | the stream, and any concatenated after it, decoded to its end |
+
+`BZh` is three bytes and occurs in prose and in binaries, so the digit and
+that 48-bit magic are what actually identify a stream — ten bytes of
+discriminator before the decode probe is asked for anything, and a mismatch
+rejects rather than downgrades.
+
+libbz2 has no "skip to the next member" call, so the decoder is torn down and
+rebuilt at each stream boundary, which is what `bunzip2` does too. That is how
+`bzip2 -c a b > c` and every `pbzip2` output come back as one payload.
+
+Attributes: `level`, `block_size`, `empty`.
 
 ## Why the extent matters
 
@@ -220,9 +247,10 @@ end: gzip container -> payload -> the filesystem inside it.
   decoded payload.
 * A raw lz4 block (no frame magic) and the legacy `02 21 4c 18` format have no
   signature: neither has a header to recognise.
-* bzip2 (`BZh`) and LZO streams have no signature and no decoder: both would
-  need a new third-party dependency (libbz2, liblzo2), which
-  `docs/ARCHITECTURE.md` treats as a decision rather than an omission.
+* The lzop file format (`89 4c 5a 4f 00 0d 0a 1a 0a`) has no signature. It
+  needs no new dependency — the in-tree LZO1X decoder already decompresses
+  its blocks for SquashFS and JFFS2 — but it is a multi-block container rather
+  than a single-payload stream, so it belongs with the archive readers.
 * Only two LZMA properties bytes have signatures; a stream written with other
   `lc`/`lp`/`pb` settings is not found.
 * The payload is held in memory in one piece, so a payload larger than

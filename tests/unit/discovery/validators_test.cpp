@@ -1059,3 +1059,39 @@ TEST(AllValidators, NeverReadOutsideAndSurviveTruncation) {
 }
 
 }  // namespace
+
+TEST(Bzip2Validator, NeedsTheDigitAndTheBlockMagic) {
+    // "BZh" followed by ordinary text is rejected outright: three letters are
+    // not evidence, and "BZh1".."BZh9" occur in prose and in binaries.
+    Bytes text(256, ' ');
+    test::put_bytes(text, 0, "BZh9 and then some ordinary words follow here");
+    EXPECT_TRUE(scan_one(text, "bzip2").empty());
+
+    // A digit outside 1..9 is not a block size.
+    Bytes bad(256, 0);
+    test::put_bytes(bad, 0, "BZh0");
+    EXPECT_TRUE(scan_one(bad, "bzip2").empty());
+
+    // Header plus the 48-bit block magic (pi in BCD) reaches structural even
+    // though the body is not a decodable stream.
+    Bytes head(256, 0);
+    test::put_bytes(head, 0, "BZh5");
+    const std::uint8_t pi[6] = {0x31, 0x41, 0x59, 0x26, 0x53, 0x59};
+    for (std::size_t i = 0; i < 6; ++i) head[4 + i] = pi[i];
+    const auto f = scan_one(head, "bzip2");
+    ASSERT_EQ(f.size(), 1u);
+    EXPECT_EQ(f[0].confidence, Confidence::Structural);
+    EXPECT_EQ(f[0].attrs.at("level"), "5");
+    EXPECT_EQ(f[0].attrs.at("block_size"), "500000");
+    EXPECT_EQ(f[0].size, 0u);  // unmeasurable, so it claims no bytes
+    EXPECT_EQ(f[0].attrs.at("extent"), "unknown");
+
+    // The end-of-stream magic (sqrt(pi)) marks an empty stream.
+    Bytes empty(256, 0);
+    test::put_bytes(empty, 0, "BZh1");
+    const std::uint8_t eos[6] = {0x17, 0x72, 0x45, 0x38, 0x50, 0x90};
+    for (std::size_t i = 0; i < 6; ++i) empty[4 + i] = eos[i];
+    const auto g = scan_one(empty, "bzip2");
+    ASSERT_EQ(g.size(), 1u);
+    EXPECT_EQ(g[0].attrs.at("empty"), "true");
+}

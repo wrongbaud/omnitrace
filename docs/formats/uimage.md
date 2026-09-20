@@ -93,14 +93,14 @@ The payload is emitted **as stored**, still compressed. `ih_comp` says how it
 is packed, but decompressing here would duplicate the stream readers, and the
 analysis pass re-scans every file this writes: a gzip or xz payload is found
 and decoded one level down, so a SquashFS inside a gzipped `filesystem`-type
-uImage is reached without any special case. bzip2, lzma and lzo have no reader
-yet, so those payloads stay packed.
+uImage is reached without any special case. Every `ih_comp` value except lzo has a
+reader, so only an lzo-compressed payload stays packed.
 
 ## Not yet supported
 
 * No decompression probe: `compression=lzma` is the header's claim, not a
-  verified stream, and there is no `lzma`/`bzip2`/`lzo` signature, so such a
-  payload is a file node with nothing under it.
+  verified stream. Only an `lzo` payload has no signature behind it and so
+  becomes a file node with nothing under it.
 * `ih_dcrc` is verified by the validator but the reader does not re-check it
   per emitted part of a `multi` image.
 

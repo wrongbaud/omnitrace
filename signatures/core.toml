@@ -390,6 +390,18 @@ max_payload = 4294967296
 description = "LZMA-alone stream, lc=1 lp=2 pb=2 (OpenWrt lzma-loader)"
 
 [[signature]]
+name = "bzip2"
+format = "bzip2"
+category = "compressed"
+magic = "BZh"
+endian = "big"
+validator = "bzip2"
+max_ratio = 1000
+max_payload = 4294967296
+description = "bzip2 stream; the block-size digit and the 48-bit block magic are checked"
+references = ["https://sourceware.org/bzip2/"]
+
+[[signature]]
 name = "lz4-frame"
 format = "lz4"
 category = "compressed"

@@ -180,6 +180,13 @@ class LzmaReader final : public StreamReader {
     }
 };
 
+// bzip2: "BZh" plus a block-size digit, which the reader does not pin down
+// (the validator has already checked it and the 48-bit block magic behind it).
+class Bzip2Reader final : public StreamReader {
+   public:
+    Bzip2Reader() : StreamReader("bzip2", compress::Codec::Bzip2, {'B', 'Z', 'h'}) {}
+};
+
 // lz4 frame: 04 22 4d 18. The raw-block and legacy forms have no frame
 // header to recognise, so only the frame format gets a reader.
 class Lz4Reader final : public StreamReader {
@@ -195,6 +202,7 @@ class ZstdReader final : public StreamReader {
 
 }  // namespace
 
+OMNITRACE_REGISTER_CONTAINER("bzip2", Bzip2Reader);
 OMNITRACE_REGISTER_CONTAINER("lz4", Lz4Reader);
 OMNITRACE_REGISTER_CONTAINER("zstd", ZstdReader);
 OMNITRACE_REGISTER_CONTAINER("gzip", GzipReader);

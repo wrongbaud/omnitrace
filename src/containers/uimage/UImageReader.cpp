@@ -12,9 +12,9 @@
 //
 // The payload is emitted as stored, compressed. ih_comp says how it is packed,
 // but decompressing here would duplicate what the stream readers already do:
-// the analysis pass re-scans every extracted file, so a gzip or xz payload is
-// found and decoded by StreamReader one level down. bzip2, lzma and lzo have
-// no reader yet, so those payloads stay packed and say so.
+// the analysis pass re-scans every extracted file, so the payload is found and
+// decoded by StreamReader one level down. That covers every ih_comp value
+// except lzo, whose file format has no signature yet.
 // Reference: U-Boot include/image.h, common/image.c (image_multi_*).
 #include "UImageReader.h"
 

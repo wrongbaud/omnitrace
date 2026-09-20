@@ -10,6 +10,7 @@ The build needs CMake 3.28 or newer, Ninja, a C++20 compiler (GCC 14+, Clang 17+
 |---|---|---|---|
 | zlib | gzip, SquashFS gzip blocks, CRC32 | `zlib` | `zlib1g-dev` |
 | xz (liblzma) | xz and LZMA streams | `xz` | `liblzma-dev` |
+| bzip2 (libbz2) | bzip2 streams | `bzip2` | `libbz2-dev` |
 | lz4 | LZ4 blocks and frames | `lz4` | `liblz4-dev` |
 | zstd | zstd blocks | `zstd` | `libzstd-dev` |
 | OpenSSL | MD5 / SHA-1 / SHA-256 | `openssl` | `libssl-dev` |
@@ -23,13 +24,13 @@ The build needs CMake 3.28 or newer, Ninja, a C++20 compiler (GCC 14+, Clang 17+
 Linux, Arch:
 
 ```sh
-sudo pacman -S --needed cmake ninja gcc clang pkgconf zlib xz lz4 zstd openssl yaml-cpp nlohmann-json cli11 spdlog gtest
+sudo pacman -S --needed cmake ninja gcc clang pkgconf zlib xz bzip2 lz4 zstd openssl yaml-cpp nlohmann-json cli11 spdlog gtest
 ```
 
 Linux, Debian / Ubuntu (the same list CI installs in `.github/workflows/ci.yml`):
 
 ```sh
-sudo apt-get install -y cmake ninja-build g++ clang pkg-config zlib1g-dev liblzma-dev liblz4-dev libzstd-dev \
+sudo apt-get install -y cmake ninja-build g++ clang pkg-config zlib1g-dev liblzma-dev libbz2-dev liblz4-dev libzstd-dev \
   libssl-dev libyaml-cpp-dev nlohmann-json3-dev libcli11-dev libspdlog-dev libgtest-dev
 ```
 

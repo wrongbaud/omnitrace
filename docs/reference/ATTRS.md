@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-481 keys across 32 source files.
+484 keys across 33 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -109,6 +109,16 @@ Source: `src/discovery/validators/android_sparse.cpp` (10 keys)
 | `raw_chunks` | `src/discovery/validators/android_sparse.cpp:111` | number of raw chunks |
 | `total_blocks` | `src/discovery/validators/android_sparse.cpp:47` | total_blks from the header |
 | `total_chunks` | `src/discovery/validators/android_sparse.cpp:48` | total_chunks from the header |
+
+## validator `bzip2`
+
+Source: `src/discovery/validators/bzip2.cpp` (3 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `block_size` | `src/discovery/validators/bzip2.cpp:42` | block size in bytes, from the header's digit times 100 kB |
+| `empty` | `src/discovery/validators/bzip2.cpp:54` | true when the header is followed by the end-of-stream magic rather than a block |
+| `level` | `src/discovery/validators/bzip2.cpp:43` | the header's block-size digit, 1..9 |
 
 ## validator `cpio`
 

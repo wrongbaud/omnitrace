@@ -25,9 +25,22 @@ namespace omnitrace::compress {
 /// auto-detects an LZ4 frame, the legacy `02 21 4C 18` format or a raw block;
 /// `Lz4Legacy` accepts the legacy format or a raw block; `Lzo1x` and `Rtime`
 /// are the in-tree decoders used by SquashFS-LZO and JFFS2.
-enum class Codec { None, Zlib, Deflate, Gzip, Xz, Lzma, Lz4, Lz4Legacy, Zstd, Lzo1x, Rtime };
-/// "none", "zlib", "deflate", "gzip", "xz", "lzma", "lz4", "lz4-legacy",
-/// "zstd", "lzo1x", "rtime"; "unknown" otherwise.
+enum class Codec {
+    None,
+    Zlib,
+    Deflate,
+    Gzip,
+    Xz,
+    Lzma,
+    Bzip2,
+    Lz4,
+    Lz4Legacy,
+    Zstd,
+    Lzo1x,
+    Rtime
+};
+/// "none", "zlib", "deflate", "gzip", "xz", "lzma", "bzip2", "lz4",
+/// "lz4-legacy", "zstd", "lzo1x", "rtime"; "unknown" otherwise.
 const char* codec_name(Codec c);
 
 // Decompress `in` into `out` (cleared first). `max_out` caps the output; on cap
@@ -59,7 +72,7 @@ Status decompress_stream(Codec c, std::span<const std::uint8_t> in, std::vector<
 /// ends — without holding the decompressed image in memory.
 ///
 /// Supported for the wrapped stream codecs (`Zlib`, `Deflate`, `Gzip`, `Xz`,
-/// `Lzma`) and the framed ones (`Lz4` when the input starts with a frame
+/// `Lzma`, `Bzip2`) and the framed ones (`Lz4` when the input starts with a frame
 /// magic, `Zstd`); anything else fails with "decompress-unsupported". On any
 /// failure `consumed` and `produced` still hold how far the decoder got.
 Status stream_length(Codec c, std::span<const std::uint8_t> in, std::uint64_t max_out,

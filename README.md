@@ -4,7 +4,7 @@ OmniTrace is an offline, cross-platform forensic analysis tool for embedded syst
 
 It is for forensic examiners who receive flash dumps rather than phone extractions, embedded security researchers who want a traceable map of an image before they start digging, and agents or scripts that consume `INFO.yaml` and never look at a terminal.
 
-**Status:** Phase 0 complete: format identification (27 validators, 52 signatures), MBR/EBR/GPT partition tables and the examiner case layout. Phase 1 in progress: SquashFS, ext2/3/4, JFFS2, QNX6 and QNX IFS filesystem readers; gzip, xz, lzma, lz4, zstd, tar, cpio, zip, uImage, Android boot and Android sparse container readers; history recovery for ext/JFFS2/QNX6; and nested analysis, so `boot.img -> ramdisk -> gzip -> cpio -> rootfs` and `uImage -> lzma -> squashfs` are followed to the end. UBIFS, YAFFS2 and the FIT reader are next. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/reference/FORMATS.md](docs/reference/FORMATS.md).
+**Status:** Phase 0 complete: format identification (27 validators, 52 signatures), MBR/EBR/GPT partition tables and the examiner case layout. Phase 1 in progress: SquashFS, ext2/3/4, JFFS2, QNX6 and QNX IFS filesystem readers; gzip, bzip2, xz, lzma, lz4, zstd, tar, cpio, zip, uImage, Android boot and Android sparse container readers; history recovery for ext/JFFS2/QNX6; and nested analysis, so `boot.img -> ramdisk -> gzip -> cpio -> rootfs` and `uImage -> lzma -> squashfs` are followed to the end. UBIFS, YAFFS2 and the FIT reader are next. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/reference/FORMATS.md](docs/reference/FORMATS.md).
 
 ## Quick start
 

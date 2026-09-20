@@ -58,6 +58,7 @@ DOC_ALIASES = {
     "lz4": "compressed-streams",
     "zstd": "compressed-streams",
     "lzma": "compressed-streams",
+    "bzip2": "compressed-streams",
     "ext2": "ext",
     "ext3": "ext",
     "ext4": "ext",
