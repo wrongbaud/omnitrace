@@ -1145,6 +1145,42 @@ xz-truncated-header:
   meaning: fewer than 12 bytes for the stream header
   action: magic-tier hit at the end of the data
 
+zip-bad-entry:
+  meaning: a central-directory entry or a member's local header is not readable
+  action: the archive is damaged; members before it are still extracted
+
+zip-cd-offset-mismatch:
+  meaning: the EOCD points the central directory somewhere other than where the walk found it
+  action: usually a zip appended to another file, or a false positive; the reader falls back to the directory just before the EOCD
+
+zip-decompress-failed:
+  meaning: a deflated member did not inflate; it is emitted empty and marked truncated
+  action: the member is damaged or encrypted; the rest of the archive is unaffected
+
+zip-deferred-sizes:
+  meaning: a member defers its sizes to a data descriptor or a zip64 extra field that could not be read, so the archive has no extent
+  action: informational; raise max_descriptor_search in the signature if the archive is large
+
+zip-limit-entries:
+  meaning: Limits::max_nodes_per_fs or the signature's max_entries was reached inside a zip
+  action: re-run with a larger cap if the remaining members matter
+
+zip-no-central-directory:
+  meaning: no central directory was reached, so the archive has no extent and claims no bytes
+  action: informational; a stray PK\x03\x04 in other data looks like this, and so does a truncated archive
+
+zip-no-eocd:
+  meaning: the central directory does not end in an end-of-central-directory record
+  action: the archive is truncated or the local-header hit was a false positive
+
+zip-truncated:
+  meaning: a member or the archive itself runs past the available data
+  action: the dump is short; entries before the cut are still extracted
+
+zip-unsupported-method:
+  meaning: a member uses a compression method other than stored or deflate; it is emitted empty
+  action: bzip2, LZMA and encrypted members need their own support; carve the archive and use unzip
+
 zstd-bad-frame-header:
   meaning: reserved bits are set in the frame header descriptor
   action: magic-tier hit; probably not a zstd frame

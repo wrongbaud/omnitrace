@@ -15,6 +15,8 @@
 #include <string>
 #include <vector>
 
+#include <zlib.h>
+
 #include "omnitrace/containers/Container.h"
 #include "omnitrace/core/Sink.h"
 #include "omnitrace/core/Source.h"
@@ -584,4 +586,158 @@ TEST(AndroidBootContainer, OpenRejectsWhatIsNotABootImage) {
     const Bytes junk(4096, 0x5A);
     EXPECT_FALSE(make("android-boot")->open(span_of(junk, keep)));
     EXPECT_FALSE(make("android-vendor-boot")->open(span_of(junk, keep)));
+}
+
+// --------------------------------------------------------------------- zip
+
+// A minimal zip built by hand: one stored member, its central-directory
+// entry, and the end record. Everything the reader needs is here, so the
+// test pins the layout rather than a library's idea of it.
+Bytes zip_of(const std::string& name, const std::string& data, std::uint32_t external_attrs,
+             std::uint16_t made_by = 3 << 8) {
+    Bytes out;
+    auto le16 = [&](std::uint16_t v) {
+        out.push_back(static_cast<std::uint8_t>(v));
+        out.push_back(static_cast<std::uint8_t>(v >> 8));
+    };
+    auto le32 = [&](std::uint32_t v) {
+        for (int i = 0; i < 4; ++i) out.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
+    };
+    auto str = [&](const std::string& t) { out.insert(out.end(), t.begin(), t.end()); };
+
+    const std::uint32_t local_at = 0;
+    le32(0x04034B50U);                                    // local header
+    le16(20); le16(0); le16(0);                           // version, flags, method (stored)
+    le16(0); le16(0x21);                                  // time, date (1980-01-01)
+    le32(0); le32(static_cast<std::uint32_t>(data.size()));
+    le32(static_cast<std::uint32_t>(data.size()));
+    le16(static_cast<std::uint16_t>(name.size())); le16(0);
+    str(name);
+    str(data);
+
+    const std::uint32_t cd_at = static_cast<std::uint32_t>(out.size());
+    le32(0x02014B50U);                                    // central header
+    le16(made_by); le16(20); le16(0); le16(0);
+    le16(0); le16(0x21);
+    le32(0); le32(static_cast<std::uint32_t>(data.size()));
+    le32(static_cast<std::uint32_t>(data.size()));
+    le16(static_cast<std::uint16_t>(name.size())); le16(0); le16(0);
+    le16(0); le16(0);
+    le32(external_attrs);
+    le32(local_at);
+    str(name);
+
+    const std::uint32_t cd_size = static_cast<std::uint32_t>(out.size()) - cd_at;
+    le32(0x06054B50U);                                    // end record
+    le16(0); le16(0); le16(1); le16(1);
+    le32(cd_size); le32(cd_at); le16(0);
+    return out;
+}
+
+TEST(ZipContainer, StoredMemberModesAndKinds) {
+    const Bytes img = zip_of("etc/passwd", "root:x:0:0\n", 0100644U << 16);
+    std::shared_ptr<const Source> keep;
+    auto reader = make("zip");
+    ASSERT_NE(reader, nullptr);
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    const Walked w = walk_it(*reader);
+    ASSERT_TRUE(w.st);
+    ASSERT_EQ(w.r.entries_out.size(), 1u);
+    const EntryResult& e = w.r.entries_out[0];
+    EXPECT_EQ(e.meta.path, "etc/passwd");
+    EXPECT_EQ(e.meta.kind, EntryKind::Regular);
+    EXPECT_EQ(e.meta.mode, 0644u);
+    EXPECT_EQ(e.meta.size, 11u);
+    EXPECT_EQ(e.meta.extra.at("method"), "stored");
+    EXPECT_EQ(reader->info().size, img.size());
+    EXPECT_EQ(reader->info().attrs.at("declared_entries"), "1");
+}
+
+TEST(ZipContainer, SymlinkComesFromTheUnixModeBits) {
+    const Bytes img = zip_of("bin/sh", "busybox", 0120777U << 16);
+    std::shared_ptr<const Source> keep;
+    auto reader = make("zip");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    const Walked w = walk_it(*reader);
+    ASSERT_EQ(w.r.entries_out.size(), 1u);
+    EXPECT_EQ(w.r.entries_out[0].meta.kind, EntryKind::Symlink);
+    EXPECT_EQ(w.r.entries_out[0].meta.link_target, "busybox");
+}
+
+TEST(ZipContainer, DirectoryFromTheTrailingSlashWithoutUnixMode) {
+    // made_by = 0 (MS-DOS): no mode bits, so only the name says "directory".
+    const Bytes img = zip_of("etc/", "", 0, 0);
+    std::shared_ptr<const Source> keep;
+    auto reader = make("zip");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    const Walked w = walk_it(*reader);
+    ASSERT_EQ(w.r.entries_out.size(), 1u);
+    EXPECT_EQ(w.r.entries_out[0].meta.path, "etc");
+    EXPECT_EQ(w.r.entries_out[0].meta.kind, EntryKind::Directory);
+}
+
+TEST(ZipContainer, UnsupportedMethodIsListedNotDropped) {
+    Bytes img = zip_of("weird.bin", "xxxxxxxx", 0100644U << 16);
+    // Method 14 (LZMA) in both the local and the central header.
+    img[8] = 14;
+    const std::size_t cd = img.size() - 22 - 46 - 9;
+    img[cd + 10] = 14;
+    std::shared_ptr<const Source> keep;
+    auto reader = make("zip");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    const Walked w = walk_it(*reader);
+    ASSERT_EQ(w.r.entries_out.size(), 1u);
+    EXPECT_EQ(w.r.entries_out[0].meta.size, 0u);
+    EXPECT_TRUE(has_code(w.r.diagnostics, "zip-unsupported-method"));
+}
+
+TEST(ZipContainer, OpenRejectsWhatIsNotAZip) {
+    std::shared_ptr<const Source> keep;
+    const Bytes junk(512, 0x5A);
+    EXPECT_FALSE(make("zip")->open(span_of(junk, keep)));
+    // A local header with no end record is not an archive either.
+    Bytes headless = zip_of("a", "b", 0);
+    headless.resize(headless.size() - 22);
+    std::shared_ptr<const Source> keep2;
+    EXPECT_FALSE(make("zip")->open(span_of(headless, keep2)));
+}
+
+TEST(ZipContainer, EntryLimitStopsTheWalk) {
+    // One member repeated is enough: the cap is checked per directory entry.
+    const Bytes img = zip_of("only.txt", "data", 0100644U << 16);
+    std::shared_ptr<const Source> keep;
+    auto reader = make("zip");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    Limits lim;
+    lim.max_nodes_per_fs = 0;
+    const Walked w = walk_it(*reader, lim);
+    EXPECT_EQ(w.r.entries, 0u);
+    EXPECT_TRUE(w.r.truncated);
+    EXPECT_TRUE(has_code(w.r.diagnostics, "zip-limit-entries"));
+}
+
+// -------------------------------------------------------------------- lzma
+
+TEST(LzmaContainer, RejectsAnImpossiblePropertiesByte) {
+    Bytes img(64, 0);
+    img[0] = 250;  // above lc + lp*9 + pb*45 can reach
+    std::shared_ptr<const Source> keep;
+    auto reader = make("lzma");
+    ASSERT_NE(reader, nullptr);
+    EXPECT_FALSE(reader->open(span_of(img, keep)));
+}
+
+TEST(LzmaContainer, AcceptsAPlausibleHeaderAndFailsOnGarbage) {
+    Bytes img(4096, 0x41);
+    img[0] = 0x5D;  // lc=3 lp=0 pb=2
+    img[1] = 0x00;
+    img[2] = 0x00;
+    img[3] = 0x10;  // dictionary 1 MiB
+    std::shared_ptr<const Source> keep;
+    auto reader = make("lzma");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));  // the header is plausible
+    ListingSink sink(true, Limits{});
+    fs::WalkResult r;
+    EXPECT_FALSE(reader->walk(sink, fs::WalkOptions{}, r));  // the body is not a stream
+    EXPECT_TRUE(r.entries_out.empty());
 }

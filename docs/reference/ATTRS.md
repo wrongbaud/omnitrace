@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-470 keys across 30 source files.
+481 keys across 32 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -311,6 +311,18 @@ Source: `src/discovery/validators/lz4.cpp` (7 keys)
 | `dictionary_id` | `src/discovery/validators/lz4.cpp:47` | dictionary id as hex when present |
 | `header_len` | `src/discovery/validators/lz4.cpp:50` | frame header length including the HC byte |
 
+## validator `lzma`
+
+Source: `src/discovery/validators/lzma.cpp` (5 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `dict_size` | `src/discovery/validators/lzma.cpp:79` | LZMA dictionary size in bytes, from the header |
+| `lc` | `src/discovery/validators/lzma.cpp:76` | literal context bits, unpacked from the properties byte |
+| `lp` | `src/discovery/validators/lzma.cpp:77` | literal position bits, unpacked from the properties byte |
+| `pb` | `src/discovery/validators/lzma.cpp:78` | position bits, unpacked from the properties byte |
+| `uncompressed_size` | `src/discovery/validators/lzma.cpp:80` | size the stream declares, or "unknown" when the encoder did not know it |
+
 ## validator `mbr`
 
 Source: `src/discovery/validators/mbr.cpp` (8 keys)
@@ -511,6 +523,19 @@ Source: `src/discovery/validators/xz.cpp` (1 keys)
 | key | first set at | meaning |
 |---|---|---|
 | `check` | `src/discovery/validators/xz.cpp:42` | none, crc32, crc64 or sha256 |
+
+## validator `zip`
+
+Source: `src/discovery/validators/zip.cpp` (6 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `deferred_sizes` | `src/discovery/validators/zip.cpp:370` | true when a member left its sizes to a data descriptor |
+| `entries` | `src/discovery/validators/zip.cpp:217` | central-directory entries counted |
+| `extent` | `src/discovery/validators/zip.cpp:216` | unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it |
+| `gap_before_directory` | `src/discovery/validators/zip.cpp:230` | bytes between the last member and the central directory (an APK Signing Block, for instance) |
+| `local_headers` | `src/discovery/validators/zip.cpp:369` | local file headers counted before the central directory |
+| `zip64` | `src/discovery/validators/zip.cpp:279` | true when the archive uses zip64 records or extra fields |
 
 ## validator `zstd`
 

@@ -34,10 +34,16 @@ class StreamReader : public ContainerReader {
     ContainerInfo info() const override;
     Status walk(Sink& sink, const WalkOptions& opts, WalkResult& out) override;
 
-   private:
+   protected:
+    /// Is this a header of the format? The default is the magic bytes at
+    /// offset 0. LZMA-alone has no magic and overrides this.
+    virtual Status check_header(const Span& span) const;
+
     std::string format_;
     compress::Codec codec_;
     std::vector<std::uint8_t> magic_;
+
+   private:
     Span span_;
     std::uint64_t consumed_ = 0;   // input bytes the stream used (0 before walk)
     std::uint64_t produced_ = 0;   // payload bytes

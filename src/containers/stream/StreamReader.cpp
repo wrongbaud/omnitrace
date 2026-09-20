@@ -47,10 +47,15 @@ StreamReader::StreamReader(std::string format, compress::Codec codec,
                            std::vector<std::uint8_t> magic)
     : format_(std::move(format)), codec_(codec), magic_(std::move(magic)) {}
 
-Status StreamReader::open(const Span& span) {
-    if (span.empty()) return Status::fail("container-empty: no bytes at the container's start");
+Status StreamReader::check_header(const Span& span) const {
     if (!span.matches_at(0, std::span<const std::uint8_t>(magic_.data(), magic_.size())))
         return Status::fail("container-bad-magic: no " + format_ + " magic at offset 0");
+    return Status::success();
+}
+
+Status StreamReader::open(const Span& span) {
+    if (span.empty()) return Status::fail("container-empty: no bytes at the container's start");
+    if (const Status st = check_header(span); !st) return st;
     span_ = span;
     consumed_ = 0;
     produced_ = 0;
@@ -156,10 +161,30 @@ class XzReader final : public StreamReader {
     XzReader() : StreamReader("xz", compress::Codec::Xz, {0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}) {}
 };
 
+// LZMA-alone has no magic: the 13-byte header is a properties byte, a
+// dictionary size and an uncompressed size. The properties byte packs
+// lc + lp*9 + pb*45, so anything from 225 up is not one
+// (docs/formats/compressed-streams.md).
+class LzmaReader final : public StreamReader {
+   public:
+    LzmaReader() : StreamReader("lzma", compress::Codec::Lzma, {}) {}
+
+   protected:
+    Status check_header(const Span& span) const override {
+        const auto props = span.u8(0);
+        if (!props) return Status::fail("container-empty: fewer than 13 lzma header bytes");
+        if (*props >= 225)
+            return Status::fail("container-bad-magic: lzma properties byte " +
+                                std::to_string(*props) + " is out of range");
+        return Status::success();
+    }
+};
+
 }  // namespace
 
 OMNITRACE_REGISTER_CONTAINER("gzip", GzipReader);
 OMNITRACE_REGISTER_CONTAINER("xz", XzReader);
+OMNITRACE_REGISTER_CONTAINER("lzma", LzmaReader);
 
 namespace detail {
 void omnitrace_container_anchor_stream() {}

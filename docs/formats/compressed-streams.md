@@ -1,4 +1,4 @@
-# Compressed streams: gzip, xz, lz4, zstd
+# Compressed streams: gzip, xz, lzma, lz4, zstd
 
 This page is for examiners who meet `gzip` / `xz` / `lz4` / `zstd` findings
 and for contributors writing the remaining stream readers. After reading it you
@@ -6,9 +6,9 @@ know what each validator checks, which of them measure the stream's extent and
 which still report `?`, how conflict resolution hides the streams that make up
 a filesystem, and what is not decoded yet.
 
-gzip and xz have a reader (`src/containers/stream/StreamReader.{h,cpp}`,
-registered for both format ids) and a validator that sizes them. lz4 and zstd
-have neither yet.
+gzip, xz and LZMA-alone have a reader
+(`src/containers/stream/StreamReader.{h,cpp}`, registered for all three format
+ids) and a validator that sizes them. lz4 and zstd have neither yet.
 
 Four validators, one per stream format, all in `src/discovery/validators/`
 and registered from `signatures/core.toml` with category `compressed`:
@@ -17,6 +17,7 @@ and registered from `signatures/core.toml` with category `compressed`:
 |---|---|---|---|
 | `gzip` | `gzip` | `1f 8b 08` | `gzip.cpp` (`gzip`) |
 | `xz` | `xz` | `fd 37 7a 58 5a 00` | `xz.cpp` (`xz`) |
+| `lzma` | `lzma-lc3-lp0-pb2`, `lzma-lc1-lp2-pb2` | none (see below) | `lzma.cpp` (`lzma`) |
 | `lz4` | `lz4-frame` | `04 22 4d 18` | `lz4.cpp` (`lz4`) |
 | `zstd` | `zstd` | `28 b5 2f fd` | `zstd.cpp` (`zstd`) |
 
@@ -37,6 +38,32 @@ so a small stream claiming to expand forever is abandoned, and `max_payload`
 
 lz4 and zstd are not measured and stay at `structural` with size `?`. A finding
 with no extent claims no bytes and parents nothing.
+
+## lzma (LZMA-alone, .lzma)
+
+The 13-byte header is a properties byte, a `u32` dictionary size and a `u64`
+uncompressed size (all ones when the encoder did not know it, in which case
+the stream ends with an end marker). **There is no magic.** The properties
+byte packs `lc + lp * 9 + pb * 45`, so it is below 225; that is the whole of
+the format's self-description.
+
+Each signature therefore keys on one properties byte followed by the two zero
+bytes a dictionary size that is a multiple of 64 KiB always has. Two are
+shipped: `5d` (lc=3 lp=0 pb=2, the encoder default) and `6d` (lc=1 lp=2 pb=2,
+what OpenWrt's lzma-loader emits). Another properties byte is one more line in
+`signatures/core.toml`.
+
+Because there is no magic, the validator **rejects rather than downgrades**,
+at every step: a properties byte of 225 or more, a dictionary outside
+4 KiB..1.5 GiB, a declared size above `max_payload`, or a stream that does not
+decode to its end. `5d 00 00` occurs about a hundred times in a 16 MB router
+image, and reporting those as magic-tier findings buried the one real stream
+among them. The consequence is that a finding is only ever `consistent`, and a
+real but truncated `.lzma` is missed — the price of a format with no magic.
+
+This is what completes the router chain: a uImage payload is usually LZMA-alone,
+so `uImage -> lzma -> the kernel` and everything the kernel embeds (a device
+tree, an initramfs cpio, ELF sections) is now reachable.
 
 ## Why the extent matters
 
@@ -187,6 +214,11 @@ end: gzip container -> payload -> the filesystem inside it.
 * lz4 and zstd have no extent and no reader: their block lists and frame
   indexes are not walked, so `size` stays unknown and their payloads are not
   decompressed.
+* bzip2 (`BZh`) and LZO streams have no signature and no decoder: both would
+  need a new third-party dependency (libbz2, liblzo2), which
+  `docs/ARCHITECTURE.md` treats as a decision rather than an omission.
+* Only two LZMA properties bytes have signatures; a stream written with other
+  `lc`/`lp`/`pb` settings is not found.
 * `verified` is unreachable for every stream format: neither gzip's CRC32 nor
   xz's check value is compared against the decoded payload.
 * The payload is held in memory in one piece, so a payload larger than

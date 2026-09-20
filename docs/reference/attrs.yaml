@@ -91,6 +91,13 @@ src/discovery/validators/cpio.cpp:
   extent: unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it
   variant: newc | crc | odc, the header flavour
 
+src/discovery/validators/lzma.cpp:
+  dict_size: LZMA dictionary size in bytes, from the header
+  lc: literal context bits, unpacked from the properties byte
+  lp: literal position bits, unpacked from the properties byte
+  pb: position bits, unpacked from the properties byte
+  uncompressed_size: size the stream declares, or "unknown" when the encoder did not know it
+
 src/discovery/validators/tar.cpp:
   data_bytes: total bytes of member data the archive holds
   entries: members counted before the end-of-archive block (extended headers are not counted)
@@ -381,6 +388,14 @@ src/discovery/validators/verity.cpp:
 
 src/discovery/validators/xz.cpp:
   check: "none, crc32, crc64 or sha256"
+
+src/discovery/validators/zip.cpp:
+  deferred_sizes: true when a member left its sizes to a data descriptor
+  entries: central-directory entries counted
+  extent: unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it
+  gap_before_directory: bytes between the last member and the central directory (an APK Signing Block, for instance)
+  local_headers: local file headers counted before the central directory
+  zip64: true when the archive uses zip64 records or extra fields
 
 src/discovery/validators/zstd.cpp:
   content_checksum: "true when the frame carries a content checksum"

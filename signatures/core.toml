@@ -205,6 +205,13 @@ references = ["https://www.gnu.org/software/tar/manual/html_node/Standard.html"]
 name = "zip"
 format = "zip"
 category = "container"
+validator = "zip"
+max_entries = 200000
+# How far past a member with deferred sizes to look for its data descriptor.
+max_descriptor_search = 67108864
+# How far to look for the central directory when something (an APK Signing
+# Block) sits between the last member and it.
+max_gap_search = 16777216
 hex = "504b0304"
 endian = "little"
 description = "ZIP local file header"
@@ -350,6 +357,34 @@ max_ratio = 1000
 max_payload = 4294967296
 description = ".xz stream header; stream flags CRC verified"
 references = ["https://tukaani.org/xz/xz-file-format.txt"]
+
+# LZMA-alone has no magic, so each signature keys on one properties byte
+# (lc + lp*9 + pb*45) followed by the two zero bytes that a dictionary size of
+# a multiple of 64 KiB always has. The decode probe in the validator is what
+# actually decides. Add a line per properties byte you meet: 0x5d is the
+# encoder default, 0x6d is what OpenWrt's lzma-loader emits.
+[[signature]]
+name = "lzma-lc3-lp0-pb2"
+format = "lzma"
+category = "compressed"
+hex = "5d0000"
+endian = "little"
+validator = "lzma"
+max_ratio = 1000
+max_payload = 4294967296
+description = "LZMA-alone stream, lc=3 lp=0 pb=2 (the encoder default)"
+references = ["https://tukaani.org/xz/xz-file-format.txt"]
+
+[[signature]]
+name = "lzma-lc1-lp2-pb2"
+format = "lzma"
+category = "compressed"
+hex = "6d0000"
+endian = "little"
+validator = "lzma"
+max_ratio = 1000
+max_payload = 4294967296
+description = "LZMA-alone stream, lc=1 lp=2 pb=2 (OpenWrt lzma-loader)"
 
 [[signature]]
 name = "lz4-frame"

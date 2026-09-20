@@ -15,11 +15,11 @@ treats it. It is generated from `signatures/*.toml`, the validators and the
 reader registries by `scripts/gen_docs.py` and checked by `scripts/check_docs.py`,
 so it cannot drift from the code the way a table written here would.
 
-Today that is 50 signatures over 35 format ids, 25 validators, 7 filesystem
-readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and 7
-container readers: `gzip` and `xz` (one `StreamReader`), `tar`, `cpio`,
-`uimage`, `android-boot` and `android-vendor-boot`. `--history` is recovered
-by the ext, JFFS2 and QNX6 readers.
+Today that is 52 signatures over 36 format ids, 27 validators, 7 filesystem
+readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and 9
+container readers: `gzip`, `xz` and `lzma` (one `StreamReader`), `tar`,
+`cpio`, `zip`, `uimage`, `android-boot` and `android-vendor-boot`.
+`--history` is recovered by the ext, JFFS2 and QNX6 readers.
 
 Nested analysis runs for extracted files: every file a walk writes to the host
 is re-scanned, and one holding a filesystem or a partition table at Structural
@@ -46,25 +46,21 @@ Items 1-4 of the original list are done: the ext4, JFFS2, QNX6 and QNX IFS
 readers, and both halves of the container work (readers plus the payload
 recursion). See the section above.
 
-1. **The remaining container readers.** `zip` (needs a sizing validator from
-   the end-of-central-directory record first), `fit` (the FDT parser to reuse
-   is in `src/discovery/validators/fit.cpp` and would move to `src/core/`),
-   `ubi`, `android-sparse`, and `lz4` / `zstd` (which also need their
-   validators to measure the extent the way gzip and xz now do).
-   `src/containers/` holds five worked examples and
-   `tests/unit/containers/` the test shapes.
-2. **Signatures for the streams that have none**: LZMA-alone (`5d 00 00`),
-   bzip2 (`BZh`) and LZO. A uImage payload is usually lzma, so today the
-   chain uImage -> kernel stops at the payload file; `StreamReader` already
-   has `Codec::Lzma` and would need only the signature and a sizing
-   validator.
+1. **The remaining container readers.** `fit` (the FDT parser to reuse is in
+   `src/discovery/validators/fit.cpp` and would move to `src/core/`), `ubi`,
+   `android-sparse`, and `lz4` / `zstd` (which also need their validators to
+   measure the extent the way gzip, xz and lzma now do). `src/containers/`
+   holds seven worked examples and `tests/unit/containers/` the test shapes.
+2. **bzip2 and LZO stream support**, the last two compressed formats with no
+   signature. Both need a new third-party dependency (libbz2, liblzo2), which
+   is a decision rather than an omission -- see `docs/ARCHITECTURE.md`.
 3. **UBIFS and YAFFS2 readers**, both with history (UBIFS sqnum order, YAFFS2
    sequence numbers); fixtures `ubifs.img`, `ubi.img`, `yaffs2.img`,
    `yaffs2-yaffsecc.img` exist.
-4. **Sizing validators for zip, lz4 and zstd**, so they claim their bytes and
-   parent nested finds correctly. gzip and xz now do this through
-   `compressed_stream_length` in `src/discovery/validators/common.h`; the QNX
-   magics were sized when their validators landed.
+4. **Sizing validators for lz4 and zstd**, so they claim their bytes and
+   parent nested finds correctly. gzip, xz and lzma do this through
+   `compressed_stream_length` in `src/discovery/validators/common.h`; tar,
+   cpio and zip walk their member headers instead.
 5. **Write the corrected view of a word-swapped image** into the case directory
    (today only the detection is recorded; `src/discovery/Recurse.cpp`
    `ImageViewHook` is the extension point).
