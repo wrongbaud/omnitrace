@@ -88,6 +88,13 @@ format = "stream"
 category = "compressed"
 magic = "ZIP!"
 validator = "test-sized"
+
+[[signature]]
+name = "remapper"
+format = "ubi"
+category = "container"
+magic = "RMP!"
+validator = "test-sized"
 )",
                             "resolve"));
     return s;
@@ -152,6 +159,27 @@ TEST(Resolve, CompressedStreamsInsideAnythingElseAreAbsorbed) {
     ASSERT_EQ(found[0].also_matched.size(), 2u);
     EXPECT_EQ(found[0].also_matched[0].offset, 200u);
     EXPECT_EQ(found[0].also_matched[1].offset, 300u);
+    EXPECT_EQ(found[1].offset, 2000u);
+}
+
+// The other exception. UBI interleaves its headers with the data and lets
+// wear levelling reorder the logical blocks, so a filesystem superblock found
+// at a raw offset inside one is at an offset nothing can be read from. The
+// reader reassembles the volumes and the nested scan finds the real one
+// there, so the raw hit is absorbed at any tier -- including an equal one,
+// which is what a verified UBIFS inside a verified UBI image is.
+TEST(Resolve, EverythingInsideAUbiImageIsAbsorbed) {
+    Bytes buf(4096, 0);
+    plant(buf, 100, "RMP!", 3, 1000);  // a UBI image, [100, 1100)
+    plant(buf, 200, "INN!", 3, 50);    // a filesystem at a raw offset inside it
+    plant(buf, 2000, "INN!", 3, 50);   // outside -> kept
+    const auto found = scan(test::span_of(buf), set());
+    ASSERT_EQ(found.size(), 2u);
+    EXPECT_EQ(found[0].offset, 100u);
+    EXPECT_EQ(found[0].format, "ubi");
+    ASSERT_EQ(found[0].also_matched.size(), 1u);
+    // Absorbed, not dropped: the raw hit is still on the record.
+    EXPECT_EQ(found[0].also_matched[0].offset, 200u);
     EXPECT_EQ(found[1].offset, 2000u);
 }
 

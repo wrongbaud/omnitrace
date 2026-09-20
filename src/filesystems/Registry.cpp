@@ -17,6 +17,7 @@ void omnitrace_fs_anchor_ext();
 void omnitrace_fs_anchor_jffs2();
 void omnitrace_fs_anchor_qnx6();
 void omnitrace_fs_anchor_qnxifs();
+void omnitrace_fs_anchor_ubifs();
 
 void link_builtin_readers() {
     // Calling each (empty) anchor is enough to make the linker keep its object
@@ -26,6 +27,7 @@ void link_builtin_readers() {
     omnitrace_fs_anchor_jffs2();
     omnitrace_fs_anchor_qnx6();
     omnitrace_fs_anchor_qnxifs();
+    omnitrace_fs_anchor_ubifs();
 }
 }  // namespace detail
 

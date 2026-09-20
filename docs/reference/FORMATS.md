@@ -15,7 +15,7 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | identify | `magic-only` (no validator; `Confidence::Magic`, size unknown) or `validated to <tier>`: the best tier the validator can assign (`docs/ARCHITECTURE.md`) |
 | sized | the validator sets the finding's extent, so the finding can be carved and can parent nested finds |
 | reader | a `FilesystemReader` / `ContainerReader` is registered for the format id and `analyze` walks it |
-| history | the reader recovers superseded / deleted versions with `--history`; `n.a.` for anything that is not a filesystem |
+| history | the reader recovers superseded / deleted versions with `--history`; `n.a.` where there is no reader and the format is not a filesystem |
 | mount.sh | the `mount -t` type `discovery::mount_type_for` assigns to a carved file, `mtd (comment)` for flash filesystems listed in the mtdram/nandsim comment block, `-` when not loop-mountable |
 
 | format | category | identify | sized | reader | history | mount.sh | docs page | notes |
@@ -30,23 +30,23 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `qnx6` | filesystem | validated to verified (`qnx6`) | yes | yes (`src/filesystems/qnx6/Qnx6Reader.cpp:1229`) | yes | `qnx6` | [qnx6.md](../formats/qnx6.md) | size covers both superblocks; second-superblock hits with a corrupt primary are placed at the filesystem start; signatures: `qnx6-le`, `qnx6-be` |
 | `romfs` | filesystem | validated to verified (`romfs`) | yes | no | no (no reader) | `romfs` | [romfs.md](../formats/romfs.md) | signatures: `romfs` |
 | `squashfs` | filesystem | validated to consistent (`squashfs`) | yes | yes (`src/filesystems/squashfs/SquashfsReader.cpp:1375`) | no | `squashfs` | [squashfs.md](../formats/squashfs.md) | signatures: `squashfs-le`, `squashfs-be`, `squashfs-vendor-shsq`, `squashfs-vendor-qshs` |
-| `ubifs` | filesystem | validated to verified (`ubifs`) | yes | no | no (no reader) | mtd (comment) | [ubifs.md](../formats/ubifs.md) | aligned hits only (`min_io_size` or 512); inside UBI the size is not meaningful; signatures: `ubifs` |
+| `ubifs` | filesystem | validated to verified (`ubifs`) | yes | yes (`src/filesystems/ubifs/UbifsReader.cpp:945`) | no | mtd (comment) | [ubifs.md](../formats/ubifs.md) | aligned hits only (`min_io_size` or 512); inside UBI the size is not meaningful; signatures: `ubifs` |
 | `7z` | container | magic-only | no | no | n.a. | - | [signatures.md](../formats/signatures.md) (plain magic) | signatures: `7z` |
-| `android-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:197`) | n.a. | - | [android-boot.md](../formats/android-boot.md) | size is the sum of page-aligned sections, header v0-v4; signatures: `android-boot` |
-| `android-sparse` | container | validated to consistent (`android-sparse`) | yes | yes (`src/containers/sparse/SparseReader.cpp:258`) | n.a. | - | [android-sparse.md](../formats/android-sparse.md) | size is the chunk walk; no reader expands the image yet; signatures: `android-sparse` |
-| `android-vendor-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:198`) | n.a. | - | [android-boot.md](../formats/android-boot.md) | signatures: `android-vendor-boot` |
-| `cpio` | container | validated to consistent (`cpio`) | yes | yes (`src/containers/cpio/CpioReader.cpp:295`) | n.a. | - | [cpio.md](../formats/cpio.md) | signatures: `cpio-newc`, `cpio-crc`, `cpio-odc` |
-| `fit` | container | validated to verified (`fit`) | yes | yes (`src/containers/fit/FitReader.cpp:250`) | n.a. | - | [fit.md](../formats/fit.md) | signatures: `fit` |
-| `tar` | container | validated to verified (`tar`) | yes | yes (`src/containers/tar/TarReader.cpp:342`) | n.a. | - | [tar.md](../formats/tar.md) | signatures: `tar-ustar` |
-| `ubi` | container | validated to verified (`ubi`) | yes | yes (`src/containers/ubi/UbiReader.cpp:527`) | n.a. | - | [ubi.md](../formats/ubi.md) | size known only when a second EC header fixes the PEB size (`ubi-single-peb` otherwise); signatures: `ubi` |
-| `uimage` | container | validated to verified (`uimage`) | yes | yes (`src/containers/uimage/UImageReader.cpp:199`) | n.a. | - | [uimage.md](../formats/uimage.md) | may re-categorise as kernel; kernel and kernel_noload types are re-categorised as `kernel`; signatures: `uimage` |
-| `zip` | container | validated to consistent (`zip`) | yes | yes (`src/containers/zip/ZipReader.cpp:405`) | n.a. | - | [zip.md](../formats/zip.md) | signatures: `zip` |
-| `bzip2` | compressed | validated to consistent (`bzip2`) | yes | yes (`src/containers/stream/StreamReader.cpp:205`) | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `bzip2` |
-| `gzip` | compressed | validated to consistent (`gzip`) | yes | yes (`src/containers/stream/StreamReader.cpp:208`) | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `gzip` |
-| `lz4` | compressed | validated to consistent (`lz4`) | yes | yes (`src/containers/stream/StreamReader.cpp:206`) | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `lz4-frame` |
-| `lzma` | compressed | validated to consistent (`lzma`) | yes | yes (`src/containers/stream/StreamReader.cpp:210`) | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `lzma-lc3-lp0-pb2`, `lzma-lc1-lp2-pb2` |
-| `xz` | compressed | validated to consistent (`xz`) | yes | yes (`src/containers/stream/StreamReader.cpp:209`) | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `xz` |
-| `zstd` | compressed | validated to consistent (`zstd`) | yes | yes (`src/containers/stream/StreamReader.cpp:207`) | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `zstd` |
+| `android-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:197`) | no | - | [android-boot.md](../formats/android-boot.md) | size is the sum of page-aligned sections, header v0-v4; signatures: `android-boot` |
+| `android-sparse` | container | validated to consistent (`android-sparse`) | yes | yes (`src/containers/sparse/SparseReader.cpp:258`) | no | - | [android-sparse.md](../formats/android-sparse.md) | size is the chunk walk; no reader expands the image yet; signatures: `android-sparse` |
+| `android-vendor-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:198`) | no | - | [android-boot.md](../formats/android-boot.md) | signatures: `android-vendor-boot` |
+| `cpio` | container | validated to consistent (`cpio`) | yes | yes (`src/containers/cpio/CpioReader.cpp:295`) | no | - | [cpio.md](../formats/cpio.md) | signatures: `cpio-newc`, `cpio-crc`, `cpio-odc` |
+| `fit` | container | validated to verified (`fit`) | yes | yes (`src/containers/fit/FitReader.cpp:250`) | no | - | [fit.md](../formats/fit.md) | signatures: `fit` |
+| `tar` | container | validated to verified (`tar`) | yes | yes (`src/containers/tar/TarReader.cpp:342`) | no | - | [tar.md](../formats/tar.md) | signatures: `tar-ustar` |
+| `ubi` | container | validated to verified (`ubi`) | yes | yes (`src/containers/ubi/UbiReader.cpp:527`) | yes | - | [ubi.md](../formats/ubi.md) | size known only when a second EC header fixes the PEB size (`ubi-single-peb` otherwise); signatures: `ubi` |
+| `uimage` | container | validated to verified (`uimage`) | yes | yes (`src/containers/uimage/UImageReader.cpp:199`) | no | - | [uimage.md](../formats/uimage.md) | may re-categorise as kernel; kernel and kernel_noload types are re-categorised as `kernel`; signatures: `uimage` |
+| `zip` | container | validated to consistent (`zip`) | yes | yes (`src/containers/zip/ZipReader.cpp:405`) | no | - | [zip.md](../formats/zip.md) | signatures: `zip` |
+| `bzip2` | compressed | validated to consistent (`bzip2`) | yes | yes (`src/containers/stream/StreamReader.cpp:205`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `bzip2` |
+| `gzip` | compressed | validated to consistent (`gzip`) | yes | yes (`src/containers/stream/StreamReader.cpp:208`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `gzip` |
+| `lz4` | compressed | validated to consistent (`lz4`) | yes | yes (`src/containers/stream/StreamReader.cpp:206`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `lz4-frame` |
+| `lzma` | compressed | validated to consistent (`lzma`) | yes | yes (`src/containers/stream/StreamReader.cpp:210`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `lzma-lc3-lp0-pb2`, `lzma-lc1-lp2-pb2` |
+| `xz` | compressed | validated to consistent (`xz`) | yes | yes (`src/containers/stream/StreamReader.cpp:209`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `xz` |
+| `zstd` | compressed | validated to consistent (`zstd`) | yes | yes (`src/containers/stream/StreamReader.cpp:207`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `zstd` |
 | `gpt` | partition-table | validated to verified (`gpt`) | yes | no | n.a. | - | [partition-tables.md](../formats/partition-tables.md) | size is the table extent (header + entry array); the disk extent is `disk_size`; signatures: `gpt`, `gpt-4k` |
 | `mbr` | partition-table | validated to consistent (`mbr`) | yes | no | n.a. | - | [partition-tables.md](../formats/partition-tables.md) | size is the 512-byte table sector; EBR chain sectors hidden through `also_covers`; signatures: `mbr` |
 | `dm-verity` | crypto | validated to consistent (`verity`) | yes | no | n.a. | - | [verity.md](../formats/verity.md) | signatures: `dm-verity` |
@@ -61,5 +61,5 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 ## Counts
 
 - 53 signatures over 37 format ids
-- 28 validators, 7 filesystem reader(s), 15 container reader(s)
+- 28 validators, 8 filesystem reader(s), 15 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

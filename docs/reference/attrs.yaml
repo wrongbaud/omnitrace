@@ -557,3 +557,26 @@ src/filesystems/squashfs/SquashfsReader.cpp:
   xz_dict_size: xz compressor option
   xz_filters: xz compressor option
   zstd_level: zstd compressor option
+
+
+src/filesystems/ubifs/UbifsReader.cpp:
+  bad_nodes: nodes that failed their CRC or could not be read (absent when none)
+  bud_lebs: journal bud erase blocks replayed
+  commit_no: commit number of the master node the reader used
+  data_nodes: distinct (inode, block) data nodes the index and journal name
+  dentries: live directory entries after the journal replay
+  fanout: index B-tree fanout from the superblock
+  fmt_version: UBIFS format version
+  index_leaves: leaf branches the index walk collected
+  index_nodes: index nodes walked
+  index_size: bytes of index the master node reports
+  inodes: distinct inode nodes the index and journal name
+  journal_nodes: nodes the journal replay applied on top of the index
+  leb_cnt: logical erase blocks the volume uses
+  leb_size: usable bytes per logical erase block
+  log_lebs: erase blocks reserved for the log
+  max_leb_cnt: largest volume size the superblock allows, in erase blocks
+  min_io_size: minimum I/O unit of the underlying flash
+  ro_compat_version: read-only compatibility version
+  unlink_records: directory entries pointing at inode 0, the record UBIFS writes on unlink (absent when none)
+  uuid: filesystem UUID from the superblock

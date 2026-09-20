@@ -1105,6 +1105,22 @@ ubi-vtbl-unreadable:
   meaning: the layout volume (0x7FFFEFFF) is missing or holds no volume-table record whose CRC matches, so no volume name is known
   action: volumes are emitted as vol<id> instead; the contents are unaffected
 
+ubifs-bad-index:
+  meaning: the on-flash index did not parse to the end (a branch points at something that is not an index node, or the tree is too deep or too large)
+  action: the volume is damaged or its erase blocks are not contiguous; what the index did yield is still walked, and a UBIFS inside raw UBI blocks needs the volume reassembled first
+
+ubifs-bad-magic:
+  meaning: the reader was opened on bytes whose first node is not a UBIFS superblock node
+  action: contributor error or a stale signature; the node keeps the validator's finding
+
+ubifs-bad-master:
+  meaning: neither copy of the master node has a matching CRC, so nothing says where the index root is
+  action: usually a UBIFS superblock found at a raw offset inside a UBI image, where LEB 1 is not the master node; reassemble the volume (docs/formats/ubi.md) and re-run
+
+ubifs-bad-node:
+  meaning: an inode node is unreadable or fails its CRC
+  action: the entry is still listed with whatever the node holds; treat its metadata as unverified
+
 ubifs-bad-leb-layout:
   meaning: log/lpt/orphan LEB counts do not fit into leb_cnt
   action: structural-tier hit; damaged superblock
@@ -1113,9 +1129,45 @@ ubifs-bad-superblock:
   meaning: superblock fields are out of range
   action: magic-tier hit; probably a non-superblock node
 
+ubifs-decompress-failed:
+  meaning: a data node's payload did not decode, or it names a compression type UBIFS does not define
+  action: the block is zero-filled and the file marked truncated; the volume is damaged or uses a compressor this build lacks
+
+ubifs-directory-loop:
+  meaning: a directory is its own ancestor, so the walk would never end
+  action: the index is damaged or crafted; the branch stops there and everything else is still walked
+
 ubifs-crc-mismatch:
   meaning: the superblock node CRC32 does not match
   action: damaged superblock; verify with ubireader
+
+ubifs-history-unsupported:
+  meaning: --history was asked for, but this reader does not yet recover the superseded nodes UBIFS leaves behind until garbage collection
+  action: informational; only the current tree is emitted
+
+ubifs-journal-unreplayed:
+  meaning: the journal could not be replayed, so the tree is as of the last commit and anything written after it is missing
+  action: the log head or its commit-start node is damaged; recent changes are not shown, which matters most on a dump taken from a running device
+
+ubifs-limit-nodes:
+  meaning: Limits::max_nodes_per_fs was reached before the tree was fully walked
+  action: raise --max-files; what was emitted is complete
+
+ubifs-missing-block:
+  meaning: a file's data node could not be read; the block is zero-filled
+  action: the volume is damaged or truncated; the file is marked truncated and its digest is of what was recovered
+
+ubifs-missing-inode:
+  meaning: a directory entry names an inode that has no inode node in the index or the journal
+  action: the name is still listed, empty; the inode was lost to damage, or to a commit this dump caught mid-flight
+
+ubifs-not-open:
+  meaning: walk() was called before a successful open() (caller bug)
+  action: contributor error; analyze() never produces this
+
+ubifs-sink-error:
+  meaning: the Sink refused an entry (unsafe path or its own limit)
+  action: see the sink-* code quoted in the message
 
 ubifs-truncated:
   meaning: leb_size * leb_cnt extends past the data; inside UBI the LEBs are not contiguous anyway

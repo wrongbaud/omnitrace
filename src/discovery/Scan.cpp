@@ -152,8 +152,20 @@ bool may_absorb(const Finding& owner, const Finding& f) {
     return !is_partition_table(f) || is_partition_table(owner);
 }
 
-// Confidence part of the containment rule: strictly higher, or any tier at all
-// when `f` is a compressed stream inside something that is not one.
+// A format that does not store its contents at the offsets they appear to be
+// at. UBI interleaves erase-counter and volume-identifier headers with the
+// data and lets wear levelling put the logical blocks in any physical order,
+// so a filesystem superblock found at a raw offset inside one is that
+// filesystem seen through the wrong lens: nothing can be read from there. The
+// reader reassembles the volumes and the nested scan finds the real thing
+// inside them (docs/formats/ubi.md).
+bool remaps_its_contents(const Finding& f) {
+    return f.format == "ubi";
+}
+
+// Confidence part of the containment rule: strictly higher, any tier at all
+// when `f` is a compressed stream inside something that is not one, and any
+// tier at all inside a format that re-maps its contents.
 //
 // A SquashFS or JFFS2 is built out of gzip/xz/lz4/zstd blocks, so its range is
 // full of compressed-stream hits that are its data, not separate finds. Tier
@@ -165,12 +177,18 @@ bool may_absorb(const Finding& owner, const Finding& f) {
 // argument — bytes inside a sized structure belong to it — so a compressed
 // stream is absorbed by any enclosing finding that is not itself one.
 //
+// The same argument covers a UBI image: every structure inside one is at an
+// offset that means nothing until the volumes are reassembled, so a `ubifs`
+// hit in the raw blocks is absorbed and the real one turns up under the
+// rebuilt volume instead.
+//
 // Only sized findings can own anything (a size-0 finding has no extent), so
 // this cannot let a bare magic hit swallow a stream. Equal-confidence nesting
 // is still kept for everything else: an ext4 inside an MBR partition stays
 // visible. Absorption stays one-directional, so two nested streams both stay.
 bool outranks(const Finding& owner, const Finding& f) {
     if (owner.confidence > f.confidence) return true;
+    if (remaps_its_contents(owner)) return true;
     return is_compressed_stream(f) && !is_compressed_stream(owner);
 }
 

@@ -10,10 +10,11 @@ diagnostics each emits.
 `signatures/core.toml` (magic `UBI#`, big-endian, format `ubi`, category
 `container`), and `src/containers/ubi/UbiReader.cpp` (reader `ubi`), which
 rebuilds the volumes into `containers/<node-id>/files/`. A UBIFS superblock
-inside the raw region is still a separate, nested `ubifs` finding
-(`docs/formats/ubifs.md`) -- that one is found by magic in the *unreassembled*
-bytes, so the rebuilt volume is the copy worth reading.
-`partitions/mount.sh` lists the carve in the nandsim comment block.
+found by magic in the *unreassembled* blocks is absorbed into the `ubi`
+finding's `also_matched` -- nothing can be read from that offset, and the
+real filesystem turns up under the rebuilt volume
+([ubifs.md](ubifs.md)). `partitions/mount.sh` lists the carve in the nandsim
+comment block.
 
 ## On-disk layout
 

@@ -693,7 +693,7 @@ def render_formats() -> str:
         "| identify | `magic-only` (no validator; `Confidence::Magic`, size unknown) or `validated to <tier>`: the best tier the validator can assign (`docs/ARCHITECTURE.md`) |",
         "| sized | the validator sets the finding's extent, so the finding can be carved and can parent nested finds |",
         "| reader | a `FilesystemReader` / `ContainerReader` is registered for the format id and `analyze` walks it |",
-        "| history | the reader recovers superseded / deleted versions with `--history`; `n.a.` for anything that is not a filesystem |",
+        "| history | the reader recovers superseded / deleted versions with `--history`; `n.a.` where there is no reader and the format is not a filesystem |",
         "| mount.sh | the `mount -t` type `discovery::mount_type_for` assigns to a carved file, `mtd (comment)` for flash filesystems listed in the mtdram/nandsim comment block, `-` when not loop-mountable |",
         "",
         "| format | category | identify | sized | reader | history | mount.sh | docs page | notes |",
@@ -720,11 +720,15 @@ def render_formats() -> str:
             reader = f"yes (`{ct_readers[fmt][0]}:{ct_readers[fmt][1]}`)"
         else:
             reader = "no"
-        if row["category"] != "filesystem":
+        # A reader recovers history when it actually *marks* an entry
+        # superseded or deleted. Merely reading WalkOptions::history is not
+        # enough: a reader may read it only to say it has none yet.
+        history_re = r"\.(?:superseded|deleted)\s*=\s*true|\+\+\s*\w+(?:->|\.)(?:superseded|deleted)\b"
+        src = fs_readers.get(fmt) or ct_readers.get(fmt)
+        if src is not None:
+            history = "yes" if re.search(history_re, read(ROOT / src[0])) else "no"
+        elif row["category"] != "filesystem":
             history = "n.a."
-        elif fmt in fs_readers:
-            reader_text = read(ROOT / fs_readers[fmt][0])
-            history = "yes" if re.search(r"\bsuperseded\s*=\s*true|opts\.history", reader_text) else "no"
         else:
             history = "no (no reader)"
         mount = mounts.get(fmt) or ("mtd (comment)" if fmt in mtd else "-")
