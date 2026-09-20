@@ -19,8 +19,11 @@ only (for `Finding`/`Signature`), never on each other. Recursion across
 layers is orchestrated in `discovery/Recurse` (`analyze()`), which takes
 readers through the `AnalyzeOptions::open_reader` callback rather than
 linking the reader libraries. It descends into every extracted file that is
-itself an image, bounded by `Limits::max_depth`; recognised containers are
-carved but not opened, because no `container::ContainerReader` is registered.
+itself an image and opens every container that has a registered reader,
+bounded by `Limits::max_depth`, so chains such as
+`boot.img -> ramdisk -> gzip -> cpio -> rootfs` resolve to the end. Container
+readers come through `AnalyzeOptions::open_container`, the twin of
+`open_reader`, for the same layering reason.
 
 Each layer is one static library built by `omnitrace_module()` in
 `cmake/Warnings.cmake`, which globs `src/<layer>/**/*.cpp` and

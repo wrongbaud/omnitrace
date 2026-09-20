@@ -380,13 +380,21 @@ Two rules the code enforces that are easy to miss:
   byte order, so ids are stable across runs
   ([Recurse.cpp:3](../src/discovery/Recurse.cpp#L3)).
 
-`analyze_span()` is called recursively for extracted files (pass 9). The
-container payload is the remaining case: a Container node is recognised and
-carved but never opened, because no `container::ContainerReader` is registered,
-so each one produces an `unsupported` Coverage row and an `analyze-no-reader`
-diagnostic. The hand-off is the comment at the end of `analyze_span()`
-([Recurse.cpp:933](../src/discovery/Recurse.cpp#L933)); the extracted-file path
-already provides the depth accounting and the extent isolation it needs.
+`analyze_span()` is called recursively for extracted files (pass 9), and
+`process_container()` walks a Container node the same way
+`process_filesystem()` walks a Filesystem one, into
+`containers/<node-id>/files`. Its output goes through the same
+`add_file_nodes` + `descend_all` pair, so a payload that is itself an image is
+followed without any extra machinery. A container whose format has no
+registered reader is still an `unsupported` Coverage row and an
+`analyze-no-reader` diagnostic, never a silent node.
+
+Two guards keep that from turning a false positive into work. A compressed
+finding with no extent, and any finding whose validator marked it
+`extent: unknown`, are not handed to a reader at all: the validator's probe is
+the reader's parse, so the second attempt can only fail the same way and drag
+the format's coverage row to `partial`. And `descend_into_file` only descends
+into a Container when `open_container` actually yields a reader for it.
 
 ### The Node graph for router.bin
 
@@ -433,8 +441,12 @@ The reader holds a `const Limits*` for the walk in progress
 reads a `Limits` field, never a constant.
 
 `ContainerReader` ([Container.h:40](../include/omnitrace/containers/Container.h#L40))
-has the identical shape for archives and wrappers; no container reader is
-registered yet.
+has the identical shape for archives and wrappers. Nine formats are registered
+across five readers in `src/containers/`: `StreamReader` (gzip, xz, lzma, one
+payload each), `TarReader`, `CpioReader`, `ZipReader`, `UImageReader` and
+`AndroidBootReader` (boot and vendor boot). `src/containers/common.h` holds
+`emit_span_file`, which streams a byte range into the Sink 1 MiB at a time so
+no reader ever holds a member whole unless its codec forces it to.
 
 ## 7. Output
 

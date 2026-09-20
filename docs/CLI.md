@@ -145,18 +145,19 @@ Node     Kind        Offset    Size       Format    Tier        Name          De
 -------  ----------  --------  ---------  --------  ----------  ------------  ------------------------
 n000001  image       0x0       16.0 MiB   raw       verified    router.bin
 n000002  region      0x0       320.0 KiB  -         reject      unidentified
-n000003  container   0x50000   1.5 MiB    uimage    verified    MIPS Linux    compression=lzma type=kernel
-n000004  filesystem  0x1c9245  10.6 MiB   squashfs  consistent  squashfs      entries=1379 files=1005 compression=xz
-n001384  filesystem  0xc60000  3.6 MiB    jffs2     verified    jffs2
-n001385  region      0xff000c  64.0 KiB   -         reject      unidentified  fill=0xff
+n000003  container   0x50000   1.5 MiB    uimage    verified    MIPS OpenWrt Linux-4.14.63  entries=1 files=1 compression=lzma type=kernel
+n000005  filesystem  0x1c9245  10.5 MiB   squashfs  consistent  squashfs                    entries=3383 files=2716 compression=xz
+n003389  region      0xc54245  47.4 KiB   -         reject      unidentified
+n003390  filesystem  0xc60000  3.6 MiB    jffs2     verified    jffs2                       entries=82 files=37 compression=lzma
+n003473  region      0xff000c  64.0 KiB   -         reject      unidentified                fill=0xff
 
-1385 node(s): 0 partition(s), 1 container(s), 2 filesystem(s), 1379 file(s), 2 region(s)
+3473 node(s): 0 partition(s), 1 container(s), 2 filesystem(s), 3466 file(s), 3 region(s)
 carved: partitions/0x00050000-uimage.bin (1.5 MiB, sha256 477f0b...)
 carved: partitions/0x001c9245-squashfs.bin (10.5 MiB, sha256 cd8103...)
 carved: partitions/0x00c60000-jffs2.bin (3.6 MiB, sha256 335b5a...)
-coverage: uimage unsupported - no container reader registered
+coverage: uimage supported
 coverage: squashfs supported
-coverage: jffs2 unsupported - no reader registered
+coverage: jffs2 supported
 coverage: carve supported
 case directory: case-router (corpus layout)
 ```
