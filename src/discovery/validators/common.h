@@ -197,6 +197,7 @@ inline std::uint64_t compressed_stream_length(Finding& f, const Span& span, std:
         diag(f, Severity::Info, "compressed-stream-unmeasured",
              "the " + f.format + " stream does not decode to an end (" + st.error +
                  "); its extent is unknown and it claims no bytes");
+        f.attrs["extent"] = "unknown";
         return 0;
     }
     f.attrs["payload_bytes"] = dec(produced);

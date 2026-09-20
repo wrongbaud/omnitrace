@@ -53,6 +53,7 @@ src/discovery/validators/android_boot.cpp:
   bootconfig_size: vendor boot v4 bootconfig section size
   cmdline: kernel command line (control bytes replaced by _, extra_cmdline appended)
   dtb_size: DTB section size (boot v2, vendor boot)
+  extent: unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it
   header_size: header size field (v2+)
   header_version: boot image header version 0-4
   id: 32-byte image id as hex
@@ -83,6 +84,18 @@ src/discovery/validators/android_sparse.cpp:
   raw_chunks: number of raw chunks
   total_blocks: total_blks from the header
   total_chunks: total_chunks from the header
+
+src/discovery/validators/cpio.cpp:
+  data_bytes: total bytes of member data the archive holds
+  entries: members counted before the TRAILER!!! member
+  extent: unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it
+  variant: newc | crc | odc, the header flavour
+
+src/discovery/validators/tar.cpp:
+  data_bytes: total bytes of member data the archive holds
+  entries: members counted before the end-of-archive block (extended headers are not counted)
+  extent: unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it
+  variant: ustar | gnu | pax, the header flavour
 
 src/discovery/validators/cramfs.cpp:
   blocks: fsid.blocks (v2)

@@ -166,6 +166,8 @@ references = ["https://www.qnx.com/developers/docs/7.1/#com.qnx.doc.neutrino.bui
 name = "cpio-newc"
 format = "cpio"
 category = "container"
+validator = "cpio"
+max_entries = 200000
 magic = "070701"
 description = "cpio archive, SVR4 'newc' ASCII header"
 references = ["https://www.kernel.org/doc/html/latest/driver-api/early-userspace/buffer-format.html"]
@@ -174,6 +176,8 @@ references = ["https://www.kernel.org/doc/html/latest/driver-api/early-userspace
 name = "cpio-crc"
 format = "cpio"
 category = "container"
+validator = "cpio"
+max_entries = 200000
 magic = "070702"
 description = "cpio archive, SVR4 ASCII header with CRC"
 
@@ -181,6 +185,8 @@ description = "cpio archive, SVR4 ASCII header with CRC"
 name = "cpio-odc"
 format = "cpio"
 category = "container"
+validator = "cpio"
+max_entries = 200000
 magic = "070707"
 description = "cpio archive, POSIX 'odc' ASCII header"
 
@@ -190,6 +196,8 @@ format = "tar"
 category = "container"
 magic = "ustar"
 magic_offset = 257
+validator = "tar"
+max_entries = 200000
 description = "POSIX ustar / GNU tar header (magic at 257 into the 512-byte header)"
 references = ["https://www.gnu.org/software/tar/manual/html_node/Standard.html"]
 

@@ -671,20 +671,46 @@ void process_container(Ctx& c, const Span& span, const Finding& f, const std::st
         set_coverage(c, f.format, "unsupported", "no container reader registered");
         diags.push_back({Severity::Warning, "analyze-no-reader",
                          "no " + f.format + " container reader registered; payload not opened"});
-    } else if (f.category == "compressed" && f.size == 0) {
-        // A compressed stream the validator could not follow to an end has no
-        // extent, and the reader would run the same decode and fail the same
-        // way: the validator's probe *is* a decode (validators/common.h
-        // `compressed_stream_length`). Trying anyway turns a stray 1f 8b in
-        // binary data into an Error and drags the whole format's coverage row
-        // to "partial" while real streams elsewhere decoded fine. The node
-        // keeps its "compressed-stream-unmeasured" note, which says as much,
-        // and coverage stays silent because nothing was attempted.
+    } else if (attr_or(f.attrs, "extent", "") == "unknown" ||
+               (f.category == "compressed" && f.size == 0)) {
+        // Two ways of knowing the reader has nothing to do.
+        //
+        // The validator walked this structure and could not find its end: a
+        // deflate stream that does not decode, a tar with no end-of-archive
+        // block, a cpio with no trailer, a boot header with an impossible
+        // version. It says so with `extent: unknown`. The reader would repeat
+        // exactly that work and fail the same way, because the validator's
+        // probe *is* the reader's parse.
+        //
+        // Or a compressed-stream validator rejected the header before it got
+        // as far as probing -- a gzip whose OS byte is not a defined value,
+        // an xz whose flags CRC is wrong. Those leave the finding at Magic
+        // with no extent and no marker, and they are the common case: a
+        // speech-data blob in the corpus holds thousands of byte runs that
+        // start 1f 8b 08. No extent on a compressed finding means no stream,
+        // whichever way the validator reached that conclusion.
+        //
+        // Trying anyway is not free. On the QNX corpus 91 "ustar" strings sit
+        // inside binary data; opening each one produced an empty walk and
+        // dragged the whole format's coverage row to "partial" while real
+        // archives elsewhere read fine. The node keeps the validator's note
+        // ("tar-no-end-marker" and friends), which says what happened, and
+        // coverage stays silent because nothing was attempted.
+        //
+        // Formats whose validator does not size at all (zip, 7z: magic only)
+        // never set the attr, so a reader for them still gets its chance.
     } else {
-        // A compressed stream usually has no extent yet (the validator cannot
-        // know where a deflate stream ends), so the Span runs to the end of
-        // the parent and the reader stops where the stream does.
-        const Span c_span = f.size != 0 ? span.sub(f.offset, f.size) : span.sub(f.offset);
+        // A compressed stream is always opened on the rest of the parent, even
+        // when the validator measured it: its decoder is what finds the end,
+        // and it is the same decode the validator's probe ran. Clamping to the
+        // measured size can only disagree with it, and on the QNX corpus 17
+        // streams did -- a member whose measured length was an underestimate
+        // got a short window and failed with "decompress-corrupt" after the
+        // validator had read it fine. Everything else is given exactly the
+        // extent its validator claimed.
+        const Span c_span = (f.size != 0 && f.category != "compressed")
+                                ? span.sub(f.offset, f.size)
+                                : span.sub(f.offset);
         if (Status st = reader->open(c_span); !st) {
             set_coverage(c, f.format, "partial",
                          "open failed at " + hex(span.absolute(f.offset)) + ": " + st.error);

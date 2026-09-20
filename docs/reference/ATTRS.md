@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-461 keys across 28 source files.
+470 keys across 30 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -24,71 +24,72 @@ Source: `src/discovery/Recurse.cpp` (39 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `backup_header` | `src/discovery/Recurse.cpp:917` | ok or crc-mismatch: state of the GPT backup header folded into this primary table node |
-| `backup_lba` | `src/discovery/Recurse.cpp:914` | LBA of the folded GPT backup header (my_lba of the backup) |
-| `backup_offset` | `src/discovery/Recurse.cpp:915` | image offset (hex) of the folded GPT backup header |
+| `backup_header` | `src/discovery/Recurse.cpp:943` | ok or crc-mismatch: state of the GPT backup header folded into this primary table node |
+| `backup_lba` | `src/discovery/Recurse.cpp:940` | LBA of the folded GPT backup header (my_lba of the backup) |
+| `backup_offset` | `src/discovery/Recurse.cpp:941` | image offset (hex) of the folded GPT backup header |
 | `block_size` | `src/discovery/Recurse.cpp:586` | block size reported by the filesystem reader (FilesystemInfo::block_size) |
 | `boot` | `src/discovery/Recurse.cpp:293` | true on an MBR entry with the 0x80 active flag |
 | `bytes` | `src/discovery/Recurse.cpp:621` | bytes the reader emitted for this filesystem (WalkResult::bytes) |
-| `carve_skipped` | `src/discovery/Recurse.cpp:1233` | max-carve-bytes when the node was not carved because it exceeds --max-carve-bytes |
-| `carved_in` | `src/discovery/Recurse.cpp:1214` | partitions/<file> that already contains this find (it starts at the partition's first byte) |
-| `carved_path` | `src/discovery/Recurse.cpp:1245` | partitions/<file> holding exactly location.offset .. offset+length; node digests are that file's |
+| `carve_skipped` | `src/discovery/Recurse.cpp:1259` | max-carve-bytes when the node was not carved because it exceeds --max-carve-bytes |
+| `carved_in` | `src/discovery/Recurse.cpp:1240` | partitions/<file> that already contains this find (it starts at the partition's first byte) |
+| `carved_path` | `src/discovery/Recurse.cpp:1271` | partitions/<file> holding exactly location.offset .. offset+length; node digests are that file's |
 | `category` | `src/discovery/Recurse.cpp:224` | signature category of the finding (filesystem, container, compressed, partition-table, kernel, bootloader, crypto, other) |
-| `claimed_size` | `src/discovery/Recurse.cpp:995` | the entry's original size when it ran past the end of the data (partition-truncated) |
+| `claimed_size` | `src/discovery/Recurse.cpp:1021` | the entry's original size when it ran past the end of the data (partition-truncated) |
 | `compression` | `src/discovery/Recurse.cpp:587` | compression reported by the filesystem reader (FilesystemInfo::compression) |
 | `deleted` | `src/discovery/Recurse.cpp:624` | deletion records emitted with --history (WalkResult::deleted) |
 | `dirs` | `src/discovery/Recurse.cpp:618` | directory entries emitted (WalkResult::dirs) |
 | `entries` | `src/discovery/Recurse.cpp:616` | total entries emitted (WalkResult::entries) |
-| `evidence` | `src/discovery/Recurse.cpp:1484` | id of the Evidence row (e1) on the Image node |
+| `evidence` | `src/discovery/Recurse.cpp:1510` | id of the Evidence row (e1) on the Image node |
 | `files` | `src/discovery/Recurse.cpp:617` | regular-file entries emitted (WalkResult::files) |
-| `fill` | `src/discovery/Recurse.cpp:790` | 0xff / 0x00 (or 0x..) when every byte of an unidentified region is that value: erased flash or padding |
+| `fill` | `src/discovery/Recurse.cpp:816` | 0xff / 0x00 (or 0x..) when every byte of an unidentified region is that value: erased flash or padding |
 | `gpt_attributes` | `src/discovery/Recurse.cpp:290` | GPT attribute bits of the entry, when non-zero |
-| `index` | `src/discovery/Recurse.cpp:971` | pN, the slot number of a partition entry (MBR logicals count from p5) |
+| `index` | `src/discovery/Recurse.cpp:997` | pN, the slot number of a partition entry (MBR logicals count from p5) |
 | `label` | `src/discovery/Recurse.cpp:285` | GPT partition name (sanitized UTF-8) or the volume label a filesystem reader reports |
 | `logical` | `src/discovery/Recurse.cpp:293` | true on an MBR entry that came from the EBR chain |
-| `nested` | `src/discovery/Recurse.cpp:889` | true on a partition-table node found inside another table's entry; its entries were not expanded |
+| `nested` | `src/discovery/Recurse.cpp:915` | true on a partition-table node found inside another table's entry; its entries were not expanded |
 | `nested_image` | `src/discovery/Recurse.cpp:533` | true on a File node whose extracted bytes were re-scanned and hold a filesystem or partition table at structural or better and at least min_region_bytes long; the finds are its children |
 | `others` | `src/discovery/Recurse.cpp:620` | device, fifo, socket and unknown entries emitted (WalkResult::others) |
-| `protective` | `src/discovery/Recurse.cpp:978` | true on an MBR 0xEE entry that only guards a GPT |
-| `role` | `src/discovery/Recurse.cpp:887` | table on the node that represents a partition table itself |
+| `protective` | `src/discovery/Recurse.cpp:1004` | true on an MBR 0xEE entry that only guards a GPT |
+| `role` | `src/discovery/Recurse.cpp:913` | table on the node that represents a partition table itself |
 | `signature` | `src/discovery/Recurse.cpp:223` | name of the signature that produced the finding (Signature::name) |
 | `superseded` | `src/discovery/Recurse.cpp:623` | superseded versions emitted with --history (WalkResult::superseded) |
 | `symlinks` | `src/discovery/Recurse.cpp:619` | symlink entries emitted (WalkResult::symlinks) |
-| `table` | `src/discovery/Recurse.cpp:888` | mbr-primary \| gpt-primary \| gpt-backup: which table a partition node came from |
+| `table` | `src/discovery/Recurse.cpp:914` | mbr-primary \| gpt-primary \| gpt-backup: which table a partition node came from |
 | `truncated` | `src/discovery/Recurse.cpp:465` | true when a limit stopped the walk, a carve was short, or a file entry is partial |
 | `type` | `src/discovery/Recurse.cpp:269` | MBR type byte (0x83) or GPT type GUID of a partition entry |
 | `type_byte` | `src/discovery/Recurse.cpp:273` | the MBR type byte again, under the format-specific key |
 | `type_guid` | `src/discovery/Recurse.cpp:271` | the GPT type GUID again, under the format-specific key |
 | `unique_guid` | `src/discovery/Recurse.cpp:281` | GPT unique partition GUID |
-| `word_swap` | `src/discovery/Recurse.cpp:1506` | swap16 or swap32 on the Image node when the dump was byte-reversed per word |
-| `word_swap_confidence` | `src/discovery/Recurse.cpp:1507` | detector score (0-100) behind word_swap |
+| `word_swap` | `src/discovery/Recurse.cpp:1532` | swap16 or swap32 on the Image node when the dump was byte-reversed per word |
+| `word_swap_confidence` | `src/discovery/Recurse.cpp:1533` | detector score (0-100) behind word_swap |
 | `written` | `src/discovery/Recurse.cpp:468` | false on a regular-file node that was not written to disk (extraction on, but the Sink skipped it) |
 
 ## validator `android-boot`
 
-Source: `src/discovery/validators/android_boot.cpp` (21 keys)
+Source: `src/discovery/validators/android_boot.cpp` (22 keys)
 
 | key | first set at | meaning |
 |---|---|---|
 | `bootconfig_size` | `src/discovery/validators/android_boot.cpp:90` | vendor boot v4 bootconfig section size |
 | `cmdline` | `src/discovery/validators/android_boot.cpp:82` | kernel command line (control bytes replaced by _, extra_cmdline appended) |
 | `dtb_size` | `src/discovery/validators/android_boot.cpp:79` | DTB section size (boot v2, vendor boot) |
+| `extent` | `src/discovery/validators/android_boot.cpp:125` | unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it |
 | `header_size` | `src/discovery/validators/android_boot.cpp:80` | header size field (v2+) |
 | `header_version` | `src/discovery/validators/android_boot.cpp:76` | boot image header version 0-4 |
-| `id` | `src/discovery/validators/android_boot.cpp:179` | 32-byte image id as hex |
-| `kernel_addr` | `src/discovery/validators/android_boot.cpp:173` | kernel load address (v0-2) |
-| `kernel_size` | `src/discovery/validators/android_boot.cpp:199` | kernel section size |
+| `id` | `src/discovery/validators/android_boot.cpp:180` | 32-byte image id as hex |
+| `kernel_addr` | `src/discovery/validators/android_boot.cpp:174` | kernel load address (v0-2) |
+| `kernel_size` | `src/discovery/validators/android_boot.cpp:200` | kernel section size |
 | `name` | `src/discovery/validators/android_boot.cpp:81` | product name field |
 | `os_patch_level` | `src/discovery/validators/android_boot.cpp:54` | OS patch level decoded from os_version |
 | `os_version` | `src/discovery/validators/android_boot.cpp:53` | OS version decoded from os_version |
 | `page_size` | `src/discovery/validators/android_boot.cpp:77` | page size sections are aligned to |
-| `ramdisk_addr` | `src/discovery/validators/android_boot.cpp:174` | ramdisk load address (v0-2) |
-| `ramdisk_size` | `src/discovery/validators/android_boot.cpp:200` | ramdisk section size |
-| `recovery_dtbo_size` | `src/discovery/validators/android_boot.cpp:187` | recovery DTBO section size (v1-2) |
-| `second_addr` | `src/discovery/validators/android_boot.cpp:175` | second-stage load address (v0-2) |
-| `second_size` | `src/discovery/validators/android_boot.cpp:172` | second-stage section size (v0-2) |
-| `signature_size` | `src/discovery/validators/android_boot.cpp:147` | boot signature size (v4) |
-| `tags_addr` | `src/discovery/validators/android_boot.cpp:176` | kernel tags address (v0-2) |
+| `ramdisk_addr` | `src/discovery/validators/android_boot.cpp:175` | ramdisk load address (v0-2) |
+| `ramdisk_size` | `src/discovery/validators/android_boot.cpp:201` | ramdisk section size |
+| `recovery_dtbo_size` | `src/discovery/validators/android_boot.cpp:188` | recovery DTBO section size (v1-2) |
+| `second_addr` | `src/discovery/validators/android_boot.cpp:176` | second-stage load address (v0-2) |
+| `second_size` | `src/discovery/validators/android_boot.cpp:173` | second-stage section size (v0-2) |
+| `signature_size` | `src/discovery/validators/android_boot.cpp:148` | boot signature size (v4) |
+| `tags_addr` | `src/discovery/validators/android_boot.cpp:177` | kernel tags address (v0-2) |
 | `vendor_ramdisk_size` | `src/discovery/validators/android_boot.cpp:78` | vendor ramdisk section size (vendor boot) |
 | `vendor_ramdisk_table_size` | `src/discovery/validators/android_boot.cpp:89` | vendor ramdisk table size (vendor boot v4) |
 
@@ -108,6 +109,17 @@ Source: `src/discovery/validators/android_sparse.cpp` (10 keys)
 | `raw_chunks` | `src/discovery/validators/android_sparse.cpp:110` | number of raw chunks |
 | `total_blocks` | `src/discovery/validators/android_sparse.cpp:46` | total_blks from the header |
 | `total_chunks` | `src/discovery/validators/android_sparse.cpp:47` | total_chunks from the header |
+
+## validator `cpio`
+
+Source: `src/discovery/validators/cpio.cpp` (4 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `data_bytes` | `src/discovery/validators/cpio.cpp:125` | total bytes of member data the archive holds |
+| `entries` | `src/discovery/validators/cpio.cpp:124` | members counted before the TRAILER!!! member |
+| `extent` | `src/discovery/validators/cpio.cpp:131` | unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it |
+| `variant` | `src/discovery/validators/cpio.cpp:61` | newc \| crc \| odc, the header flavour |
 
 ## validator `cramfs`
 
@@ -402,6 +414,17 @@ Source: `src/discovery/validators/squashfs.cpp` (10 keys)
 | `inodes` | `src/discovery/validators/squashfs.cpp:89` | inode count |
 | `mkfs_time` | `src/discovery/validators/squashfs.cpp:91` | mkfs_time (epoch seconds) |
 | `version` | `src/discovery/validators/squashfs.cpp:78` | major.minor |
+
+## validator `tar`
+
+Source: `src/discovery/validators/tar.cpp` (4 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `data_bytes` | `src/discovery/validators/tar.cpp:154` | total bytes of member data the archive holds |
+| `entries` | `src/discovery/validators/tar.cpp:153` | members counted before the end-of-archive block (extended headers are not counted) |
+| `extent` | `src/discovery/validators/tar.cpp:161` | unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it |
+| `variant` | `src/discovery/validators/tar.cpp:89` | ustar \| gnu \| pax, the header flavour |
 
 ## validator `ubi`
 

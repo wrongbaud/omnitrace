@@ -12,11 +12,19 @@ namespace omnitrace::container {
 
 namespace detail {
 void omnitrace_container_anchor_stream();
+void omnitrace_container_anchor_uimage();
+void omnitrace_container_anchor_androidboot();
+void omnitrace_container_anchor_cpio();
+void omnitrace_container_anchor_tar();
 
 void link_builtin_containers() {
     // Calling each (empty) anchor is enough to make the linker keep its object
     // file and therefore its registrar. Add a line here per reader.
     omnitrace_container_anchor_stream();
+    omnitrace_container_anchor_uimage();
+    omnitrace_container_anchor_androidboot();
+    omnitrace_container_anchor_cpio();
+    omnitrace_container_anchor_tar();
 }
 }  // namespace detail
 

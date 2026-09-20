@@ -117,6 +117,10 @@ container-not-open:
   meaning: walk() was called before a successful open() (caller bug)
   action: contributor error; analyze() never produces this
 
+container-section-truncated:
+  meaning: a section of a wrapper image (uImage payload, boot image kernel or ramdisk) is shorter than its header claims
+  action: the dump or partition is short; what was present is still extracted and marked truncated
+
 container-sink-error:
   meaning: the Sink refused the container payload (unsafe path or its own limit)
   action: see the sink-* code quoted in the message
@@ -124,6 +128,22 @@ container-sink-error:
 container-unreadable:
   meaning: the container's bytes could not be read out of the Source
   action: the image is truncated or the underlying file became unreadable mid-run
+
+cpio-bad-header:
+  meaning: a cpio member header is not readable, so the walk stops there
+  action: the archive is damaged or the magic was a false positive; members before this one are still extracted
+
+cpio-limit-entries:
+  meaning: Limits::max_nodes_per_fs was reached inside a cpio archive
+  action: re-run with a larger cap if the remaining members matter
+
+cpio-no-trailer:
+  meaning: no TRAILER!!! member was reached, so the archive has no extent and claims no bytes
+  action: informational; a stray 070701 in other data looks like this, and so does a truncated archive
+
+cpio-truncated:
+  meaning: a cpio member or the archive itself runs past the available data
+  action: the dump is short; entries before the cut are still extracted
 
 cramfs-bad-size:
   meaning: the superblock size or file count is out of range
@@ -1005,6 +1025,30 @@ squashfs-unsupported-version:
   meaning: the major version is not 4
   action: SquashFS 1-3; use an old unsquashfs
 
+tar-bad-header:
+  meaning: a tar member header is not readable, so the walk stops there
+  action: the archive is damaged or the ustar magic was a false positive; earlier members are still extracted
+
+tar-bad-pax-record:
+  meaning: a pax extended header record is malformed; the rest of that record block is ignored
+  action: the member keeps its ustar name and size, which is usually still correct
+
+tar-checksum-mismatch:
+  meaning: a tar member header does not match its own checksum
+  action: the magic is probably a false positive inside other data; nothing before it is affected
+
+tar-limit-entries:
+  meaning: Limits::max_nodes_per_fs or the signature's max_entries was reached inside a tar archive
+  action: re-run with a larger cap if the remaining members matter
+
+tar-no-end-marker:
+  meaning: no end-of-archive block was reached, so the archive has no extent and claims no bytes
+  action: informational; a stray ustar magic in other data looks like this, and so does a truncated archive
+
+tar-truncated:
+  meaning: a tar member or the archive itself runs past the available data
+  action: the dump is short; entries before the cut are still extracted
+
 ubi-ec-crc-mismatch:
   meaning: the erase-counter header CRC does not match; size unknown
   action: a corrupt first PEB; try the next PEB or ubireader
@@ -1036,6 +1080,10 @@ ubifs-crc-mismatch:
 ubifs-truncated:
   meaning: leb_size * leb_cnt extends past the data; inside UBI the LEBs are not contiguous anyway
   action: informational for a UBI-embedded volume; a short dump otherwise
+
+uimage-bad-multi-table:
+  meaning: the size table of a multi-file or script uImage is unterminated or implausibly long
+  action: the payload is emitted whole instead of split; carve the node and inspect it
 
 uimage-data-crc-mismatch:
   meaning: the payload CRC32 does not match ih_dcrc

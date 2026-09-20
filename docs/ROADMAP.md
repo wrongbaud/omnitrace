@@ -15,10 +15,11 @@ treats it. It is generated from `signatures/*.toml`, the validators and the
 reader registries by `scripts/gen_docs.py` and checked by `scripts/check_docs.py`,
 so it cannot drift from the code the way a table written here would.
 
-Today that is 50 signatures over 35 format ids, 23 validators, 7 filesystem
-readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and 2
-container readers (`gzip`, `xz`, one `StreamReader` serving both).
-`--history` is recovered by the ext, JFFS2 and QNX6 readers.
+Today that is 50 signatures over 35 format ids, 25 validators, 7 filesystem
+readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and 7
+container readers: `gzip` and `xz` (one `StreamReader`), `tar`, `cpio`,
+`uimage`, `android-boot` and `android-vendor-boot`. `--history` is recovered
+by the ext, JFFS2 and QNX6 readers.
 
 Nested analysis runs for extracted files: every file a walk writes to the host
 is re-scanned, and one holding a filesystem or a partition table at Structural
@@ -41,30 +42,35 @@ and analysed through a `SwappedSource` view; the Image node gets
 
 ## Next, in order
 
-Items 1-3 of the original list (the ext4, JFFS2, QNX6 and QNX IFS readers) and
-the extracted-file half of item 4 are done; see the section above.
+Items 1-4 of the original list are done: the ext4, JFFS2, QNX6 and QNX IFS
+readers, and both halves of the container work (readers plus the payload
+recursion). See the section above.
 
-1. **More container readers**, now that the plumbing exists
-   (`process_container` in `src/discovery/Recurse.cpp`, `StreamReader` as the
-   worked example, `tests/unit/containers/stream_test.cpp` as the test shape).
-   In rough order of value: `tar` and `cpio` (archives, many entries each),
-   `fit` and `uimage` (multi-image wrappers; the FDT parser to reuse is in
-   `src/discovery/validators/fit.cpp` and would move to `src/core/`), `lz4` and
-   `zstd` (the last two single-payload streams, which also need their
+1. **The remaining container readers.** `zip` (needs a sizing validator from
+   the end-of-central-directory record first), `fit` (the FDT parser to reuse
+   is in `src/discovery/validators/fit.cpp` and would move to `src/core/`),
+   `ubi`, `android-sparse`, and `lz4` / `zstd` (which also need their
    validators to measure the extent the way gzip and xz now do).
-2. **UBIFS and YAFFS2 readers**, both with history (UBIFS sqnum order, YAFFS2
+   `src/containers/` holds five worked examples and
+   `tests/unit/containers/` the test shapes.
+2. **Signatures for the streams that have none**: LZMA-alone (`5d 00 00`),
+   bzip2 (`BZh`) and LZO. A uImage payload is usually lzma, so today the
+   chain uImage -> kernel stops at the payload file; `StreamReader` already
+   has `Codec::Lzma` and would need only the signature and a sizing
+   validator.
+3. **UBIFS and YAFFS2 readers**, both with history (UBIFS sqnum order, YAFFS2
    sequence numbers); fixtures `ubifs.img`, `ubi.img`, `yaffs2.img`,
    `yaffs2-yaffsecc.img` exist.
-3. **Sizing validators for zip, lz4 and zstd**, so they claim their bytes and
+4. **Sizing validators for zip, lz4 and zstd**, so they claim their bytes and
    parent nested finds correctly. gzip and xz now do this through
    `compressed_stream_length` in `src/discovery/validators/common.h`; the QNX
    magics were sized when their validators landed.
-4. **Write the corrected view of a word-swapped image** into the case directory
+5. **Write the corrected view of a word-swapped image** into the case directory
    (today only the detection is recorded; `src/discovery/Recurse.cpp`
    `ImageViewHook` is the extension point).
-5. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
+6. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
    `omnitrace report`. `DEVELOPMENT_PLAN.md` §5.4 to §7.
-6. **Phase 4**: web UI, only after the CLI and library are released (decision
+7. **Phase 4**: web UI, only after the CLI and library are released (decision
    `core-before-ui`).
 
 ## Good first improvements

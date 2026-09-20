@@ -122,6 +122,7 @@ std::optional<Finding> validate_android_boot(const Span& span, std::uint64_t sta
         // "ANDROID!" also appears as a string literal in bootloaders.
         diag(f, Severity::Warning, "android-boot-bad-header",
              "header_version " + dec(*hv) + " is not 0..4");
+        f.attrs["extent"] = "unknown";
         return f;
     }
     f.attrs["header_version"] = dec(*hv);

@@ -32,14 +32,14 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `squashfs` | filesystem | validated to consistent (`squashfs`) | yes | yes (`src/filesystems/squashfs/SquashfsReader.cpp:1375`) | no | `squashfs` | [squashfs.md](../formats/squashfs.md) | signatures: `squashfs-le`, `squashfs-be`, `squashfs-vendor-shsq`, `squashfs-vendor-qshs` |
 | `ubifs` | filesystem | validated to verified (`ubifs`) | yes | no | no (no reader) | mtd (comment) | [ubifs.md](../formats/ubifs.md) | aligned hits only (`min_io_size` or 512); inside UBI the size is not meaningful; signatures: `ubifs` |
 | `7z` | container | magic-only | no | no | n.a. | - | [signatures.md](../formats/signatures.md) (plain magic) | signatures: `7z` |
-| `android-boot` | container | validated to consistent (`android-boot`) | yes | no | n.a. | - | [android-boot.md](../formats/android-boot.md) | size is the sum of page-aligned sections, header v0-v4; signatures: `android-boot` |
+| `android-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:197`) | n.a. | - | [android-boot.md](../formats/android-boot.md) | size is the sum of page-aligned sections, header v0-v4; signatures: `android-boot` |
 | `android-sparse` | container | validated to consistent (`android-sparse`) | yes | no | n.a. | - | [android-sparse.md](../formats/android-sparse.md) | size is the chunk walk; no reader expands the image yet; signatures: `android-sparse` |
-| `android-vendor-boot` | container | validated to consistent (`android-boot`) | yes | no | n.a. | - | [android-boot.md](../formats/android-boot.md) | signatures: `android-vendor-boot` |
-| `cpio` | container | magic-only | no | no | n.a. | - | [signatures.md](../formats/signatures.md) (plain magic) | signatures: `cpio-newc`, `cpio-crc`, `cpio-odc` |
+| `android-vendor-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:198`) | n.a. | - | [android-boot.md](../formats/android-boot.md) | signatures: `android-vendor-boot` |
+| `cpio` | container | validated to consistent (`cpio`) | yes | yes (`src/containers/cpio/CpioReader.cpp:295`) | n.a. | - | [cpio.md](../formats/cpio.md) | signatures: `cpio-newc`, `cpio-crc`, `cpio-odc` |
 | `fit` | container | validated to verified (`fit`) | yes | no | n.a. | - | [fit.md](../formats/fit.md) | signatures: `fit` |
-| `tar` | container | magic-only | no | no | n.a. | - | [signatures.md](../formats/signatures.md) (plain magic) | signatures: `tar-ustar` |
+| `tar` | container | validated to verified (`tar`) | yes | yes (`src/containers/tar/TarReader.cpp:342`) | n.a. | - | [tar.md](../formats/tar.md) | signatures: `tar-ustar` |
 | `ubi` | container | validated to verified (`ubi`) | yes | no | n.a. | - | [ubi.md](../formats/ubi.md) | size known only when a second EC header fixes the PEB size (`ubi-single-peb` otherwise); signatures: `ubi` |
-| `uimage` | container | validated to verified (`uimage`) | yes | no | n.a. | - | [uimage.md](../formats/uimage.md) | may re-categorise as kernel; kernel and kernel_noload types are re-categorised as `kernel`; signatures: `uimage` |
+| `uimage` | container | validated to verified (`uimage`) | yes | yes (`src/containers/uimage/UImageReader.cpp:199`) | n.a. | - | [uimage.md](../formats/uimage.md) | may re-categorise as kernel; kernel and kernel_noload types are re-categorised as `kernel`; signatures: `uimage` |
 | `zip` | container | magic-only | no | no | n.a. | - | [signatures.md](../formats/signatures.md) (plain magic) | signatures: `zip` |
 | `gzip` | compressed | validated to consistent (`gzip`) | yes | yes (`src/containers/stream/StreamReader.cpp:161`) | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `gzip` |
 | `lz4` | compressed | validated to structural (`lz4`) | no | no | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `lz4-frame` |
@@ -59,5 +59,5 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 ## Counts
 
 - 50 signatures over 35 format ids
-- 23 validators, 7 filesystem reader(s), 2 container reader(s)
+- 25 validators, 7 filesystem reader(s), 7 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

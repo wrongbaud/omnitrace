@@ -1,19 +1,16 @@
 # U-Boot legacy image (uImage)
 
 This page is for examiners who see a `uimage` node in `INFO.yaml` (usually
-the kernel of a router or camera) and for contributors who will write the
-container reader. After reading it you know what the header holds, why the
-finding is `verified` or only `consistent`, which attrs and diagnostics it
-emits, and what is not opened yet.
+the kernel of a router or camera). After reading it you know what the header
+holds, why the finding is `verified` or only `consistent`, what the reader
+writes out, and what is not decoded.
 
 `src/discovery/validators/uimage.cpp` (validator `uimage`), signature
 `uimage` in `signatures/core.toml` (magic `27 05 19 56`, big-endian, format
 `uimage`, category `container`). The FIT successor format has its own page
-(`docs/formats/fit.md`). There is no container reader: `analyze` makes a
-`container` node whatever the category (`kind_for`,
-`src/discovery/Recurse.cpp:194`), adds the `analyze-no-reader` warning and
-the coverage row `uimage / unsupported / "no container reader registered"`,
-and carves it (`0x00050000-uimage.bin` on the router image).
+(`docs/formats/fit.md`). Reader:
+`src/containers/uimage/UImageReader.{h,cpp}`, registered as `uimage`, tests
+`tests/unit/containers/archive_test.cpp`.
 
 ## On-disk layout
 
@@ -80,15 +77,32 @@ built 2021-07-13).
   `0x50000`, `verified`, `type=kernel`, `arch=mips`, `compression=lzma`,
   `name=MIPS OpenWrt Linux-4.14.63`, category `kernel`.
 
+## What the reader writes
+
+One entry, `payload`, holding the `ih_size` bytes after the header, streamed
+1 MiB at a time. The `multi` (`ih_type` 4) and `script` (6) types instead
+begin with a NUL-terminated table of big-endian `u32` sizes followed by the
+images back to back, each padded to 4 bytes; those become `image0`, `image1`,
+... A table that is unterminated or implausibly long is reported
+(`uimage-bad-multi-table`) and the payload is emitted whole rather than lost.
+
+`ContainerInfo`: `size` (`64 + ih_size`), `compression` from `ih_comp`, and
+attrs `type`, `data_size`, `image_name`.
+
+The payload is emitted **as stored**, still compressed. `ih_comp` says how it
+is packed, but decompressing here would duplicate the stream readers, and the
+analysis pass re-scans every file this writes: a gzip or xz payload is found
+and decoded one level down, so a SquashFS inside a gzipped `filesystem`-type
+uImage is reached without any special case. bzip2, lzma and lzo have no reader
+yet, so those payloads stay packed.
+
 ## Not yet supported
 
-* No container reader: the payload is not decompressed or handed back to the
-  scanner, so a filesystem wrapped in a `filesystem`-type uImage is only found
-  if its own magic is visible (it is not when the wrapper is compressed).
-* `multi` images (a NUL-terminated list of sizes before the parts) are not
-  split into their parts.
 * No decompression probe: `compression=lzma` is the header's claim, not a
-  verified stream.
+  verified stream, and there is no `lzma`/`bzip2`/`lzo` signature, so such a
+  payload is a file node with nothing under it.
+* `ih_dcrc` is verified by the validator but the reader does not re-check it
+  per emitted part of a `multi` image.
 
 ## References
 
