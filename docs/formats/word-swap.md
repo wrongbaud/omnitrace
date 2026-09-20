@@ -49,7 +49,9 @@ are scored:
 - strong hits are a fixed table of full magics: ELF `7f 45 4c 46`, uImage
   `27 05 19 56`, SquashFS `hsqs`/`sqsh`, JFFS2 `0x1985` with its node type
   (dirent, inode, cleanmarker; LE and BE), UBI `UBI#`, UBIFS `31 18 10 06`,
-  xz `fd 37 7a 58 5a 00`, zstd `28 b5 2f fd`, LZ4 frame `04 22 4d 18`, DTB
+  xz `fd 37 7a 58 5a 00`, zstd `28 b5 2f fd`, LZ4 frame `04 22 4d 18`, lzop
+  `89 4c 5a 4f 00 0d 0a 1a 0a`, the bzip2 block magic `31 41 59 26 53 59`, 7z
+  `37 7a bc af 27 1c`, zip `PK 03 04`, cpio-newc `070701`, DTB
   `d0 0d fe ed`, cramfs `45 3d cd 28`, romfs `-rom1fs-`, `ANDROID!`,
   `U-Boot`, `Linux version`, `-----BEGIN`, and the ARM NOP word `0xE1A00000`
   at 4-byte alignment;
@@ -93,6 +95,15 @@ bytes`, and on `None` it says which rule stopped the claim.
 On the corpus: `MX25L165D.bin` -> Swap32 at confidence 99; `router.bin`
 (uImage + SquashFS in the raw view) -> None by the veto; random bytes and
 erased (`0xFF`) flash -> None (all three views score alike).
+
+A format missing from the veto table is not a small omission. A bare `.bz2`
+of high-entropy data has no structure in any view, so the decision falls
+through to the text score, where a handful of accidental ASCII runs in the
+swap32 rendering beat the raw view's — and the whole file is then analysed
+swapped, its magic destroyed, and reported as one unidentified region.
+bzip2's own "BZh" is three bytes and level-dependent, so the entry is the
+48-bit block magic behind it, whose first copy is byte-aligned at offset 4.
+Anything with a strong magic that a reader can open belongs here.
 
 ## In the analysis driver (discovery/Recurse)
 

@@ -102,6 +102,14 @@ const std::vector<BytePattern>& byte_patterns() {
         {"ubi", {'U', 'B', 'I', '#'}, true, true},
         {"ubifs", {0x31, 0x18, 0x10, 0x06}, true, true},
         {"gzip", {0x1f, 0x8b, 0x08}, false, false},
+        // bzip2's "BZh" is three bytes and level-dependent; the 48-bit block
+        // magic behind it (pi, in BCD) is not, and the first block's copy is
+        // byte-aligned at offset 4. Without it a bare .bz2 of compressed
+        // noise scores as text in a swapped view and the whole file is lost.
+        {"bzip2-block", {0x31, 0x41, 0x59, 0x26, 0x53, 0x59}, true, true},
+        {"7z", {0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c}, true, true},
+        {"zip", {'P', 'K', 0x03, 0x04}, true, true},
+        {"cpio-newc", {'0', '7', '0', '7', '0', '1'}, true, true},
         {"xz", {0xfd, '7', 'z', 'X', 'Z', 0x00}, true, true},
         {"zstd", {0x28, 0xb5, 0x2f, 0xfd}, true, true},
         {"lz4-frame", {0x04, 0x22, 0x4d, 0x18}, true, true},
