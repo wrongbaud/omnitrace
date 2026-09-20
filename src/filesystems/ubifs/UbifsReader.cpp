@@ -747,6 +747,8 @@ void UbifsReader::Impl::emit_state(const std::string& path, std::uint32_t inum,
     w.out->entries_out.push_back(std::move(r));
 }
 
+namespace {
+
 // One historical entry, before its version number is known.
 struct Historical {
     std::string path;
@@ -756,6 +758,8 @@ struct Historical {
     bool superseded = false;
     std::map<std::string, std::string> extra;
 };
+
+}  // namespace
 
 void UbifsReader::Impl::emit_history(Walk& w) {
     sweep_for_nodes();

@@ -164,9 +164,13 @@ the object file (see `validators/anchors.h`).
 | qnx6 | qnx6-le, qnx6-be | verified (superblock CRC-32) | `data_start + num_blocks x blocksize` plus the trailing superblock; `alignment = 4096` ([qnx6.md](qnx6.md)) |
 | qnx-ifs | qnx-ifs | verified (image / compressed-area checksum) | stored size, or the walked compressed block chain ([qnx-ifs.md](qnx-ifs.md)) |
 
-Plain magics (no validator) in `core.toml`: cpio (newc/crc/odc), tar (ustar at
-257), zip, 7z, PEM certificate / key / CRL labels, OpenSSH and PGP keys.
-yaffs2 is deliberately absent until OOB-aware validation exists.
+Plain magics (no validator) in `core.toml`: 7z, PEM certificate / key / CRL
+labels, OpenSSH and PGP keys.
+
+`yaffs2` is the odd one: the format has no magic and no superblock at all, so
+its signature anchors on the object header of a directory whose parent is the
+root (`03 00 00 00 01 00 00 00 ff ff`) and the validator finds the chunk grid
+by making the tag checksums verify ([yaffs2.md](yaffs2.md)).
 
 `crypto.toml` holds the LUKS and dm-verity signatures. The FDT magic
 `0xd00dfeed` is claimed by two signatures: `fit-dtb` (validator `dtb`,

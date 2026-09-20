@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-504 keys across 34 source files.
+526 keys across 36 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -534,6 +534,24 @@ Source: `src/discovery/validators/xz.cpp` (1 keys)
 |---|---|---|
 | `check` | `src/discovery/validators/xz.cpp:42` | none, crc32, crc64 or sha256 |
 
+## validator `yaffs2`
+
+Source: `src/discovery/validators/yaffs2.cpp` (11 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `chunks` | `src/discovery/validators/yaffs2.cpp:109` | chunks the grid walk covered, trailing erased ones excluded |
+| `erased_chunks` | `src/discovery/validators/yaffs2.cpp:112` | chunks inside the image that were never written (absent when none) |
+| `object_headers` | `src/discovery/validators/yaffs2.cpp:111` | chunks that carry a yaffs_obj_hdr |
+| `page_size` | `src/discovery/validators/yaffs2.cpp:70` | bytes of NAND page, worked out from the image |
+| `seq_max` | `src/discovery/validators/yaffs2.cpp:115` | highest block sequence number seen |
+| `seq_min` | `src/discovery/validators/yaffs2.cpp:114` | lowest block sequence number seen |
+| `spare_layout` | `src/discovery/validators/yaffs2.cpp:73` | where the tags sit in the spare: "yaffs" (offset 0) or "linux-mtd" (offset 2) |
+| `spare_size` | `src/discovery/validators/yaffs2.cpp:71` | bytes of spare (out-of-band) area per page, worked out from the image |
+| `tags_offset` | `src/discovery/validators/yaffs2.cpp:72` | tags position inside the spare, in bytes |
+| `trailing_erased_chunks` | `src/discovery/validators/yaffs2.cpp:113` | erased chunks after the last written one, which the finding does not claim (absent when none) |
+| `used_chunks` | `src/discovery/validators/yaffs2.cpp:110` | chunks whose tags verify against their own checksum |
+
 ## validator `zip`
 
 Source: `src/discovery/validators/zip.cpp` (6 keys)
@@ -739,23 +757,41 @@ Source: `src/filesystems/ubifs/UbifsReader.cpp` (20 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `bad_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1029` | nodes that failed their CRC or could not be read (absent when none) |
-| `bud_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:1026` | journal bud erase blocks replayed |
-| `commit_no` | `src/filesystems/ubifs/UbifsReader.cpp:1019` | commit number of the master node the reader used |
-| `data_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1025` | distinct (inode, block) data nodes the index and journal name |
-| `dentries` | `src/filesystems/ubifs/UbifsReader.cpp:1024` | live directory entries after the journal replay |
-| `fanout` | `src/filesystems/ubifs/UbifsReader.cpp:1018` | index B-tree fanout from the superblock |
-| `fmt_version` | `src/filesystems/ubifs/UbifsReader.cpp:1010` | UBIFS format version |
-| `index_leaves` | `src/filesystems/ubifs/UbifsReader.cpp:1022` | leaf branches the index walk collected |
-| `index_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1021` | index nodes walked |
-| `index_size` | `src/filesystems/ubifs/UbifsReader.cpp:1020` | bytes of index the master node reports |
-| `inodes` | `src/filesystems/ubifs/UbifsReader.cpp:1023` | distinct inode nodes the index and journal name |
-| `journal_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1027` | nodes the journal replay applied on top of the index |
-| `leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:1015` | logical erase blocks the volume uses |
-| `leb_size` | `src/filesystems/ubifs/UbifsReader.cpp:1014` | usable bytes per logical erase block |
-| `log_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:1017` | erase blocks reserved for the log |
-| `max_leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:1016` | largest volume size the superblock allows, in erase blocks |
-| `min_io_size` | `src/filesystems/ubifs/UbifsReader.cpp:1013` | minimum I/O unit of the underlying flash |
-| `ro_compat_version` | `src/filesystems/ubifs/UbifsReader.cpp:1011` | read-only compatibility version |
-| `unlink_records` | `src/filesystems/ubifs/UbifsReader.cpp:1028` | directory entries pointing at inode 0, the record UBIFS writes on unlink (absent when none) |
-| `uuid` | `src/filesystems/ubifs/UbifsReader.cpp:1012` | filesystem UUID from the superblock |
+| `bad_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1033` | nodes that failed their CRC or could not be read (absent when none) |
+| `bud_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:1030` | journal bud erase blocks replayed |
+| `commit_no` | `src/filesystems/ubifs/UbifsReader.cpp:1023` | commit number of the master node the reader used |
+| `data_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1029` | distinct (inode, block) data nodes the index and journal name |
+| `dentries` | `src/filesystems/ubifs/UbifsReader.cpp:1028` | live directory entries after the journal replay |
+| `fanout` | `src/filesystems/ubifs/UbifsReader.cpp:1022` | index B-tree fanout from the superblock |
+| `fmt_version` | `src/filesystems/ubifs/UbifsReader.cpp:1014` | UBIFS format version |
+| `index_leaves` | `src/filesystems/ubifs/UbifsReader.cpp:1026` | leaf branches the index walk collected |
+| `index_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1025` | index nodes walked |
+| `index_size` | `src/filesystems/ubifs/UbifsReader.cpp:1024` | bytes of index the master node reports |
+| `inodes` | `src/filesystems/ubifs/UbifsReader.cpp:1027` | distinct inode nodes the index and journal name |
+| `journal_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1031` | nodes the journal replay applied on top of the index |
+| `leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:1019` | logical erase blocks the volume uses |
+| `leb_size` | `src/filesystems/ubifs/UbifsReader.cpp:1018` | usable bytes per logical erase block |
+| `log_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:1021` | erase blocks reserved for the log |
+| `max_leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:1020` | largest volume size the superblock allows, in erase blocks |
+| `min_io_size` | `src/filesystems/ubifs/UbifsReader.cpp:1017` | minimum I/O unit of the underlying flash |
+| `ro_compat_version` | `src/filesystems/ubifs/UbifsReader.cpp:1015` | read-only compatibility version |
+| `unlink_records` | `src/filesystems/ubifs/UbifsReader.cpp:1032` | directory entries pointing at inode 0, the record UBIFS writes on unlink (absent when none) |
+| `uuid` | `src/filesystems/ubifs/UbifsReader.cpp:1016` | filesystem UUID from the superblock |
+
+## filesystem reader (`FilesystemInfo::attrs`)
+
+Source: `src/filesystems/yaffs2/Yaffs2Reader.cpp` (11 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `bad_chunks` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:319` | chunks that fail the checksum over their tags and were skipped (absent when none) |
+| `chunks` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:313` | chunks the scan covered |
+| `erased_chunks` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:315` | chunks that were never written |
+| `objects` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:316` | distinct objects with at least one header chunk |
+| `page_size` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:309` | bytes of NAND page, worked out from the image |
+| `seq_max` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:318` | highest block sequence number seen |
+| `seq_min` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:317` | lowest block sequence number seen |
+| `spare_layout` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:312` | where the tags sit in the spare: "yaffs" (offset 0) or "linux-mtd" (offset 2) |
+| `spare_size` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:310` | bytes of spare (out-of-band) area per page, worked out from the image |
+| `tags_offset` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:311` | tags position inside the spare, in bytes |
+| `used_chunks` | `src/filesystems/yaffs2/Yaffs2Reader.cpp:314` | chunks whose tags verify against their own checksum |

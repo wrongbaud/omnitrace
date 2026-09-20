@@ -394,6 +394,19 @@ src/discovery/validators/verity.cpp:
 src/discovery/validators/xz.cpp:
   check: "none, crc32, crc64 or sha256"
 
+src/discovery/validators/yaffs2.cpp:
+  chunks: chunks the grid walk covered, trailing erased ones excluded
+  erased_chunks: chunks inside the image that were never written (absent when none)
+  object_headers: chunks that carry a yaffs_obj_hdr
+  page_size: bytes of NAND page, worked out from the image
+  seq_max: highest block sequence number seen
+  seq_min: lowest block sequence number seen
+  spare_layout: where the tags sit in the spare: "yaffs" (offset 0) or "linux-mtd" (offset 2)
+  spare_size: bytes of spare (out-of-band) area per page, worked out from the image
+  tags_offset: tags position inside the spare, in bytes
+  trailing_erased_chunks: erased chunks after the last written one, which the finding does not claim (absent when none)
+  used_chunks: chunks whose tags verify against their own checksum
+
 src/discovery/validators/zip.cpp:
   deferred_sizes: true when a member left its sizes to a data descriptor
   entries: central-directory entries counted
@@ -580,3 +593,16 @@ src/filesystems/ubifs/UbifsReader.cpp:
   ro_compat_version: read-only compatibility version
   unlink_records: directory entries pointing at inode 0, the record UBIFS writes on unlink (absent when none)
   uuid: filesystem UUID from the superblock
+
+src/filesystems/yaffs2/Yaffs2Reader.cpp:
+  bad_chunks: chunks that fail the checksum over their tags and were skipped (absent when none)
+  chunks: chunks the scan covered
+  erased_chunks: chunks that were never written
+  objects: distinct objects with at least one header chunk
+  page_size: bytes of NAND page, worked out from the image
+  seq_max: highest block sequence number seen
+  seq_min: lowest block sequence number seen
+  spare_layout: where the tags sit in the spare: "yaffs" (offset 0) or "linux-mtd" (offset 2)
+  spare_size: bytes of spare (out-of-band) area per page, worked out from the image
+  tags_offset: tags position inside the spare, in bytes
+  used_chunks: chunks whose tags verify against their own checksum

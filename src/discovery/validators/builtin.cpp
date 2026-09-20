@@ -33,6 +33,7 @@ OMNITRACE_DECLARE_ANCHOR(ubifs)
 OMNITRACE_DECLARE_ANCHOR(elf)
 OMNITRACE_DECLARE_ANCHOR(qnx6)
 OMNITRACE_DECLARE_ANCHOR(qnx_ifs)
+OMNITRACE_DECLARE_ANCHOR(yaffs2)
 
 void link_builtin_validators() {
     // Calling each (empty) anchor is enough to make the linker keep its object
@@ -64,6 +65,7 @@ void link_builtin_validators() {
     OMNITRACE_TOUCH_ANCHOR(elf)
     OMNITRACE_TOUCH_ANCHOR(qnx6)
     OMNITRACE_TOUCH_ANCHOR(qnx_ifs)
+    OMNITRACE_TOUCH_ANCHOR(yaffs2)
 }
 
 }  // namespace omnitrace::discovery::detail

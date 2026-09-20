@@ -1062,6 +1062,243 @@ def yaffs2_pin(img: bytearray, page: int, spare: int, tags_off: int) -> int:
     return n
 
 
+YAFFS_OBJTYPE_FILE, YAFFS_OBJTYPE_DIRECTORY = 1, 3
+YAFFS_OBJECTID_ROOT, YAFFS_OBJECTID_DELETED = 1, 4
+YAFFS_OH_MODE, YAFFS_OH_SIZE_LOW, YAFFS_OH_PARENT = 268, 292, 4
+
+
+def yaffs2_column_parity_table() -> list[int]:
+    """yaffs_ecc.c's table: bit 0 the byte's own parity, bits 2..7 the six
+    column parities."""
+    t = []
+    for v in range(256):
+        b = [(v >> k) & 1 for k in range(8)]
+        p = b[0] ^ b[1] ^ b[2] ^ b[3] ^ b[4] ^ b[5] ^ b[6] ^ b[7]
+        cp0 = b[0] ^ b[2] ^ b[4] ^ b[6]
+        cp1 = b[1] ^ b[3] ^ b[5] ^ b[7]
+        cp2 = b[0] ^ b[1] ^ b[4] ^ b[5]
+        cp3 = b[2] ^ b[3] ^ b[6] ^ b[7]
+        cp4 = b[0] ^ b[1] ^ b[2] ^ b[3]
+        cp5 = b[4] ^ b[5] ^ b[6] ^ b[7]
+        t.append(p | (cp0 << 2) | (cp1 << 3) | (cp2 << 4) | (cp3 << 5) | (cp4 << 6) | (cp5 << 7))
+    return t
+
+
+YAFFS2_COL_PARITY = yaffs2_column_parity_table()
+
+
+def yaffs2_ecc_other(data: bytes) -> tuple[int, int, int]:
+    """yaffs_ecc_calc_other over the sixteen tag bytes. Note the column parity
+    is shifted right by two and masked to six bits before it is stored."""
+    col = line = line_prime = 0
+    for i, ch in enumerate(data):
+        b = YAFFS2_COL_PARITY[ch]
+        col ^= b
+        if b & 1:
+            line ^= i
+            line_prime ^= ~i
+    return (col >> 2) & 0x3F, line & 0xFFFFFFFF, line_prime & 0xFFFFFFFF
+
+
+def yaffs2_spare(seq: int, obj_id: int, chunk_id: int, n_bytes: int, spare: int,
+                 tags_off: int) -> bytes:
+    """One chunk's spare area: 0xFF throughout except the packed tags and the
+    checksum over them, which is how mkyaffs2 lays it out."""
+    out = bytearray(b"\xff" * spare)
+    tags = struct.pack("<IIII", seq, obj_id, chunk_id, n_bytes)
+    out[tags_off:tags_off + 16] = tags
+    col, line, line_prime = yaffs2_ecc_other(tags)
+    out[tags_off + 16] = col
+    struct.pack_into("<I", out, tags_off + 20, line)
+    struct.pack_into("<I", out, tags_off + 24, line_prime)
+    return bytes(out)
+
+
+def yaffs2_sweep(img: bytes, page: int, spare: int, tags_off: int) -> list[dict]:
+    """Every written chunk, with its tags decoded and its checksum checked.
+    Written independently of the reader so the fixture is not checked against
+    itself."""
+    out, chunk = [], page + spare
+    for i in range(len(img) // chunk):
+        o = i * chunk
+        tags = img[o + page + tags_off:o + page + tags_off + 16]
+        if all(b == 0xFF for b in tags):
+            continue
+        seq, obj_id, chunk_id, n_bytes = struct.unpack("<IIII", tags)
+        stored = (img[o + page + tags_off + 16] & 0x3F,
+                  struct.unpack_from("<I", img, o + page + tags_off + 20)[0],
+                  struct.unpack_from("<I", img, o + page + tags_off + 24)[0])
+        if yaffs2_ecc_other(tags) != stored:
+            raise RuntimeError(f"yaffs2: chunk {i} fails its tag checksum")
+        out.append({"index": i, "offset": o, "seq": seq, "obj_id": obj_id,
+                    "chunk_id": chunk_id, "n_bytes": n_bytes})
+    return out
+
+
+def yaffs2_tree(img: bytes, chunks: list[dict], page: int, spare: int) -> dict:
+    """path -> {obj_id, parent, header_offset}, from the object headers."""
+    objs = {}
+    for c in chunks:
+        if c["chunk_id"] != 0:
+            continue
+        o = c["offset"]
+        otype, parent = struct.unpack_from("<II", img, o)
+        name = img[o + 10:o + 266].split(b"\0")[0].decode("utf-8", "surrogateescape")
+        objs[c["obj_id"]] = {"type": otype, "parent": parent, "name": name, "offset": o,
+                             "index": c["index"]}
+    paths = {}
+
+    def walk(oid, prefix):
+        for cid, o in sorted(objs.items(), key=lambda kv: kv[1]["name"]):
+            if o["parent"] != oid or cid == oid:
+                continue
+            path = prefix + o["name"]
+            paths[path] = {"obj_id": cid, **o}
+            if o["type"] == YAFFS_OBJTYPE_DIRECTORY:
+                walk(cid, path + "/")
+
+    walk(YAFFS_OBJECTID_ROOT, "")
+    return paths
+
+
+def yaffs2_append_history(raw: bytearray, page: int, spare: int, tags_off: int) -> dict:
+    """Append the chunks a device would have written after mkyaffs2 ran.
+
+    mkyaffs2 emits a clean image: one object header per file and no deletions,
+    so there is no history in it at all. A running YAFFS2 never overwrites --
+    a change is a new chunk with a higher sequence number and the old one
+    stays until its block is erased -- and that is what this writes:
+    history/config.txt twice more, and the deletion of history/deleted.txt.
+
+    Chunks go down the way a live filesystem writes them, data first and the
+    object header last, which is the order that records the new size once the
+    bytes are there. (mkyaffs2 does the reverse, writing a file's header when
+    it creates the object; the oldest state of config.txt is therefore the one
+    whose data sits *after* its own header, which is the case a reader has to
+    reach back for.)
+    """
+    chunk = page + spare
+    chunks = yaffs2_sweep(bytes(raw), page, spare, tags_off)
+    paths = yaffs2_tree(bytes(raw), chunks, page, spare)
+    cfg, dele = paths["history/config.txt"], paths["history/deleted.txt"]
+    seq = max(c["seq"] for c in chunks) + 1  # a freshly erased block
+    appended = []
+
+    def put(page_bytes: bytes, obj_id: int, chunk_id: int, n_bytes: int, what: dict) -> int:
+        off = len(raw)
+        body = bytearray(b"\xff" * page)
+        body[:len(page_bytes)] = page_bytes
+        raw.extend(bytes(body) + yaffs2_spare(seq, obj_id, chunk_id, n_bytes, spare, tags_off))
+        appended.append({**what, "chunk": off // chunk, "offset": off, "seq": seq})
+        return off
+
+    versions = []
+    for data, when in ((CONFIG_V2, T0 + 100), (CONFIG_V3, T0 + 110)):
+        put(data, cfg["obj_id"], 1, len(data), {"node": "data", "obj_id": cfg["obj_id"]})
+        # A copy of the header mkyaffs2 wrote, with the new size and times, so
+        # every field this does not touch stays exactly what the tool emitted.
+        hdr = bytearray(raw[cfg["offset"]:cfg["offset"] + 512])
+        struct.pack_into("<I", hdr, YAFFS_OH_SIZE_LOW, len(data))
+        struct.pack_into("<III", hdr, 280, when, when, when)  # atime, mtime, ctime
+        off = put(bytes(hdr), cfg["obj_id"], 0, 0xFFFF,
+                  {"node": "object-header", "obj_id": cfg["obj_id"]})
+        versions.append({"data": data, "mtime": when, "offset": off})
+
+    # Deleting is writing the object's header again with the parent YAFFS2
+    # reserves for deleted objects. Nothing else changes, and the file's data
+    # chunks are left exactly where they were.
+    del_hdr = bytearray(raw[dele["offset"]:dele["offset"] + 512])
+    struct.pack_into("<I", del_hdr, YAFFS_OH_PARENT, YAFFS_OBJECTID_DELETED)
+    del_off = put(bytes(del_hdr), dele["obj_id"], 0, 0xFFFF,
+                  {"node": "object-header-unlink", "obj_id": dele["obj_id"]})
+
+    after = yaffs2_sweep(bytes(raw), page, spare, tags_off)
+    if len(after) != len(chunks) + len(appended):
+        raise RuntimeError(f"yaffs2-history: swept {len(after)} chunks, expected "
+                           f"{len(chunks) + len(appended)}")
+    return {"cfg": cfg, "dele": dele, "versions": versions, "delete_offset": del_off,
+            "appended": appended, "seq": seq}
+
+
+def build_yaffs2_history(ctx: Ctx) -> Optional[dict]:
+    """The yaffs2 tree plus the chunks a device would have left behind.
+
+    See yaffs2_append_history. Like the other yaffs2 fixtures this needs root,
+    because mkyaffs2 takes ownership from the staging tree.
+    """
+    if os.geteuid() != 0:
+        print("  yaffs2-history: mkyaffs2 needs root; skipping (run through Docker)",
+              file=sys.stderr)
+        return None
+    page, spare, tags_off = 2048, 64, 2
+    features = Features(owner_method="chown")
+    tree = filtered_tree(base_tree(), features)
+    stg = ctx.work / "stage-yaffs2-history"
+    stage(stg, tree)
+    img = ctx.out / "yaffs2-history.img"
+    img.unlink(missing_ok=True)
+    argv = ["mkyaffs2", "-p", str(page), "-s", str(spare), str(stg), str(img)]
+    ctx.run(argv)
+    raw = bytearray(img.read_bytes())
+    headers = yaffs2_pin(raw, page, spare, tags_off)
+    hist = yaffs2_append_history(raw, page, spare, tags_off)
+    img.write_bytes(bytes(raw))
+    return yaffs2_history_doc(ctx, img, argv, features, tree, hist, page, spare, tags_off,
+                              headers)
+
+
+def yaffs2_history_doc(ctx: Ctx, img: Path, argv: list[str], features: Features,
+                       tree: list[Entry], hist: dict, page: int, spare: int, tags_off: int,
+                       headers: int) -> dict:
+    """The ground truth for yaffs2-history, given the appended chunks."""
+    cfg, dele, versions = hist["cfg"], hist["dele"], hist["versions"]
+    for e in tree:
+        if e.path == "history/config.txt":
+            e.content, e.mtime = CONFIG_V3, versions[-1]["mtime"]
+    tree = [e for e in tree if e.path != "history/deleted.txt"]
+    return image_doc(
+        "yaffs2-history", "yaffs2", img,
+        ctx.version("mkyaffs2", ["mkyaffs2", "-h"]), argv[1:], features, tree,
+        attrs={"page_size": page, "spare_size": spare, "oob": True,
+               "spare_layout": "linux-mtd" if tags_off == 2 else "yaffs",
+               "tags_offset_in_spare": tags_off, "endian": "little",
+               "object_headers_pinned": headers, "history_seq": hist["seq"]},
+        history={
+            "superseded": [
+                # The state mkyaffs2 itself wrote. Its data chunk sits *after*
+                # its own object header, because that is the order mkyaffs2
+                # writes in, so a reader has to reach back to the first chunk
+                # the block ever had to rebuild it.
+                {"path": "history/config.txt", "obj_id": cfg["obj_id"], "version": 1,
+                 "size": len(CONFIG_V1), "sha256": sha256(CONFIG_V1), "mtime": T0 + 30,
+                 "content_recoverable": True},
+                {"path": "history/config.txt", "obj_id": cfg["obj_id"], "version": 2,
+                 "size": len(CONFIG_V2), "sha256": sha256(CONFIG_V2),
+                 "mtime": versions[0]["mtime"], "node_offset": versions[0]["offset"]},
+            ],
+            "current": [
+                {"path": "history/config.txt", "obj_id": cfg["obj_id"], "version": 0,
+                 "size": len(CONFIG_V3), "sha256": sha256(CONFIG_V3),
+                 "mtime": versions[1]["mtime"], "node_offset": versions[1]["offset"]},
+            ],
+            "deleted": [
+                {"path": "history/deleted.txt", "obj_id": dele["obj_id"],
+                 "size": len(DELETED_TXT), "sha256": sha256(DELETED_TXT),
+                 "unlink_node_offset": hist["delete_offset"], "content_recoverable": True},
+            ],
+            "appended_chunks": hist["appended"],
+            "note": (
+                "Chunks appended after the mkyaffs2 output, with a sequence number one above "
+                "the highest it wrote: two (data, object header) pairs for history/config.txt, "
+                "then history/deleted.txt's object header again with its parent set to 4, the id "
+                "YAFFS2 reserves for deleted objects. The original chunks of both files stay "
+                "exactly where they were, which is what makes the older states and the deleted "
+                "file's contents recoverable."
+            ),
+        },
+    )
+
+
 def build_yaffs2(ctx: Ctx, variant: str) -> Optional[dict]:
     """mkyaffs2 (yaffs2utils) always emits page+spare (OOB) images; the tags
     live in the spare area and there is no inband-tags mode, so a "without OOB"
@@ -1481,6 +1718,7 @@ BUILDERS: list[tuple[str, list[str], Callable[[Ctx], Optional[dict]]]] = [
     ("ubifs-history", ["mkfs.ubifs"], build_ubifs_history),
     ("yaffs2", ["mkyaffs2"], lambda c: build_yaffs2(c, "mtd")),
     ("yaffs2-yaffsecc", ["mkyaffs2"], lambda c: build_yaffs2(c, "yaffs")),
+    ("yaffs2-history", ["mkyaffs2"], build_yaffs2_history),
     ("ext4", ["mkfs.ext4", "debugfs"], build_ext4),
     ("fat32", ["mkfs.vfat", "mcopy", "mdel"], build_fat32),
     ("mbr-two-partitions", [], build_mbr),

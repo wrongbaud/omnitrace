@@ -1245,6 +1245,66 @@ xz-truncated-header:
   meaning: fewer than 12 bytes for the stream header
   action: magic-tier hit at the end of the data
 
+yaffs2-bad-chunk:
+  meaning: one or more chunks fail the checksum over their own tags and were skipped, so whatever they held is missing from its file
+  action: the flash has bit errors or the image is damaged; the entries that lost a chunk are marked truncated
+
+yaffs2-bad-header:
+  meaning: an object's header chunk could not be read, or the object has no name to list it under
+  action: the header chunk is damaged; the object's data may still come out under --history
+
+yaffs2-broken-hardlink:
+  meaning: an object is a hard link to an object that is not on the medium
+  action: the target's chunks have been erased; the link is listed empty so the name is still on the record
+
+yaffs2-directory-loop:
+  meaning: a directory is its own ancestor, so the walk would never end
+  action: defence in depth; a YAFFS2 object carries its own parent, so a cycle is not reachable from the root and this should not be producible
+
+yaffs2-empty:
+  meaning: the reader was opened on an empty Span
+  action: the image is truncated at its first byte
+
+yaffs2-history-scan:
+  meaning: how many written chunks are on the medium, and how many superseded and deleted entries came out of them
+  action: informational; it is the count analyze() cannot put in the node's attrs, because info() is read before the walk
+
+yaffs2-limit-chunks:
+  meaning: the walk stopped after its chunk cap; the rest of the image was not read
+  action: the image is larger than the cap; what was read is complete, the rest is not
+
+yaffs2-limit-nodes:
+  meaning: Limits::max_nodes_per_fs was reached before the tree was fully walked
+  action: raise --max-files; what was emitted is complete
+
+yaffs2-missing-chunk:
+  meaning: a file's data chunk could not be read; the block is zero-filled
+  action: the image is truncated or damaged; the file is marked truncated and its digest is of what was recovered
+
+yaffs2-no-grid:
+  meaning: no page and spare size makes the chunk tags verify against their own checksum, so this is not a YAFFS2 chunk grid
+  action: the region is not YAFFS2, or its spare (out-of-band) area was stripped from the dump, which leaves nothing to read
+
+yaffs2-no-headers:
+  meaning: the chunk grid verifies but no chunk carries an object header, so there is no tree
+  action: the image is data chunks only; their contents are still carved with the region
+
+yaffs2-no-objects:
+  meaning: the reader found a chunk grid but no object header in it
+  action: as yaffs2-no-headers; the node keeps the validator's finding
+
+yaffs2-not-open:
+  meaning: walk() was called before a successful open() (caller bug)
+  action: contributor error; analyze() never produces this
+
+yaffs2-size-beyond-image:
+  meaning: an object header claims a file larger than every chunk of the image put together
+  action: usually a damaged header; a genuinely sparse file can also do this, so the size is not clamped and the zeros past its last data chunk are inferred. --max-file-bytes bounds what is written
+
+yaffs2-sink-error:
+  meaning: the Sink refused an entry (unsafe path or its own limit)
+  action: see the sink-* code quoted in the message
+
 zip-bad-entry:
   meaning: a central-directory entry or a member's local header is not readable
   action: the archive is damaged; members before it are still extracted

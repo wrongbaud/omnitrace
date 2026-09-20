@@ -530,3 +530,15 @@ format = "pgp"
 category = "crypto"
 magic = "-----BEGIN PGP PUBLIC KEY BLOCK-----"
 description = "ASCII-armoured PGP public key"
+
+[[signature]]
+name = "yaffs2"
+format = "yaffs2"
+category = "filesystem"
+hex = "0300000001000000ffff"
+endian = "little"
+validator = "yaffs2"
+probe_chunks = 16
+max_chunks = 4194304
+description = "YAFFS2 image. The format has no superblock and no magic, so this anchors on the object header of a directory whose parent is the root (type 3, parent 1) and the validator finds the chunk grid by making the tag ECCs verify; the finding starts at the first chunk it can walk back to"
+references = ["https://yaffs.net/documents/how-yaffs-works", "https://github.com/yaffs/yaffs2"]

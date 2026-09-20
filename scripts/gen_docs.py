@@ -84,7 +84,6 @@ FORMAT_NOTES = {
     "ubifs": "aligned hits only (`min_io_size` or 512); inside UBI the size is not meaningful",
     "qnx6": "size covers both superblocks; second-superblock hits with a corrupt primary are placed at the filesystem start",
     "qnx-ifs": "compressed images sized by walking the block chain; startup checksum reported but never lowers the tier",
-    "yaffs2": "no signature until OOB-aware validation exists (signatures.md)",
     "android-sparse": "size is the chunk walk; no reader expands the image yet",
     "uimage": "kernel and kernel_noload types are re-categorised as `kernel`",
     "android-boot": "size is the sum of page-aligned sections, header v0-v4",
@@ -723,7 +722,10 @@ def render_formats() -> str:
         # A reader recovers history when it actually *marks* an entry
         # superseded or deleted. Merely reading WalkOptions::history is not
         # enough: a reader may read it only to say it has none yet.
-        history_re = r"\.(?:superseded|deleted)\s*=\s*true|\+\+\s*\w+(?:->|\.)(?:superseded|deleted)\b"
+        history_re = (
+            r"\.(?:superseded|deleted)\s*=\s*(?:true|\w+)\s*;"
+            r"|\+\+\s*[\w.>-]*(?:->|\.)(?:superseded|deleted)\b"
+        )
         src = fs_readers.get(fmt) or ct_readers.get(fmt)
         if src is not None:
             history = "yes" if re.search(history_re, read(ROOT / src[0])) else "no"

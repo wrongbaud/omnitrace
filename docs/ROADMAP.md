@@ -15,14 +15,14 @@ treats it. It is generated from `signatures/*.toml`, the validators and the
 reader registries by `scripts/gen_docs.py` and checked by `scripts/check_docs.py`,
 so it cannot drift from the code the way a table written here would.
 
-Today that is 53 signatures over 37 format ids, 29 validators, 8 filesystem
+Today that is 54 signatures over 38 format ids, 29 validators, 9 filesystem
 readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`,
-`ubifs`) and 15 container formats read by 9 readers: `gzip`, `bzip2`, `xz`,
+`ubifs`, `yaffs2`) and 15 container formats read by 9 readers: `gzip`, `bzip2`, `xz`,
 `lzma`, `lz4` and `zstd` (one `StreamReader`), `tar`, `cpio`, `zip`,
 `uimage`, `fit`, `ubi`, `android-boot` and `android-vendor-boot` (one
 reader), and `android-sparse`. `--history` is recovered by the ext, JFFS2,
-QNX6 and UBIFS readers, and by the UBI reader for superseded logical erase
-blocks.
+QNX6, UBIFS and YAFFS2 readers, and by the UBI reader for superseded logical
+erase blocks.
 
 Nested analysis runs for extracted files: every file a walk writes to the host
 is re-scanned, and one holding a filesystem or a partition table at Structural
@@ -49,26 +49,23 @@ Items 1-4 of the original list are done: the ext4, JFFS2, QNX6 and QNX IFS
 readers, and both halves of the container work (readers plus the payload
 recursion). See the section above.
 
-1. **A YAFFS2 reader**, with history from its sequence numbers; fixtures
-   `yaffs2.img` and `yaffs2-yaffsecc.img` exist. It is the last filesystem in
-   the MVP list without a reader.
-2. **The lzop file format** (`89 4c 5a 4f 00 0d 0a 1a 0a`), the last
+1. **The lzop file format** (`89 4c 5a 4f 00 0d 0a 1a 0a`), the last
    compressed format with no signature. It needs no new dependency -- the
    in-tree LZO1X decoder already serves SquashFS and JFFS2 -- but it is a
    multi-block container rather than a single-payload stream, so it is shaped
    like `CpioReader` rather than `StreamReader`.
-3. **The `7z` container reader**, the last container format with a signature
+2. **The `7z` container reader**, the last container format with a signature
    and no reader.
-4. **Verify a stream against its own checksum.** Every compressed format here
+3. **Verify a stream against its own checksum.** Every compressed format here
    carries one (gzip CRC32, xz check, lz4 and zstd content checksums) and none
    is compared against the decoded payload, so `verified` is unreachable for
    all five. The decode already happens; only the comparison is missing.
-5. **Write the corrected view of a word-swapped image** into the case directory
+4. **Write the corrected view of a word-swapped image** into the case directory
    (today only the detection is recorded; `src/discovery/Recurse.cpp`
    `ImageViewHook` is the extension point).
-6. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
+5. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
    `omnitrace report`. `DEVELOPMENT_PLAN.md` §5.4 to §7.
-7. **Phase 4**: web UI, only after the CLI and library are released (decision
+6. **Phase 4**: web UI, only after the CLI and library are released (decision
    `core-before-ui`).
 
 ## Good first improvements

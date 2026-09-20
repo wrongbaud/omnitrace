@@ -46,6 +46,7 @@ Native builds need `mksquashfs`, `mkfs.ext4` + `debugfs`, `mkfs.vfat` + `mcopy`/
 | `ubi.img` | `ubinize -m 2048 -p 131072 -s 2048 -O 2048 -Q 0x12345678` | one dynamic autoresize volume `rootfs` holding `ubifs.img` |
 | `yaffs2.img` | `mkyaffs2 -p 2048 -s 64` | page + spare (OOB) image, Linux MTD spare layout (tags at spare byte 2) |
 | `yaffs2-yaffsecc.img` | `mkyaffs2 -p 2048 -s 64 --yaffs-ecclayout` | YAFFS spare layout (tags at spare byte 0). mkyaffs2 has no inband-tags mode, so there is no "without OOB" variant; both layouts are produced instead |
+| `yaffs2-history.img` | `mkyaffs2` + hand-assembled chunks | see [History semantics per format](#history-semantics-per-format) |
 | `ext4.img` | `mkfs.ext4` + `debugfs` scripts | 16 MiB, 4 KiB blocks, no journal, fixed UUID/hash seed; history via `unlink`/`kill_file`/`link`/`rm` |
 | `fat32.img` | `mkfs.vfat --invariant` + `mcopy`/`mdel` | 33 MiB, 512-byte clusters, `-m` keeps mtimes |
 | `mbr-two-partitions.img` | Python | MBR with `ext4.img` (0x83, bootable) at 1 MiB and `squashfs-gzip.img` (0x83) at 17 MiB |
@@ -171,6 +172,44 @@ The live tree is therefore `config.txt` at v3 and no `deleted.txt`;
 appended node's erase block, offset and length. The builder re-sweeps the
 finished image for the node magic at every 8-byte boundary and fails unless
 exactly the expected number of nodes verify.
+
+**YAFFS2 history chunks** (`yaffs2-history.img`). <a name="yaffs2-history-chunks"></a>
+`mkyaffs2` emits a clean image: one object header per file and no deletions,
+so there is no history in it at all. A running YAFFS2 never overwrites -- a
+change is a new chunk with a higher sequence number and the old one stays
+until its erase block is reclaimed -- and that is what the builder appends,
+with a sequence number one above the highest `mkyaffs2` wrote:
+
+| chunk | tags | page |
+|---|---|---|
+| data | `obj_id` of `history/config.txt`, `chunk_id` 1, `n_bytes` = len(v2) | v2 of the file |
+| object header | same `obj_id`, `chunk_id` 0, `n_bytes` 0xFFFF | a copy of the header mkyaffs2 wrote with the new `file_size_low` and times |
+| data, object header | the same pair again | v3 |
+| object header | `obj_id` of `history/deleted.txt` | its header again with `parent_obj_id` set to **4**, the id YAFFS2 reserves for deleted objects |
+
+Each chunk's spare is 0xFF throughout except the sixteen tag bytes and the
+`yaffs_ecc_other` over them, which is how `mkyaffs2` lays it out. The column
+parity of that checksum is shifted right by two and masked to six bits before
+it is stored (`yaffs_ecc_calc_other`); an implementation that skips that step
+produces a value that looks plausible and verifies nothing.
+
+Chunks go down the way a live filesystem writes them, **data first and the
+object header last**, which is the order that records the new size once the
+bytes are there. `mkyaffs2` does the reverse, writing a file's header when it
+creates the object, so the oldest state of `config.txt` is the one whose data
+sits after its own header -- the case a reader has to reach back for, and the
+reason that state carries `content_recoverable: true` in the YAML rather than
+being dropped.
+
+The live tree is therefore `config.txt` at v3 and no `deleted.txt`;
+`history.superseded` lists v1 and v2, `history.current` v3, and
+`history.deleted` `deleted.txt` with its `unlink_node_offset`.
+`history.appended_chunks` gives every appended chunk's index and offset. The
+builder re-sweeps the finished image for chunks whose tags verify and fails
+unless exactly the expected number do.
+
+Like the other yaffs2 fixtures this needs root, because `mkyaffs2` takes
+ownership from the staging tree, so it is Docker-only in practice.
 
 **ext4** (`ext4.img`). Populated with `debugfs -w` (no kernel, no journal). v2 and v3 of `config.txt` are written up front under temporary names so each version owns its own blocks; the history script then does `unlink` + `kill_file` on the old inode and `link`s the new one under `config.txt`, and finally `rm history/deleted.txt`. Result: three freed inodes (`lsdel` shows 26, 27, 31) that keep size, extent tree and data blocks with `dtime` set; the unlinked directory entries (`history/.config.v2`, `.config.v3`, `deleted.txt`) remain in the directory block. Without a journal nothing ties the freed inodes to `config.txt`: v1's entry was overwritten in place by the later `link` of the same name (a reader emits it as `lost+found/#26`) and v2 is named only by the unlinked `.config.v2`, so the YAML lists both under `history.deleted` (with `recovered_as` / `name_recoverable: false` for v1) and `history.superseded` is empty. `E2FSPROGS_FAKE_TIME` pins every timestamp e2fsprogs would otherwise take from the clock.
 

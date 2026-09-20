@@ -30,7 +30,8 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `qnx6` | filesystem | validated to verified (`qnx6`) | yes | yes (`src/filesystems/qnx6/Qnx6Reader.cpp:1229`) | yes | `qnx6` | [qnx6.md](../formats/qnx6.md) | size covers both superblocks; second-superblock hits with a corrupt primary are placed at the filesystem start; signatures: `qnx6-le`, `qnx6-be` |
 | `romfs` | filesystem | validated to verified (`romfs`) | yes | no | no (no reader) | `romfs` | [romfs.md](../formats/romfs.md) | signatures: `romfs` |
 | `squashfs` | filesystem | validated to consistent (`squashfs`) | yes | yes (`src/filesystems/squashfs/SquashfsReader.cpp:1375`) | no | `squashfs` | [squashfs.md](../formats/squashfs.md) | signatures: `squashfs-le`, `squashfs-be`, `squashfs-vendor-shsq`, `squashfs-vendor-qshs` |
-| `ubifs` | filesystem | validated to verified (`ubifs`) | yes | yes (`src/filesystems/ubifs/UbifsReader.cpp:1371`) | yes | mtd (comment) | [ubifs.md](../formats/ubifs.md) | aligned hits only (`min_io_size` or 512); inside UBI the size is not meaningful; signatures: `ubifs` |
+| `ubifs` | filesystem | validated to verified (`ubifs`) | yes | yes (`src/filesystems/ubifs/UbifsReader.cpp:1375`) | yes | mtd (comment) | [ubifs.md](../formats/ubifs.md) | aligned hits only (`min_io_size` or 512); inside UBI the size is not meaningful; signatures: `ubifs` |
+| `yaffs2` | filesystem | validated to verified (`yaffs2`) | yes | yes (`src/filesystems/yaffs2/Yaffs2Reader.cpp:693`) | yes | mtd (comment) | [yaffs2.md](../formats/yaffs2.md) | signatures: `yaffs2` |
 | `7z` | container | magic-only | no | no | n.a. | - | [signatures.md](../formats/signatures.md) (plain magic) | signatures: `7z` |
 | `android-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:197`) | no | - | [android-boot.md](../formats/android-boot.md) | size is the sum of page-aligned sections, header v0-v4; signatures: `android-boot` |
 | `android-sparse` | container | validated to consistent (`android-sparse`) | yes | yes (`src/containers/sparse/SparseReader.cpp:258`) | no | - | [android-sparse.md](../formats/android-sparse.md) | size is the chunk walk; no reader expands the image yet; signatures: `android-sparse` |
@@ -60,6 +61,6 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 
 ## Counts
 
-- 53 signatures over 37 format ids
-- 28 validators, 8 filesystem reader(s), 15 container reader(s)
+- 54 signatures over 38 format ids
+- 29 validators, 9 filesystem reader(s), 15 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`
