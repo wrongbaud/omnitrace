@@ -5,6 +5,8 @@
 #include "omnitrace/core/Compression.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 
@@ -653,6 +655,90 @@ Status decompress_exact(Codec c, std::span<const std::uint8_t> in, std::vector<s
     const Status s = decompress_impl(c, in, out, expected, true);
     if (!s) return s;
     if (out.size() != expected) return Status::fail(kSizeMismatch);
+    return Status::success();
+}
+
+
+Status decompress_raw(std::span<const RawFilter> chain, std::span<const std::uint8_t> in,
+                      std::vector<std::uint8_t>& out, std::size_t expected) {
+    out.clear();
+    if (chain.empty()) return Status::fail("decompress-unsupported: empty filter chain");
+    if (chain.size() >= LZMA_FILTERS_MAX + 1)
+        return Status::fail("decompress-unsupported: more than " +
+                            std::to_string(LZMA_FILTERS_MAX) + " filters in the chain");
+
+    // liblzma owns the decoded options, so they are freed on every path out.
+    std::array<lzma_filter, LZMA_FILTERS_MAX + 1> filters{};
+    for (auto& f : filters) {
+        f.id = LZMA_VLI_UNKNOWN;
+        f.options = nullptr;
+    }
+    struct FilterGuard {
+        std::array<lzma_filter, LZMA_FILTERS_MAX + 1>* f;
+        ~FilterGuard() {
+            for (auto& one : *f) {
+                if (one.options != nullptr) std::free(one.options);
+            }
+        }
+    } guard{&filters};
+
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        filters[i].id = chain[i].id;
+        const lzma_ret rc = lzma_properties_decode(
+            &filters[i], nullptr, chain[i].props.empty() ? nullptr : chain[i].props.data(),
+            chain[i].props.size());
+        if (rc == LZMA_OPTIONS_ERROR)
+            return Status::fail("decompress-unsupported: filter id " +
+                                std::to_string(chain[i].id) + " is not one this build has");
+        if (rc != LZMA_OK)
+            return Status::fail("decompress-props: filter id " + std::to_string(chain[i].id) +
+                                " rejected its " + std::to_string(chain[i].props.size()) +
+                                " properties byte(s)");
+        // The extended LZMA1 needs to be told how long its output is; that is
+        // the whole reason to use it over plain LZMA1.
+        if (chain[i].id == kFilterLzma1Ext && filters[i].options != nullptr) {
+            auto* o = static_cast<lzma_options_lzma*>(filters[i].options);
+            o->ext_flags = LZMA_LZMA1EXT_ALLOW_EOPM;
+            lzma_set_ext_size(*o, static_cast<std::uint64_t>(expected));
+        }
+    }
+
+    lzma_stream s = LZMA_STREAM_INIT;
+    if (const lzma_ret rc = lzma_raw_decoder(&s, filters.data()); rc != LZMA_OK) {
+        return Status::fail(rc == LZMA_OPTIONS_ERROR
+                                ? "decompress-unsupported: the filter chain is not one this build "
+                                  "can decode"
+                                : "decompress-init: raw decoder");
+    }
+    out.resize(expected);
+    s.next_in = in.data();
+    s.avail_in = in.size();
+    s.next_out = out.data();
+    s.avail_out = out.size();
+    // One call is not always enough. A BCJ filter holds back the bytes it
+    // cannot convert without lookahead, and raw LZMA1 has no end marker to
+    // tell it the input is over -- it simply stops when the output is full --
+    // so the tail is flushed only by calling again with nothing left to feed.
+    lzma_ret rc = LZMA_OK;
+    for (;;) {
+        const std::size_t in_before = s.avail_in, out_before = s.avail_out;
+        rc = lzma_code(&s, LZMA_FINISH);
+        if (rc != LZMA_OK) break;
+        if (s.avail_out == 0) break;
+        if (s.avail_in == in_before && s.avail_out == out_before) break;  // no progress
+    }
+    const std::size_t produced = out.size() - s.avail_out;
+    lzma_end(&s);
+    if (rc != LZMA_OK && rc != LZMA_STREAM_END) {
+        out.clear();
+        return Status::fail("decompress-failed: raw chain returned " + std::to_string(rc));
+    }
+    if (produced != expected) {
+        out.resize(produced);
+        return Status::fail("decompress-size-mismatch: raw chain produced " +
+                            std::to_string(produced) + " bytes, expected " +
+                            std::to_string(expected));
+    }
     return Status::success();
 }
 

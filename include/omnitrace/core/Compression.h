@@ -88,4 +88,57 @@ Status stream_length(Codec c, std::span<const std::uint8_t> in, std::uint64_t ma
 Status decompress_exact(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
                         std::size_t expected);
 
+/// One step of a raw (unframed) filter chain, as 7z records a coder and xz
+/// records a filter: a liblzma filter id and the properties bytes the
+/// container stored for it.
+struct RawFilter {
+    std::uint64_t id = 0;              ///< `LZMA_FILTER_*`.
+    std::vector<std::uint8_t> props;   ///< As stored; liblzma decodes them.
+};
+
+/// Filter ids, so callers need not include `lzma.h`. These are liblzma's own
+/// values, which are also the ones the .xz format uses.
+inline constexpr std::uint64_t kFilterDelta = 0x03;
+/// @copydoc kFilterDelta
+inline constexpr std::uint64_t kFilterX86 = 0x04;
+/// @copydoc kFilterDelta
+inline constexpr std::uint64_t kFilterPowerPc = 0x05;
+/// @copydoc kFilterDelta
+inline constexpr std::uint64_t kFilterIa64 = 0x06;
+/// @copydoc kFilterDelta
+inline constexpr std::uint64_t kFilterArm = 0x07;
+/// @copydoc kFilterDelta
+inline constexpr std::uint64_t kFilterArmThumb = 0x08;
+/// @copydoc kFilterDelta
+inline constexpr std::uint64_t kFilterSparc = 0x09;
+/// @copydoc kFilterDelta
+inline constexpr std::uint64_t kFilterArm64 = 0x0A;
+/// @copydoc kFilterDelta
+inline constexpr std::uint64_t kFilterRiscV = 0x0B;
+/// @copydoc kFilterDelta
+inline constexpr std::uint64_t kFilterLzma2 = 0x21;
+/// @copydoc kFilterDelta
+inline constexpr std::uint64_t kFilterLzma1 = 0x4000000000000001ull;
+/// LZMA1 told how long its output is, so it can stop without an end marker.
+/// 7z stores raw LZMA1 with the size in the header and usually no marker, and
+/// a byte filter after it only flushes its held-back tail once the decoder
+/// below says the data is over -- which plain `kFilterLzma1` never does.
+/// `decompress_raw` sets the size from its `expected` argument.
+inline constexpr std::uint64_t kFilterLzma1Ext = 0x4000000000000002ull;
+
+/// Decode `in` through a raw liblzma filter chain into `out`, which must come
+/// to exactly `expected` bytes.
+///
+/// `chain` is in **encoding order**, which is what liblzma wants: the
+/// compressor last, any byte filter before it. A container that records its
+/// coders in decoding order (7z walks them from the packed stream outwards)
+/// has to reverse them first.
+///
+/// Fails with "decompress-unsupported" when a filter id is not one this build
+/// has, "decompress-props" when a coder's properties do not decode, and the
+/// usual "decompress-cap" / "decompress-size-mismatch" otherwise. Nothing here
+/// throws.
+Status decompress_raw(std::span<const RawFilter> chain, std::span<const std::uint8_t> in,
+                      std::vector<std::uint8_t>& out, std::size_t expected);
+
 }  // namespace omnitrace::compress

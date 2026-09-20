@@ -223,7 +223,9 @@ format = "7z"
 category = "container"
 hex = "377abcaf271c"
 endian = "little"
-description = "7-Zip archive signature header"
+validator = "7z"
+description = "7-Zip archive. The 32-byte signature header carries the offset and length of the header at the far end of the archive and a CRC over both, so the extent is exact; the header itself is usually compressed and is decoded to list the entries"
+references = ["https://github.com/ip7z/7zip/blob/main/DOC/7zFormat.txt"]
 
 [[signature]]
 name = "uimage"

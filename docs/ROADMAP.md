@@ -15,12 +15,13 @@ treats it. It is generated from `signatures/*.toml`, the validators and the
 reader registries by `scripts/gen_docs.py` and checked by `scripts/check_docs.py`,
 so it cannot drift from the code the way a table written here would.
 
-Today that is 55 signatures over 39 format ids, 30 validators, 9 filesystem
+Today that is 55 signatures over 39 format ids, 31 validators, 9 filesystem
 readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`,
-`ubifs`, `yaffs2`) and 16 container formats read by 10 readers: `gzip`,
+`ubifs`, `yaffs2`) and 17 container formats read by 11 readers: `gzip`,
 `bzip2`, `xz`, `lzma`, `lz4` and `zstd` (one `StreamReader`), `lzop`, `tar`,
-`cpio`, `zip`, `uimage`, `fit`, `ubi`, `android-boot` and
-`android-vendor-boot` (one reader), and `android-sparse`. `--history` is recovered by the ext, JFFS2,
+`cpio`, `zip`, `7z`, `uimage`, `fit`, `ubi`, `android-boot` and
+`android-vendor-boot` (one reader), and `android-sparse`. **Every format
+with a signature now has a reader.** `--history` is recovered by the ext, JFFS2,
 QNX6, UBIFS and YAFFS2 readers, and by the UBI reader for superseded logical
 erase blocks.
 
@@ -30,10 +31,10 @@ or better and at least `min_region_bytes` long is analysed again with the File n
 (`descend_into_file` in `src/discovery/Recurse.cpp`), bounded by
 `Limits::max_depth`. A container payload is walked into
 `containers/<node-id>/files` by `process_container` and then re-scanned the
-same way, so a `.tar.gz` holding a filesystem is followed to the end. A
-container whose format has no registered reader (`7z` is the only one left) is
-a Coverage row with status `unsupported` and an `analyze-no-reader`
-diagnostic.
+same way, so a `.tar.gz` holding a filesystem is followed to the end. Every
+container format with a signature has a reader now, so the `unsupported`
+Coverage row and its `analyze-no-reader` diagnostic are for a format that is
+identified but has none -- which today means none of them.
 
 Word-swapped dumps are detected by `detect_word_swap` (`src/core/Swap.cpp:334`)
 and analysed through a `SwappedSource` view; the Image node gets
@@ -49,20 +50,18 @@ Items 1-4 of the original list are done: the ext4, JFFS2, QNX6 and QNX IFS
 readers, and both halves of the container work (readers plus the payload
 recursion). See the section above.
 
-1. **The `7z` container reader**, the last container format with a signature
-   and no reader.
-2. **Verify a stream against its own checksum.** gzip's CRC32, xz's check and
+1. **Verify a stream against its own checksum.** gzip's CRC32, xz's check and
    lz4's and zstd's content checksums are all decoded and none is compared
    against the payload, so a `StreamReader` entry cannot say whether what it
    produced is what was compressed. `LzopReader` now does exactly that and is
    the shape to copy (`checksum` on the entry: `ok`, `mismatch` or `none`);
    the decode already happens, only the comparison is missing.
-3. **Write the corrected view of a word-swapped image** into the case directory
+2. **Write the corrected view of a word-swapped image** into the case directory
    (today only the detection is recorded; `src/discovery/Recurse.cpp`
    `ImageViewHook` is the extension point).
-4. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
+3. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
    `omnitrace report`. `DEVELOPMENT_PLAN.md` §5.4 to §7.
-5. **Phase 4**: web UI, only after the CLI and library are released (decision
+4. **Phase 4**: web UI, only after the CLI and library are released (decision
    `core-before-ui`).
 
 ## Good first improvements

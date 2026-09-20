@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-583 keys across 47 source files.
+601 keys across 49 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -63,6 +63,20 @@ Source: `src/containers/lzop/LzopReader.cpp` (8 keys)
 | `original_name` | `src/containers/lzop/LzopReader.cpp:103` | the file name the first member's header records |
 | `payload_bytes` | `src/containers/lzop/LzopReader.cpp:102` | uncompressed bytes the blocks add up to |
 | `version` | `src/containers/lzop/LzopReader.cpp:96` | lzop version that wrote it, as major.minor |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/sevenzip/SevenZipReader.cpp` (7 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `bad_crcs` | `src/containers/sevenzip/SevenZipReader.cpp:99` | substreams whose bytes did not match the CRC the archive stored (absent when none) |
+| `coders` | `src/containers/sevenzip/SevenZipReader.cpp:97` | every coder the archive's folders use, comma-joined and sorted |
+| `entries` | `src/containers/sevenzip/SevenZipReader.cpp:82` | entries the archive's file list holds |
+| `folders` | `src/containers/sevenzip/SevenZipReader.cpp:81` | coder chains the archive holds |
+| `header_encoded` | `src/containers/sevenzip/SevenZipReader.cpp:80` | "true" when the archive's own header is compressed |
+| `skipped_folders` | `src/containers/sevenzip/SevenZipReader.cpp:100` | folders that could not be decoded, so their entries have no contents (absent when none) |
+| `version` | `src/containers/sevenzip/SevenZipReader.cpp:78` | the format version the signature header records |
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -553,6 +567,24 @@ Source: `src/discovery/validators/romfs.cpp` (3 keys)
 | `checksum` | `src/discovery/validators/romfs.cpp:78` | ok or mismatch: header checksum over the first 512 bytes |
 | `full_size` | `src/discovery/validators/romfs.cpp:53` | full_size field in bytes |
 | `volume_name` | `src/discovery/validators/romfs.cpp:52` | volume name |
+
+## validator `7z`
+
+Source: `src/discovery/validators/sevenzip.cpp` (11 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `coders` | `src/discovery/validators/sevenzip.cpp:78` | every coder the archive's folders use, comma-joined and sorted |
+| `directories` | `src/discovery/validators/sevenzip.cpp:82` | entries with no data stream that are directories |
+| `entries` | `src/discovery/validators/sevenzip.cpp:80` | entries the archive's file list holds |
+| `files` | `src/discovery/validators/sevenzip.cpp:81` | entries that are not directories |
+| `folders` | `src/discovery/validators/sevenzip.cpp:79` | coder chains the archive holds; one has to be decoded whole to reach any file in it |
+| `header_encoded` | `src/discovery/validators/sevenzip.cpp:34` | "true" when the archive's own header is compressed |
+| `header_offset` | `src/discovery/validators/sevenzip.cpp:32` | where the header sits, as hex, from the archive's first byte |
+| `header_size` | `src/discovery/validators/sevenzip.cpp:33` | bytes of header |
+| `undecodable_folders` | `src/discovery/validators/sevenzip.cpp:85` | folders using a coder this build does not decode (absent when none) |
+| `unpacked_bytes` | `src/discovery/validators/sevenzip.cpp:83` | what the substreams add up to |
+| `version` | `src/discovery/validators/sevenzip.cpp:31` | the format version the signature header records |
 
 ## validator `squashfs`
 

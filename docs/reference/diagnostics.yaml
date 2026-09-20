@@ -177,6 +177,22 @@ cramfs-v1-no-size:
   meaning: FSID_VERSION_2 is clear, so the size and fsid fields are not valid and the extent is unknown
   action: old cramfs; carve manually if needed
 
+decompress-failed:
+  meaning: a raw filter chain (7z's coders, or an .xz chain) returned an error partway through
+  action: the compressed bytes are damaged or the chain is not what the container said; what decoded before the error is not kept
+
+decompress-props:
+  meaning: a coder's properties bytes were rejected by the decoder they belong to
+  action: the container's header is damaged, or the coder is a variant this build does not have
+
+decompress-size-mismatch:
+  meaning: a decoder produced a different number of bytes than the container said it would
+  action: the compressed data or the size in the header is wrong; treat the entry's contents as unreliable
+
+decompress-unsupported:
+  meaning: a filter id or filter chain is not one this build can run
+  action: the format uses a coder liblzma does not have, or one that cannot be chained (a byte filter with no compressor under it)
+
 dtb-is-fit:
   meaning: the device tree has an /images node, so it is a FIT image; the fit finding at the same offset wins
   action: informational; read the fit node

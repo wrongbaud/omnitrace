@@ -34,6 +34,15 @@ src/containers/lzop/LzopReader.cpp:
   payload_bytes: uncompressed bytes the blocks add up to
   version: lzop version that wrote it, as major.minor
 
+src/containers/sevenzip/SevenZipReader.cpp:
+  bad_crcs: substreams whose bytes did not match the CRC the archive stored (absent when none)
+  coders: every coder the archive's folders use, comma-joined and sorted
+  entries: entries the archive's file list holds
+  folders: coder chains the archive holds
+  header_encoded: "true" when the archive's own header is compressed
+  skipped_folders: folders that could not be decoded, so their entries have no contents (absent when none)
+  version: the format version the signature header records
+
 src/containers/sparse/SparseReader.cpp:
   block_size: bytes per block, from the sparse header
   output_size: bytes the expanded image comes to (total_blocks x block_size)
@@ -181,6 +190,19 @@ src/discovery/validators/lzop.cpp:
   payload_bytes: uncompressed bytes the blocks add up to
   stored_blocks: blocks lzop wrote verbatim because compressing them did not help
   version: lzop version that wrote it, as hex
+
+src/discovery/validators/sevenzip.cpp:
+  coders: every coder the archive's folders use, comma-joined and sorted
+  directories: entries with no data stream that are directories
+  entries: entries the archive's file list holds
+  files: entries that are not directories
+  folders: coder chains the archive holds; one has to be decoded whole to reach any file in it
+  header_encoded: "true" when the archive's own header is compressed
+  header_offset: where the header sits, as hex, from the archive's first byte
+  header_size: bytes of header
+  undecodable_folders: folders using a coder this build does not decode (absent when none)
+  unpacked_bytes: what the substreams add up to
+  version: the format version the signature header records
 
 src/discovery/validators/tar.cpp:
   data_bytes: total bytes of member data the archive holds
