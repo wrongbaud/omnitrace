@@ -48,6 +48,15 @@ std::optional<Finding> validate_lz4(const Span& span, std::uint64_t start, const
         pos += 4;
     }
     f.attrs["header_len"] = dec(pos + 1 - start);
+    // The frame descriptor says nothing about where the frame ends, so the
+    // decoder is asked. It stops after the last frame it accepts, which is
+    // exactly what the reader will do with the same bytes.
+    if (const std::uint64_t n =
+            compressed_stream_length(f, span, start, ::omnitrace::compress::Codec::Lz4, sig);
+        n != 0) {
+        f.size = n;
+        f.confidence = Confidence::Consistent;
+    }
     f.evidence = "frame descriptor valid, block max " + f.attrs["block_max_size"];
     return f;
 }

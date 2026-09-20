@@ -1,16 +1,14 @@
 # Compressed streams: gzip, xz, lzma, lz4, zstd
 
-This page is for examiners who meet `gzip` / `xz` / `lz4` / `zstd` findings
-and for contributors writing the remaining stream readers. After reading it you
-know what each validator checks, which of them measure the stream's extent and
-which still report `?`, how conflict resolution hides the streams that make up
-a filesystem, and what is not decoded yet.
+This page is for examiners who meet `gzip` / `xz` / `lzma` / `lz4` / `zstd`
+findings. After reading it you know what each validator checks, how the extent
+of a stream is found at all, how conflict resolution hides the streams that
+make up a filesystem, and what is not decoded yet.
 
-gzip, xz and LZMA-alone have a reader
-(`src/containers/stream/StreamReader.{h,cpp}`, registered for all three format
-ids) and a validator that sizes them. lz4 and zstd have neither yet.
+All five have a reader (`src/containers/stream/StreamReader.{h,cpp}`, one
+class registered for every format id) and a validator that sizes them.
 
-Four validators, one per stream format, all in `src/discovery/validators/`
+Five validators, one per stream format, all in `src/discovery/validators/`
 and registered from `signatures/core.toml` with category `compressed`:
 
 | format | signature | magic | validator |
@@ -22,7 +20,7 @@ and registered from `signatures/core.toml` with category `compressed`:
 | `zstd` | `zstd` | `28 b5 2f fd` | `zstd.cpp` (`zstd`) |
 
 No header states the compressed length, so finding the end means decoding the
-stream. The gzip and xz validators do exactly that, through
+stream. Every one of these validators does exactly that, through
 `compress::stream_length` (`include/omnitrace/core/Compression.h`), which runs
 the decoder to the end of the stream and keeps only the measurements: the
 payload is discarded as it is produced, so measuring a multi-gigabyte stream
@@ -36,8 +34,12 @@ The walk is bounded from the TOML, never from a constant in the validator:
 so a small stream claiming to expand forever is abandoned, and `max_payload`
 (4 GiB) is the absolute ceiling.
 
-lz4 and zstd are not measured and stay at `structural` with size `?`. A finding
-with no extent claims no bytes and parents nothing.
+gzip, xz, lz4 and zstd all allow streams or frames to be concatenated, and
+every decoder here follows them, so a measurement covers the whole run. That
+also means the validator and the reader cannot disagree: they call the same
+function on the same bytes. Trailing data after the last stream the decoder
+accepts is not claimed. A raw lz4 block has no frame header and is not
+measured — there is no extent to find.
 
 ## lzma (LZMA-alone, .lzma)
 
@@ -131,7 +133,8 @@ then the header checksum byte.
 | tier | assigned when |
 |---|---|
 | magic | fewer than 6 bytes (`lz4-truncated-header`) or invalid `FLG` / `BD` (`lz4-bad-frame-descriptor`) |
-| structural | descriptor valid (`lz4.cpp:33`) |
+| structural | descriptor valid, frame not measurable |
+| consistent | the frame, and any concatenated after it, decoded to its end |
 
 Attributes: `block_max_size` (`64KiB` .. `4MiB`), `block_independence`,
 `block_checksum`, `content_checksum`, `content_size`, `dictionary_id` (hex),
@@ -149,7 +152,8 @@ segment, the dictionary id (0/1/2/4 bytes) and the frame content size
 | tier | assigned when |
 |---|---|
 | magic | fewer than 5 bytes (`zstd-truncated-header`) or a reserved bit set (`zstd-bad-frame-header`) |
-| structural | descriptor valid (`zstd.cpp:33`) |
+| structural | descriptor valid, frame not measurable |
+| consistent | the frame, and any concatenated after it, decoded to its end |
 
 Attributes: `content_checksum`, `single_segment`, `window_size` (bytes,
 absent for single segment), `dictionary_id`, `frame_content_size`,
@@ -211,16 +215,16 @@ end: gzip container -> payload -> the filesystem inside it.
 
 ## Not yet supported
 
-* lz4 and zstd have no extent and no reader: their block lists and frame
-  indexes are not walked, so `size` stays unknown and their payloads are not
-  decompressed.
+* `verified` is unreachable for every stream format: none of gzip's CRC32,
+  xz's check value, lz4's content checksum or zstd's is compared against the
+  decoded payload.
+* A raw lz4 block (no frame magic) and the legacy `02 21 4c 18` format have no
+  signature: neither has a header to recognise.
 * bzip2 (`BZh`) and LZO streams have no signature and no decoder: both would
   need a new third-party dependency (libbz2, liblzo2), which
   `docs/ARCHITECTURE.md` treats as a decision rather than an omission.
 * Only two LZMA properties bytes have signatures; a stream written with other
   `lc`/`lp`/`pb` settings is not found.
-* `verified` is unreachable for every stream format: neither gzip's CRC32 nor
-  xz's check value is compared against the decoded payload.
 * The payload is held in memory in one piece, so a payload larger than
   `--max-file-bytes` is cut rather than streamed.
 * No signatures for LZMA-alone (`5d 00 00`), bzip2 (`BZh`) or LZO streams;

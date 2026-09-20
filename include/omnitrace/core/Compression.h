@@ -58,8 +58,9 @@ Status decompress_stream(Codec c, std::span<const std::uint8_t> in, std::vector<
 /// real extent — a deflate or xz header says nothing about where the stream
 /// ends — without holding the decompressed image in memory.
 ///
-/// Only the wrapped stream codecs (`Zlib`, `Deflate`, `Gzip`, `Xz`, `Lzma`)
-/// are supported; anything else fails with "decompress-unsupported". On any
+/// Supported for the wrapped stream codecs (`Zlib`, `Deflate`, `Gzip`, `Xz`,
+/// `Lzma`) and the framed ones (`Lz4` when the input starts with a frame
+/// magic, `Zstd`); anything else fails with "decompress-unsupported". On any
 /// failure `consumed` and `produced` still hold how far the decoder got.
 Status stream_length(Codec c, std::span<const std::uint8_t> in, std::uint64_t max_out,
                      std::uint64_t& consumed, std::uint64_t& produced);

@@ -741,3 +741,28 @@ TEST(LzmaContainer, AcceptsAPlausibleHeaderAndFailsOnGarbage) {
     EXPECT_FALSE(reader->walk(sink, fs::WalkOptions{}, r));  // the body is not a stream
     EXPECT_TRUE(r.entries_out.empty());
 }
+
+// ------------------------------------------------------------- lz4 / zstd
+
+TEST(StreamContainer, Lz4AndZstdAreRegisteredAndScreenTheirMagic) {
+    const auto formats = ContainerRegistry::instance().formats();
+    EXPECT_NE(std::find(formats.begin(), formats.end(), "lz4"), formats.end());
+    EXPECT_NE(std::find(formats.begin(), formats.end(), "zstd"), formats.end());
+
+    std::shared_ptr<const Source> keep;
+    const Bytes junk(256, 0x33);
+    EXPECT_FALSE(make("lz4")->open(span_of(junk, keep)));
+    EXPECT_FALSE(make("zstd")->open(span_of(junk, keep)));
+
+    // A frame magic with nothing behind it opens (the magic is the screen)
+    // and then fails to decode, rather than being mistaken for a payload.
+    Bytes lz4_head(256, 0x00);
+    lz4_head[0] = 0x04; lz4_head[1] = 0x22; lz4_head[2] = 0x4D; lz4_head[3] = 0x18;
+    std::shared_ptr<const Source> keep2;
+    auto reader = make("lz4");
+    ASSERT_TRUE(reader->open(span_of(lz4_head, keep2)));
+    ListingSink sink(true, Limits{});
+    fs::WalkResult r;
+    EXPECT_FALSE(reader->walk(sink, fs::WalkOptions{}, r));
+    EXPECT_TRUE(r.entries_out.empty());
+}

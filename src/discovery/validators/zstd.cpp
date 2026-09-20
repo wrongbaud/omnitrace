@@ -72,6 +72,12 @@ std::optional<Finding> validate_zstd(const Span& span, std::uint64_t start, cons
     }
     pos += fcs_len;
     f.attrs["header_len"] = dec(pos - start);
+    if (const std::uint64_t n =
+            compressed_stream_length(f, span, start, ::omnitrace::compress::Codec::Zstd, sig);
+        n != 0) {
+        f.size = n;
+        f.confidence = Confidence::Consistent;
+    }
     f.evidence = "frame header valid";
     return f;
 }

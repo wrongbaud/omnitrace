@@ -180,8 +180,23 @@ class LzmaReader final : public StreamReader {
     }
 };
 
+// lz4 frame: 04 22 4d 18. The raw-block and legacy forms have no frame
+// header to recognise, so only the frame format gets a reader.
+class Lz4Reader final : public StreamReader {
+   public:
+    Lz4Reader() : StreamReader("lz4", compress::Codec::Lz4, {0x04, 0x22, 0x4D, 0x18}) {}
+};
+
+// zstd frame: 28 b5 2f fd.
+class ZstdReader final : public StreamReader {
+   public:
+    ZstdReader() : StreamReader("zstd", compress::Codec::Zstd, {0x28, 0xB5, 0x2F, 0xFD}) {}
+};
+
 }  // namespace
 
+OMNITRACE_REGISTER_CONTAINER("lz4", Lz4Reader);
+OMNITRACE_REGISTER_CONTAINER("zstd", ZstdReader);
 OMNITRACE_REGISTER_CONTAINER("gzip", GzipReader);
 OMNITRACE_REGISTER_CONTAINER("xz", XzReader);
 OMNITRACE_REGISTER_CONTAINER("lzma", LzmaReader);

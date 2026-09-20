@@ -393,6 +393,8 @@ category = "compressed"
 hex = "04224d18"
 endian = "little"
 validator = "lz4"
+max_ratio = 1000
+max_payload = 4294967296
 description = "LZ4 frame"
 references = ["https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md"]
 
@@ -403,6 +405,8 @@ category = "compressed"
 hex = "28b52ffd"
 endian = "little"
 validator = "zstd"
+max_ratio = 1000
+max_payload = 4294967296
 description = "Zstandard frame"
 references = ["https://www.rfc-editor.org/rfc/rfc8878"]
 

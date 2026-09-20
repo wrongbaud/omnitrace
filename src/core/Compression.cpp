@@ -294,12 +294,13 @@ Status inflate_lzma(std::span<const std::uint8_t> in, std::vector<std::uint8_t>*
 
 // ---------------------------------------------------------------- lz4
 
-Status inflate_lz4_frame(std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
-                         std::uint64_t max_out) {
+Status inflate_lz4_frame(std::span<const std::uint8_t> in, std::vector<std::uint8_t>* out,
+                         std::uint64_t max_out, std::uint64_t* consumed = nullptr,
+                         std::uint64_t* produced = nullptr) {
     LZ4F_dctx* dctx = nullptr;
     if (LZ4F_isError(LZ4F_createDecompressionContext(&dctx, LZ4F_VERSION)) || dctx == nullptr)
         return Status::fail(kInit);
-    Appender ap(out, max_out);
+    Appender ap = out != nullptr ? Appender(*out, max_out) : Appender(max_out);
     std::size_t ip = 0;
     Status result = Status::success();
     for (;;) {
@@ -338,6 +339,10 @@ Status inflate_lz4_frame(std::span<const std::uint8_t> in, std::vector<std::uint
         break;
     }
     LZ4F_freeDecompressionContext(dctx);
+    // `ip` is one past the last frame the decoder accepted, which is the
+    // stream's extent: trailing data after the last frame is not claimed.
+    if (consumed != nullptr) *consumed = ip;
+    if (produced != nullptr) *produced = ap.size();
     return result;
 }
 
@@ -416,8 +421,9 @@ Status inflate_lz4_legacy(std::span<const std::uint8_t> in, std::vector<std::uin
 
 // ---------------------------------------------------------------- zstd
 
-Status inflate_zstd(std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
-                    std::uint64_t max_out) {
+Status inflate_zstd(std::span<const std::uint8_t> in, std::vector<std::uint8_t>* out,
+                    std::uint64_t max_out, std::uint64_t* consumed = nullptr,
+                    std::uint64_t* produced = nullptr) {
     if (in.empty()) return Status::fail(kEmpty);
     ZSTD_DStream* ds = ZSTD_createDStream();
     if (ds == nullptr) return Status::fail(kInit);
@@ -425,7 +431,7 @@ Status inflate_zstd(std::span<const std::uint8_t> in, std::vector<std::uint8_t>&
         ZSTD_freeDStream(ds);
         return Status::fail(kInit);
     }
-    Appender ap(out, max_out);
+    Appender ap = out != nullptr ? Appender(*out, max_out) : Appender(max_out);
     ZSTD_inBuffer zin{in.data(), in.size(), 0};
     Status result = Status::success();
     for (;;) {
@@ -456,6 +462,8 @@ Status inflate_zstd(std::span<const std::uint8_t> in, std::vector<std::uint8_t>&
         }
     }
     ZSTD_freeDStream(ds);
+    if (consumed != nullptr) *consumed = zin.pos;
+    if (produced != nullptr) *produced = ap.size();
     return result;
 }
 
@@ -508,7 +516,7 @@ Status decompress_impl(Codec c, std::span<const std::uint8_t> in, std::vector<st
         case Codec::Lz4:
             if (starts_with_le32(in, 0, kLz4FrameMagic) ||
                 starts_with_le32(in, 0, kLz4SkippableMagic, kLz4SkippableMask))
-                return inflate_lz4_frame(in, out, max_out);
+                return inflate_lz4_frame(in, &out, max_out, consumed);
             if (starts_with_le32(in, 0, kLz4LegacyMagic))
                 return inflate_lz4_legacy(in, out, max_out);
             return inflate_lz4_block(in, out, max_out);
@@ -517,7 +525,7 @@ Status decompress_impl(Codec c, std::span<const std::uint8_t> in, std::vector<st
                 return inflate_lz4_legacy(in, out, max_out);
             return inflate_lz4_block(in, out, max_out);
         case Codec::Zstd:
-            return inflate_zstd(in, out, max_out);
+            return inflate_zstd(in, &out, max_out, consumed);
         case Codec::Lzo1x:
             return inflate_lzo1x(in, out, max_out, exact);
         case Codec::Rtime:
@@ -548,6 +556,15 @@ Status stream_length(Codec c, std::span<const std::uint8_t> in, std::uint64_t ma
             return inflate_lzma(in, nullptr, max_out, true, &consumed, &produced);
         case Codec::Lzma:
             return inflate_lzma(in, nullptr, max_out, false, &consumed, &produced);
+        case Codec::Lz4:
+            // Only the frame format has an extent; a raw block is the whole
+            // input by definition and has no header to measure.
+            if (!starts_with_le32(in, 0, kLz4FrameMagic) &&
+                !starts_with_le32(in, 0, kLz4SkippableMagic, kLz4SkippableMask))
+                return Status::fail(kUnsupported);
+            return inflate_lz4_frame(in, nullptr, max_out, &consumed, &produced);
+        case Codec::Zstd:
+            return inflate_zstd(in, nullptr, max_out, &consumed, &produced);
         default:
             return Status::fail(kUnsupported);
     }
