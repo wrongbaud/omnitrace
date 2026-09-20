@@ -20,10 +20,13 @@ readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`,
 `ubifs`, `yaffs2`) and 17 container formats read by 11 readers: `gzip`,
 `bzip2`, `xz`, `lzma`, `lz4` and `zstd` (one `StreamReader`), `lzop`, `tar`,
 `cpio`, `zip`, `7z`, `uimage`, `fit`, `ubi`, `android-boot` and
-`android-vendor-boot` (one reader), and `android-sparse`. **Every format
-with a signature now has a reader.** `--history` is recovered by the ext, JFFS2,
-QNX6, UBIFS and YAFFS2 readers, and by the UBI reader for superseded logical
-erase blocks.
+`android-vendor-boot` (one reader), and `android-sparse`. **Every *container*
+format with a signature has a reader.** Two filesystems do not: `cramfs` and
+`romfs` validate to `verified` and then have nothing to walk them, which the
+full-corpus run caught -- the audio image holds a real romfs that comes out as
+an `unsupported` coverage row with no extracted tree. `--history` is recovered
+by the ext, JFFS2, QNX6, UBIFS and YAFFS2 readers, and by the UBI reader for
+superseded logical erase blocks.
 
 Nested analysis runs for extracted files: every file a walk writes to the host
 is re-scanned, and one holding a filesystem or a partition table at Structural
@@ -34,7 +37,7 @@ or better and at least `min_region_bytes` long is analysed again with the File n
 same way, so a `.tar.gz` holding a filesystem is followed to the end. Every
 container format with a signature has a reader now, so the `unsupported`
 Coverage row and its `analyze-no-reader` diagnostic are for a format that is
-identified but has none -- which today means none of them.
+identified but has none -- which today means `cramfs` and `romfs`.
 
 Every stream format says what its payload is worth. `compress::stream_check`
 reads the check a gzip, zlib, bzip2, xz, lz4 or zstd stream records over
