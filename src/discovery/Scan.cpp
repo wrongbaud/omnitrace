@@ -140,10 +140,34 @@ bool is_partition_table(const Finding& f) {
     return f.category == "partition-table";
 }
 
+// A raw compressed stream (gzip, xz, lz4 frame, zstd). These validators cap at
+// Structural by design: a deflate header carries nothing to cross-check.
+bool is_compressed_stream(const Finding& f) {
+    return f.category == "compressed";
+}
+
 // May `owner` take `f` into its also_matched? A partition table is only ever
 // absorbed by another partition table; anything else follows the normal rule.
 bool may_absorb(const Finding& owner, const Finding& f) {
     return !is_partition_table(f) || is_partition_table(owner);
+}
+
+// Confidence part of the containment rule: strictly higher, or equal when `f`
+// is a compressed stream inside something that is not one.
+//
+// A SquashFS or JFFS2 is built out of gzip/xz/lz4/zstd blocks, so its range is
+// full of compressed-stream hits that are noise, not finds. Normally the
+// filesystem outranks them and absorbs them. When it is truncated it drops to
+// Structural, the same tier those validators cap at, and the strict rule
+// releases every one of them: a SquashFS cut short by an extraction limit
+// turned into 131 spurious top-level containers. Equal-confidence nesting is
+// still kept for everything else (an ext4 inside an MBR partition stays
+// visible), and a compressed stream still outranks nothing: it is only ever
+// the absorbed side here.
+bool outranks(const Finding& owner, const Finding& f) {
+    if (owner.confidence > f.confidence) return true;
+    return owner.confidence == f.confidence && is_compressed_stream(f) &&
+           !is_compressed_stream(owner);
 }
 
 std::vector<Finding> resolve(std::vector<Finding> in) {
@@ -169,7 +193,7 @@ std::vector<Finding> resolve(std::vector<Finding> in) {
         if (!owner) {
             for (auto it = open.rbegin(); it != open.rend(); ++it) {
                 const Finding& k = kept[*it];
-                if (k.confidence > f.confidence && f.offset >= k.offset && f_end <= end_of(k) &&
+                if (outranks(k, f) && f.offset >= k.offset && f_end <= end_of(k) &&
                     may_absorb(k, f)) {
                     owner = *it;
                     break;

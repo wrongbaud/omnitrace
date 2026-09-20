@@ -66,7 +66,7 @@ Each module exposes `void register_<module>_commands(CLI::App&)` from `apps/cli/
 | consistent | 85 | cross-field consistency: table pointers land inside the structure, counts agree |
 | verified | 99 | CRC/checksum verified or a decode probe succeeded |
 
-Conflict resolution between overlapping findings is deterministic (`resolve()` in `src/discovery/Scan.cpp`): findings are ordered by offset, then higher confidence, then larger size, then signature name; a finding at the same offset as a kept one, or fully inside a kept one of strictly higher confidence, moves into that finding's `also_matched`. Equal-confidence nesting and partial overlaps are kept. Details and the partition-table exception: `docs/formats/signatures.md`.
+Conflict resolution between overlapping findings is deterministic (`resolve()` in `src/discovery/Scan.cpp`): findings are ordered by offset, then higher confidence, then larger size, then signature name; a finding at the same offset as a kept one, or fully inside a kept one that outranks it, moves into that finding's `also_matched`. Outranking is strictly higher confidence, or equal confidence when the inner finding is a compressed stream and the outer one is not (so a truncated SquashFS, demoted to the tier the stream validators cap at, still absorbs its own blocks). Equal-confidence nesting is otherwise kept, and partial overlaps are kept. Details and the partition-table exception: `docs/formats/signatures.md`.
 
 ## Output contract
 

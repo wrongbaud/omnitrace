@@ -3,10 +3,12 @@
 // locale, no unordered containers.
 #include "omnitrace/output/Markdown.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Common.h"
@@ -62,6 +64,44 @@ std::string diagnostics_table(const std::vector<Diagnostic>& ds) {
         rows.push_back({severity_name(d.severity), esc(d.code), esc(d.message)});
     }
     return md_table({"Severity", "Code", "Message"}, rows);
+}
+
+// One row of the node-diagnostics roll-up: how often a (severity, code) pair
+// occurs anywhere in the graph, and the first node that carried it.
+struct CodeTally {
+    Severity severity = Severity::Info;
+    std::string code;
+    std::uint64_t count = 0;
+    std::string first_node;
+    std::string first_message;
+};
+
+// Every Warning/Error on any node, grouped by code. A run over a real image
+// carries these on file and region nodes, where neither the Diagnostics table
+// (run-level only) nor partitions.md (structural nodes only) shows them, so an
+// entry cut by a limit would otherwise be visible in the manifest alone.
+// Info notes ("also-matched") are left out, matching the Warnings column in
+// partitions.md. Ordered Error before Warning, then by code: a pure function
+// of the graph, so the same Manifest gives the same table.
+std::vector<CodeTally> node_diagnostic_tallies(const Manifest& m) {
+    std::map<std::pair<std::uint8_t, std::string>, CodeTally> by_code;
+    for (const Node& n : m.nodes()) {
+        for (const Diagnostic& d : n.diagnostics) {
+            if (d.severity == Severity::Info) continue;
+            // Descending severity from an ascending map: Error (2) sorts first.
+            const auto key = std::make_pair(
+                static_cast<std::uint8_t>(0xFFU - static_cast<std::uint8_t>(d.severity)), d.code);
+            auto it = by_code.find(key);
+            if (it == by_code.end()) {
+                it = by_code.emplace(key, CodeTally{d.severity, d.code, 0, n.id, d.message}).first;
+            }
+            ++it->second.count;
+        }
+    }
+    std::vector<CodeTally> out;
+    out.reserve(by_code.size());
+    for (auto& [key, tally] : by_code) out.push_back(std::move(tally));
+    return out;
 }
 
 // Depth-first walk over the graph in child_ids order, starting at the roots
@@ -251,6 +291,18 @@ std::string summary_markdown(const Manifest& m) {
 
     out += "\n## Diagnostics\n\n";
     out += diagnostics_table(m.diagnostics);
+
+    out += "\n## Node diagnostics\n\n";
+    out += "Warnings and errors recorded on nodes, grouped by code; info notes are not listed.\n";
+    out += "Full text, and the node each one belongs to, is in the manifest.\n\n";
+    {
+        std::vector<std::vector<std::string>> rows;
+        for (const CodeTally& t : node_diagnostic_tallies(m)) {
+            rows.push_back({severity_name(t.severity), esc(t.code), dec(t.count),
+                            esc(t.first_node), esc(t.first_message)});
+        }
+        out += md_table({"Severity", "Code", "Count", "First node", "Example message"}, rows);
+    }
     return out;
 }
 

@@ -165,10 +165,21 @@ copy: null                                        # "flash/router.bin" with --co
 ## INFO.md
 
 In order: the summary (run, evidence, node counts, structural map, coverage,
-run-level diagnostics), the nested partition table, a **Partitions carved**
-table (`File`, `Offset`, `Size`, `Kind` as `kind/format`, `SHA-256`, `Node`,
-`Note` with `skipped: ...` for anything held back), and the coverage table.
-All of it is rendered from `INFO.yaml`; nothing is hand-edited.
+run-level diagnostics, node diagnostics), the nested partition table, a
+**Partitions carved** table (`File`, `Offset`, `Size`, `Kind` as
+`kind/format`, `SHA-256`, `Node`, `Note` with `skipped: ...` for anything held
+back), and the coverage table. All of it is rendered from `INFO.yaml`; nothing
+is hand-edited.
+
+**Node diagnostics** is the roll-up of every `Warning` and `Error` recorded on
+a node, grouped by code, ordered errors first and then by code:
+`Severity | Code | Count | First node | Example message`. Without it a
+diagnostic on a `file` or `region` node is in `INFO.yaml` alone — the
+**Diagnostics** table above it holds run-level entries only, and
+`partitions.md` counts warnings on structural nodes only. That is how an
+entry cut by `--max-file-bytes` becomes visible in the report rather than only
+to a reader of the manifest. `Info` notes (`also-matched`) are not listed,
+matching the `Warnings` column of `partitions.md`.
 
 ## filesystems/<node-id>/files
 

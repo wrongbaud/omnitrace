@@ -114,9 +114,53 @@ TEST(Markdown, SummarySnapshot) {
         "\n"
         "| Severity | Code | Message |\n"
         "|---|---|---|\n"
-        "| info | run-note | everything fine |\n";
+        "| info | run-note | everything fine |\n"
+        "\n"
+        // Node-level warnings and errors, which neither the run-level table
+        // above nor partitions.md (structural nodes only) would show. Errors
+        // first, then by code; the fixture's Info "squashfs-note" is left out.
+        "## Node diagnostics\n"
+        "\n"
+        "Warnings and errors recorded on nodes, grouped by code; info notes are not listed.\n"
+        "Full text, and the node each one belongs to, is in the manifest.\n"
+        "\n"
+        "| Severity | Code | Count | First node | Example message |\n"
+        "|---|---|---|---|---|\n"
+        "| error | region-unidentified | 1 | n000008 | no signature matched |\n"
+        "| warning | squashfs-limit-entries | 1 | n000003 | entry limit reached |\n";
     EXPECT_EQ(md, want);
     EXPECT_EQ(summary_markdown(test::full_manifest()), md);
+}
+
+// The roll-up counts every occurrence of a code and names the first node that
+// carried it, so one limit tripping on a thousand entries stays one row.
+TEST(Markdown, SummaryNodeDiagnosticsGroupAndCount) {
+    Manifest m = test::full_manifest();
+    for (int i = 0; i < 3; ++i) {
+        Node n;
+        n.kind = NodeKind::File;
+        n.parent_id = "n000003";
+        n.name = "big" + std::to_string(i) + ".img";
+        n.diagnostics.push_back(
+            {Severity::Warning, "squashfs-limit-file-bytes", "cut at max_file_bytes"});
+        m.add_node(n);
+    }
+    const std::string md = summary_markdown(m);
+    EXPECT_NE(md.find("| warning | squashfs-limit-file-bytes | 3 | n000010 | cut at "
+                      "max_file_bytes |\n"),
+              std::string::npos);
+    // Grouped, not one row per node.
+    EXPECT_EQ(md.find("squashfs-limit-file-bytes"), md.rfind("squashfs-limit-file-bytes"));
+}
+
+TEST(Markdown, SummaryNodeDiagnosticsEmptyWhenNothingIsWrong) {
+    Manifest m;
+    m.run.tool = "omnitrace";
+    const std::string md = summary_markdown(m);
+    EXPECT_NE(md.find("## Node diagnostics\n"), std::string::npos);
+    EXPECT_NE(md.find("| Severity | Code | Count | First node | Example message |\n|---|---|---|---"
+                      "|---|\n"),
+              std::string::npos);
 }
 
 TEST(Markdown, PartitionsSnapshot) {

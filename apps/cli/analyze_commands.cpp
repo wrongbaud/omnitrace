@@ -464,5 +464,11 @@ void register_analyze_commands(CLI::App& app) {
         ->capture_default_str();
     analyze->add_option("--max-bytes", args->limits.max_bytes, "Total bytes written per run")
         ->capture_default_str();
+    analyze
+        ->add_option("--max-file-bytes", args->limits.max_file_bytes,
+                     "Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a "
+                     "larger entry is cut there with a <fmt>-limit-file-bytes warning")
+        ->transform(CLI::AsSizeValue(false))
+        ->capture_default_str();
     analyze->callback([args] { cmd_analyze(*args); });
 }

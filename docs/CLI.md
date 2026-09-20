@@ -62,7 +62,7 @@ determine an extent), `Format`, `Tier` (`magic` / `structural` / `consistent` /
 `also_matched` holds lower-confidence findings the resolver suppressed because
 a better one covers the same bytes.
 
-## `analyze <image> --out DIR [--layout corpus|flat] [--carve none|table|all] [--max-carve-bytes N] [--copy-image] [--no-extract] [--history] [--max-depth N] [--max-files N] [--max-bytes N]`
+## `analyze <image> --out DIR [--layout corpus|flat] [--carve none|table|all] [--max-carve-bytes N] [--copy-image] [--no-extract] [--history] [--max-depth N] [--max-files N] [--max-bytes N] [--max-file-bytes N]`
 
 The end-to-end pipeline:
 
@@ -105,6 +105,7 @@ The end-to-end pipeline:
 | `--max-depth N` | Nested extraction levels (default 8). Phase 0 only analyses the image itself; the option is honoured by the recursion pass that follows. |
 | `--max-files N` | Entries emitted per run, across all filesystems (default 500000). When the budget is spent the remaining filesystems are recorded but not walked. |
 | `--max-bytes N` | Total bytes written per run (default 4 GiB). |
+| `--max-file-bytes N` | Largest single extracted entry (default 1 GiB; `2G`, `8G` accepted, 1024-based). A larger entry is written up to the cap and cut there: the file node gets `truncated: "true"` and a `<fmt>-limit-file-bytes` warning. Raise it when a filesystem holds whole nested images as files — the QNX6 `storage` partition of the corpus keeps SquashFS update images of 1.0-1.6 GiB, and at the default each one is cut mid-image and will not read back as a filesystem. |
 
 Every limit that trips is visible: the node gets `truncated: "true"` in its
 attrs, a `Warning` diagnostic, and the format's coverage row becomes `partial`.

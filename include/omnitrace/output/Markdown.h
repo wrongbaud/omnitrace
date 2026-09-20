@@ -18,10 +18,15 @@
 /// @brief Serialization: YAML manifest/listings, JSON Schema, Markdown.
 namespace omnitrace::output {
 
-// summary.md: evidence table, run info, counts by kind, coverage, top-level map.
+// summary.md: evidence table, run info, counts by kind, coverage, top-level
+// map, run-level diagnostics, node diagnostics.
 /// summary.md: run info, evidence table, counts by kind, the structural map
-/// (image / partition / container / filesystem / region nodes), coverage and
-/// run-level diagnostics.
+/// (image / partition / container / filesystem / region nodes), coverage,
+/// run-level diagnostics, and a roll-up of every Warning/Error recorded on a
+/// node, grouped by code (errors first, then by code). The roll-up is the only
+/// place a diagnostic on a `file` or `region` node reaches the report: the
+/// run-level table holds `Manifest::diagnostics` alone and `partitions.md`
+/// counts warnings on structural nodes only.
 std::string summary_markdown(const Manifest& m);
 // partitions.md: every Partition/Container/Filesystem/Region node as a table row
 // (offset, size, kind, format, confidence, warnings), nested by depth.

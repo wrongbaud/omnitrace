@@ -326,17 +326,27 @@ signature name, then format. It then keeps or absorbs each finding:
 1. Same offset as a kept finding: absorbed into that finding's
    `also_matched` (the sort order already put the higher confidence, then
    larger, then alphabetically first one in front).
-2. Fully inside a kept finding with **strictly higher** confidence: absorbed
-   by the innermost such finding.
+2. Fully inside a kept finding that outranks it (`outranks`,
+   [Scan.cpp:160](../src/discovery/Scan.cpp#L160)): absorbed by the innermost
+   such finding. Outranking is strictly higher confidence, or equal confidence
+   when the inner finding is a compressed stream (category `compressed`) and
+   the outer one is not.
 3. Otherwise kept. Equal-confidence nesting and partial overlaps stay visible.
 4. A partition-table finding is only ever absorbed by another partition
-   table (`may_absorb`, [Scan.cpp:145](../src/discovery/Scan.cpp#L145)), so a
+   table (`may_absorb`, [Scan.cpp:150](../src/discovery/Scan.cpp#L150)), so a
    filesystem at LBA 0 cannot hide the MBR beneath it.
 
 Example, from `router.bin`: the SquashFS at `0x1c9245` is Consistent (85)
 with a size, and the 107 xz streams found inside it are Structural (60), so
 all 107 land in the SquashFS finding's `also_matched` and `scan --json` shows
-`"also_matched": [...]` on that one finding. Tests:
+`"also_matched": [...]` on that one finding.
+
+The compressed-stream clause in rule 2 is what keeps that working when the
+filesystem is itself only Structural. A SquashFS whose `bytes_used` runs past
+the data is demoted by `squashfs-truncated` to the same tier the stream
+validators cap at; under strict ranking alone it released every block inside
+it, and a 1 GiB-truncated image from the QNX corpus reported 131 spurious
+top-level containers instead of one filesystem. Tests:
 [tests/unit/discovery/resolve_test.cpp](../tests/unit/discovery/resolve_test.cpp).
 
 ## 5. Recurse: the passes of analyze()

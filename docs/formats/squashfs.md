@@ -130,6 +130,7 @@ zeros legitimately exceeds any ratio, and the cap already bounds memory.
 | `squashfs-bad-id` | Warning | uid/gid index outside the id table (reported once per walk; ids reported as 0) |
 | `squashfs-bad-xattr` | Warning | xattr id outside the xattr table; `extra["xattrs"]` omitted |
 | `squashfs-truncated-image` | Warning | `bytes_used` exceeds the Span |
+| `squashfs-truncated` | Warning | validator: `bytes_used` exceeds the available bytes. The finding's size is clamped to the Span and it stays at `Structural`: every table sits at the end of the image, so on a cut image none of them is there to be checked. It still absorbs the gzip/xz/lz4/zstd hits inside its range (`docs/formats/signatures.md`) |
 | `squashfs-minor-version` | Info | `s_minor != 0`; parsed as 4.0 |
 | `squashfs-root-invalid` | Error | `root_inode` is not a directory; `walk` fails |
 | `squashfs-limit-nodes` / `squashfs-limit-files` | Warning | `Limits::max_nodes_per_fs` / `max_files` reached; walk stops, `truncated` set. Also emitted when a single directory listing holds more than `max_nodes_per_fs` entries: the listing is cut there, `truncated` set |
@@ -144,6 +145,21 @@ matching, `bytes_used` < 96.
 
 None. SquashFS is write-once; there are no superseded versions or deletion
 records to recover.
+
+## Truncated images
+
+A SquashFS stored as a file inside another filesystem is only as complete as
+the extraction that produced it, and `Limits::max_file_bytes` (CLI
+`--max-file-bytes`, default 1 GiB) is the usual reason it is not. The QNX6
+`storage` partition of the corpus keeps its update images this way:
+`osimage/os_a.img` is 1,107,136,512 bytes of which the default cap writes
+1,073,741,824, and the result is a SquashFS whose superblock parses, whose
+`bytes_used` is 1,105,987,639, and whose inode, directory, fragment, export and
+id tables all lie past the cut. The validator reports it at `Structural` with
+`squashfs-truncated`; the reader opens it and then fails the walk at the root
+inode with `squashfs-metadata-corrupt`, and coverage becomes `partial`. Raise
+`--max-file-bytes` past the entry size (the `<fmt>-limit-file-bytes` warning
+gives it) and the same image reads as `Consistent` with all 60,530 entries.
 
 ## Known gaps
 

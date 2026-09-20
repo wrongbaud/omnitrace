@@ -119,22 +119,24 @@ std::optional<Finding> validate_squashfs(const Span& span, std::uint64_t start,
     if (!ok) return f;  // Magic, with the reasons attached
     f.confidence = Confidence::Structural;
 
+    // Size: bytes_used rounded up to 4K (mksquashfs pads the image), clamped.
     bool truncated = false;
     const std::uint64_t used = clamp_size(span, start, *bytes_used, truncated);
-    if (truncated) {
+    const std::uint64_t padded = (*bytes_used + 4095u) & ~static_cast<std::uint64_t>(4095u);
+    f.size = truncated || padded > remaining(span, start) ? used : padded;
+    if (truncated)
         diag(f, Severity::Warning, "squashfs-truncated",
              "bytes_used " + dec(*bytes_used) + " exceeds the " + dec(remaining(span, start)) +
                  " bytes available");
-        f.size = used;
-        return f;
-    }
-    // Size: bytes_used rounded up to 4K (mksquashfs pads the image), clamped.
-    const std::uint64_t padded = (*bytes_used + 4095u) & ~static_cast<std::uint64_t>(4095u);
-    f.size = padded <= remaining(span, start) ? padded : used;
 
     // Cross-field consistency: every table the superblock points at must lie
-    // inside bytes_used (absent tables are all-ones).
-    bool consistent = true;
+    // inside bytes_used (absent tables are all-ones). A truncated image stays
+    // at Structural (ext does the same): every table sits at the end of a
+    // SquashFS, so on a cut image none of them is there to be checked and the
+    // pointers were verified against a claimed size, not against data. The
+    // checks still run, so the diagnostics and the evidence line describe the
+    // superblock either way.
+    bool consistent = !truncated;
     auto check_table = [&](const char* name, std::uint64_t off, bool may_be_absent) {
         if (may_be_absent && off == kAbsent) return;
         if (off < 96 || off >= *bytes_used) {

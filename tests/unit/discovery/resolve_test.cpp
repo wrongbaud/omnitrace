@@ -81,6 +81,13 @@ format = "rejecting"
 category = "other"
 magic = "PLN!"
 validator = "test-reject"
+
+[[signature]]
+name = "stream"
+format = "stream"
+category = "compressed"
+magic = "ZIP!"
+validator = "test-sized"
 )",
                             "resolve"));
     return s;
@@ -123,6 +130,36 @@ TEST(Resolve, EqualConfidenceNestingIsKept) {
     Bytes buf(4096, 0);
     plant(buf, 100, "OUT!", 2, 1000);
     plant(buf, 200, "INN!", 2, 50);  // consistent inside consistent: both stay
+    const auto found = scan(test::span_of(buf), set());
+    ASSERT_EQ(found.size(), 2u);
+    EXPECT_TRUE(found[0].also_matched.empty());
+}
+
+// The one exception to EqualConfidenceNestingIsKept. A SquashFS or JFFS2 is
+// built out of gzip/xz/lz4/zstd blocks and normally outranks them, but a
+// truncated one drops to Structural — the tier those validators cap at — and
+// would otherwise release every block inside it as a top-level finding.
+TEST(Resolve, CompressedStreamsAreAbsorbedAtEqualConfidence) {
+    Bytes buf(4096, 0);
+    plant(buf, 100, "OUT!", 1, 1000);  // structural container, [100, 1100)
+    plant(buf, 200, "ZIP!", 1, 50);    // structural stream inside -> absorbed
+    plant(buf, 300, "ZIP!", 2, 50);    // higher than the container -> kept
+    plant(buf, 2000, "ZIP!", 1, 50);   // outside -> kept
+    const auto found = scan(test::span_of(buf), set());
+    ASSERT_EQ(found.size(), 3u);
+    EXPECT_EQ(found[0].offset, 100u);
+    ASSERT_EQ(found[0].also_matched.size(), 1u);
+    EXPECT_EQ(found[0].also_matched[0].offset, 200u);
+    EXPECT_EQ(found[1].offset, 300u);
+    EXPECT_EQ(found[2].offset, 2000u);
+}
+
+// Absorption at equal confidence is one-directional: a compressed stream is
+// only ever the absorbed side, so two of them nest as before.
+TEST(Resolve, CompressedStreamDoesNotAbsorbAnother) {
+    Bytes buf(4096, 0);
+    plant(buf, 100, "ZIP!", 1, 1000);
+    plant(buf, 200, "ZIP!", 1, 50);
     const auto found = scan(test::span_of(buf), set());
     ASSERT_EQ(found.size(), 2u);
     EXPECT_TRUE(found[0].also_matched.empty());

@@ -77,12 +77,22 @@ With `opts.resolve_conflicts` (default) findings are sorted by
 * a finding whose `[offset, offset+size)` lies inside a kept finding's range
   with **strictly higher** confidence is moved into that finding's
   `also_matched` (innermost container wins);
-* everything else is kept. Equal-confidence nesting is kept (an ext4 inside an
-  MBR partition stays visible), and partial overlaps are kept.
+* the one exception: a finding of category `compressed` is also absorbed at
+  **equal** confidence, by any enclosing finding that is not itself a
+  compressed stream;
+* everything else is kept. Equal-confidence nesting is otherwise kept (an ext4
+  inside an MBR partition stays visible), and partial overlaps are kept.
 
-Compressed-stream validators therefore never exceed `Structural`: the xz/gzip
-/lz4/zstd streams that make up a SquashFS or sit inside a JFFS2 file are
-absorbed into the filesystem finding rather than listed beside it.
+Compressed-stream validators never exceed `Structural` — a deflate header
+carries nothing to cross-check — so the xz/gzip/lz4/zstd streams that make up a
+SquashFS or sit inside a JFFS2 file are absorbed into the filesystem finding
+rather than listed beside it. The equal-confidence exception is what keeps that
+true when the filesystem is itself only `Structural`: a SquashFS cut short by
+an extraction limit is demoted by `squashfs-truncated`, and under the strict
+rule alone it released every compressed block inside it (a 1 GiB-truncated
+image produced 131 spurious top-level containers). Absorption is
+one-directional — a compressed stream never absorbs anything at equal
+confidence — so two nested streams still both stay visible.
 
 Without resolution the same total order is still applied, so output is
 byte-identical run to run.
