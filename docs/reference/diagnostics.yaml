@@ -93,6 +93,38 @@ carve-write-failed:
   meaning: writing the carved file failed; the partial file was removed
   action: check free space and permissions, then re-run
 
+compressed-stream-unmeasured:
+  meaning: the decoder could not follow a gzip or xz stream to its end, so the finding has no extent and claims no bytes
+  action: informational; the stream is damaged, truncated or a bomb (it is abandoned at max_ratio/max_payload from the signature)
+
+container-bad-magic:
+  meaning: the container reader was opened on bytes that do not start with its magic
+  action: contributor error or a stale signature; the node keeps the validator's finding
+
+container-decompress-failed:
+  meaning: a compressed container did not decode, so no payload was emitted
+  action: the stream is damaged or uses an unsupported variant; carve the node and try the vendor's tool
+
+container-empty:
+  meaning: the container reader was opened on an empty Span
+  action: the image is truncated at the container's first byte
+
+container-limit-file-bytes:
+  meaning: a container payload exceeds Limits::max_file_bytes and was cut there
+  action: re-run with a larger --max-file-bytes to recover the whole payload
+
+container-not-open:
+  meaning: walk() was called before a successful open() (caller bug)
+  action: contributor error; analyze() never produces this
+
+container-sink-error:
+  meaning: the Sink refused the container payload (unsafe path or its own limit)
+  action: see the sink-* code quoted in the message
+
+container-unreadable:
+  meaning: the container's bytes could not be read out of the Source
+  action: the image is truncated or the underlying file became unreadable mid-run
+
 cramfs-bad-size:
   meaning: the superblock size or file count is out of range
   action: magic-tier hit; probably not a cramfs image

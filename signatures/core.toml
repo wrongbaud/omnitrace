@@ -323,6 +323,11 @@ hex = "1f8b08"
 endian = "little"
 validator = "gzip"
 max_name_len = 4096
+# Bounds for the stream walk that gives the finding its extent: the payload may
+# be at most max_ratio times the input still available, and never more than
+# max_payload. A stream that wants more is abandoned unsized.
+max_ratio = 1000
+max_payload = 4294967296
 description = "gzip member with deflate compression"
 references = ["https://www.rfc-editor.org/rfc/rfc1952"]
 
@@ -333,6 +338,8 @@ category = "compressed"
 hex = "fd377a585a00"
 endian = "little"
 validator = "xz"
+max_ratio = 1000
+max_payload = 4294967296
 description = ".xz stream header; stream flags CRC verified"
 references = ["https://tukaani.org/xz/xz-file-format.txt"]
 

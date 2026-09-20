@@ -3,10 +3,12 @@
 // scan:    findings only, as an aligned table or JSON.
 // analyze: the case directory (docs/CASE_LAYOUT.md). Default "corpus" layout:
 //          INFO.yaml (+ manifest.yaml alias), INFO.md, flash/SOURCE.yaml,
-//          partitions/{<name>.bin,mount.sh}, filesystems/<id>/{listing.yaml,
+//          partitions/{<name>.bin,mount.sh}, filesystems/<id>/ and
+//          containers/<id>/ each holding {listing.yaml,
 //          listing.md,files/}, plus summary.md / partitions.md for
 //          compatibility. "flat" is the Phase 0 layout: manifest.yaml,
-//          summary.md, partitions.md, filesystems/ and nothing carved.
+//          summary.md, partitions.md, filesystems/, containers/ and nothing
+//          carved.
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -28,6 +30,7 @@
 #include "omnitrace/core/Source.h"
 #include "omnitrace/core/Span.h"
 #include "omnitrace/core/Text.h"
+#include "omnitrace/containers/Container.h"
 #include "omnitrace/discovery/Recurse.h"
 #include "omnitrace/discovery/Signature.h"
 #include "omnitrace/filesystems/Filesystem.h"
@@ -324,6 +327,9 @@ void cmd_analyze(const AnalyzeArgs& a) {
     opts.open_reader = [](const std::string& format) {
         return fs::FilesystemRegistry::instance().create(format);
     };
+    opts.open_container = [](const std::string& format) {
+        return container::ContainerRegistry::instance().create(format);
+    };
     if (!corpus && a.carve != "none")
         spdlog::debug("--layout flat: nothing is carved (--carve {} ignored)", a.carve);
 
@@ -351,8 +357,13 @@ void cmd_analyze(const AnalyzeArgs& a) {
     }
     write_text(out / "summary.md", output::summary_markdown(m));
     write_text(out / "partitions.md", output::partitions_markdown(m));
+    // A listing lands beside the tree its walk wrote: filesystems/<id> for a
+    // Filesystem node, containers/<id> for a Container one (Recurse.h).
     for (const auto& [fs_id, entries] : listings) {
-        const std::filesystem::path dir = out / "filesystems" / fs_id;
+        const Node* owner = m.find(fs_id);
+        const char* group =
+            owner != nullptr && owner->kind == NodeKind::Container ? "containers" : "filesystems";
+        const std::filesystem::path dir = out / group / fs_id;
         std::filesystem::create_directories(dir, ec);
         if (ec) fail("cannot create '" + dir.string() + "': " + ec.message());
         write_text(dir / "listing.yaml", output::listing_to_yaml(fs_id, entries));
@@ -437,7 +448,7 @@ void register_analyze_commands(CLI::App& app) {
     analyze
         ->add_option("--layout", args->layout,
                      "corpus: INFO.yaml/INFO.md, flash/, partitions/ (default); flat: "
-                     "manifest.yaml, summary.md, partitions.md, filesystems/ only")
+                     "manifest.yaml, summary.md, partitions.md, filesystems/ and containers/ only")
         ->check(CLI::IsMember({"corpus", "flat"}))
         ->capture_default_str();
     analyze

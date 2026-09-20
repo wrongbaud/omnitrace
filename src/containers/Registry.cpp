@@ -11,8 +11,12 @@
 namespace omnitrace::container {
 
 namespace detail {
+void omnitrace_container_anchor_stream();
+
 void link_builtin_containers() {
-    // No built-in container readers yet. Add anchor calls here as they land.
+    // Calling each (empty) anchor is enough to make the linker keep its object
+    // file and therefore its registrar. Add a line here per reader.
+    omnitrace_container_anchor_stream();
 }
 }  // namespace detail
 

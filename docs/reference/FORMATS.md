@@ -41,9 +41,9 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `ubi` | container | validated to verified (`ubi`) | yes | no | n.a. | - | [ubi.md](../formats/ubi.md) | size known only when a second EC header fixes the PEB size (`ubi-single-peb` otherwise); signatures: `ubi` |
 | `uimage` | container | validated to verified (`uimage`) | yes | no | n.a. | - | [uimage.md](../formats/uimage.md) | may re-categorise as kernel; kernel and kernel_noload types are re-categorised as `kernel`; signatures: `uimage` |
 | `zip` | container | magic-only | no | no | n.a. | - | [signatures.md](../formats/signatures.md) (plain magic) | signatures: `zip` |
-| `gzip` | compressed | validated to structural (`gzip`) | no | no | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `gzip` |
+| `gzip` | compressed | validated to consistent (`gzip`) | yes | yes (`src/containers/stream/StreamReader.cpp:161`) | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `gzip` |
 | `lz4` | compressed | validated to structural (`lz4`) | no | no | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `lz4-frame` |
-| `xz` | compressed | validated to structural (`xz`) | no | no | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `xz` |
+| `xz` | compressed | validated to consistent (`xz`) | yes | yes (`src/containers/stream/StreamReader.cpp:162`) | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `xz` |
 | `zstd` | compressed | validated to structural (`zstd`) | no | no | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `zstd` |
 | `gpt` | partition-table | validated to verified (`gpt`) | yes | no | n.a. | - | [partition-tables.md](../formats/partition-tables.md) | size is the table extent (header + entry array); the disk extent is `disk_size`; signatures: `gpt`, `gpt-4k` |
 | `mbr` | partition-table | validated to consistent (`mbr`) | yes | no | n.a. | - | [partition-tables.md](../formats/partition-tables.md) | size is the 512-byte table sector; EBR chain sectors hidden through `also_covers`; signatures: `mbr` |
@@ -59,5 +59,5 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 ## Counts
 
 - 50 signatures over 35 format ids
-- 23 validators, 7 filesystem reader(s), 0 container reader(s)
+- 23 validators, 7 filesystem reader(s), 2 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

@@ -390,9 +390,15 @@ struct WalkOutcome {
     std::string sink_error;
 };
 
-// Open the right Sink for this run and walk `reader` into it.
-WalkOutcome walk_into_sink(Ctx& c, fs::FilesystemReader& reader, const std::string& fs_id,
-                           const Limits& limits) {
+// A reader's walk, type-erased: FilesystemReader and ContainerReader have the
+// same walk signature but no common base, and this file must not care which.
+using WalkFn = std::function<Status(Sink&, const fs::WalkOptions&, fs::WalkResult&)>;
+
+// Open the right Sink for this run and run `do_walk` into it. `group` is the
+// case-directory subdirectory the tree lands in ("filesystems" or
+// "containers"); `node_id` names the directory inside it.
+WalkOutcome walk_into_sink(Ctx& c, const WalkFn& do_walk, const char* group,
+                           const std::string& node_id, const Limits& limits) {
     WalkOutcome w;
     fs::WalkOptions wopts;
     wopts.extract_data = c.opts.extract;
@@ -401,7 +407,7 @@ WalkOutcome walk_into_sink(Ctx& c, fs::FilesystemReader& reader, const std::stri
 
     if (c.opts.extract) {
         const std::filesystem::path root =
-            std::filesystem::path(c.opts.out_dir) / "filesystems" / fs_id / "files";
+            std::filesystem::path(c.opts.out_dir) / group / node_id / "files";
         std::error_code ec;
         std::filesystem::create_directories(root.parent_path(), ec);
         if (ec) {
@@ -417,14 +423,14 @@ WalkOutcome walk_into_sink(Ctx& c, fs::FilesystemReader& reader, const std::stri
             w.sink_error = st.error;
             return w;
         }
-        w.status = reader.walk(*sink, wopts, w.result);
+        w.status = do_walk(*sink, wopts, w.result);
         w.files = sink->files_emitted();
         w.bytes = sink->bytes_emitted();
         return w;
     }
 
     ListingSink sink(false, limits);
-    w.status = reader.walk(sink, wopts, w.result);
+    w.status = do_walk(sink, wopts, w.result);
     if (w.result.entries_out.empty() && !sink.entries().empty())
         w.result.entries_out = sink.entries();
     w.files = sink.files_emitted();
@@ -479,23 +485,26 @@ std::vector<Descend> add_file_nodes(Ctx& c, const std::string& fs_id, const Node
 // extracted files):
 //
 //   * Kind. A Region find (an ELF, a DTB, a certificate) is identified bytes
-//     with nothing to open, and every rootfs is full of them. A Container is
-//     worth descending into only once a container::ContainerReader can open
-//     the payload; none is registered, so a Container find would add a node
-//     and an "analyze-no-reader" warning and recover nothing. Add
-//     NodeKind::Container here when the first container reader lands.
+//     with nothing to open, and every rootfs is full of them. A Container
+//     counts only when open_container actually yields a reader for it: with
+//     no reader the node would carry an "analyze-no-reader" warning and
+//     recover nothing, which is how 909 gzip entries in a rootfs turn into
+//     909 useless nodes.
 //   * Tier. Confidence::Magic means the magic matched and nothing was
 //     validated. The magic-only signatures (zip, tar, cpio, 7z) hit constantly
 //     inside compressed and binary data: descending on them produced 3988 zip
 //     and 1994 tar nodes, every one a false positive, against 32 real nested
 //     filesystems. Requiring Structural also drops the romfs hits the validator
 //     itself calls "magic string inside other data".
-//   * Extent. The find must claim at least min_region_bytes, the floor the
-//     pass already applies to unidentified space. A high tier is not by itself
-//     a size: the JFFS2 validator CRC-checks nodes and reaches Verified on a
-//     single valid 12-byte node, so the `mtd` binary in the router rootfs
-//     holds a "verified jffs2 filesystem" of 12 bytes. Nothing can be
-//     recovered out of an image smaller than a gap worth reporting.
+//   * Extent, for filesystems and partition tables. The find must claim at
+//     least min_region_bytes, the floor the pass already applies to
+//     unidentified space. A high tier is not by itself a size: the JFFS2
+//     validator CRC-checks nodes and reaches Verified on a single valid
+//     12-byte node, so the `mtd` binary in the router rootfs holds a "verified
+//     jffs2 filesystem" of 12 bytes. Nothing can be recovered out of an image
+//     smaller than a gap worth reporting. A compressed stream is exempt: its
+//     extent is unknown until the reader decodes it, which is the whole point
+//     of opening it.
 void descend_into_file(Ctx& c, const Descend& d, std::size_t depth) {
     std::shared_ptr<MappedFile> file;
     if (Status st = MappedFile::open(d.host_path, file); !st) {
@@ -511,10 +520,13 @@ void descend_into_file(Ctx& c, const Descend& d, std::size_t depth) {
     std::vector<Finding> findings = run_scanner(c, whole);
     bool worth_opening = false;
     for (const Finding& f : findings) {
+        if (f.confidence < Confidence::Structural) continue;
         const NodeKind k = kind_for(f);
-        if (k != NodeKind::Filesystem && k != NodeKind::Partition) continue;
-        worth_opening = worth_opening || (f.confidence >= Confidence::Structural &&
-                                          f.size >= c.opts.min_region_bytes);
+        if (k == NodeKind::Filesystem || k == NodeKind::Partition)
+            worth_opening = worth_opening || f.size >= c.opts.min_region_bytes;
+        else if (k == NodeKind::Container)
+            worth_opening =
+                worth_opening || (c.opts.open_container && c.opts.open_container(f.format));
     }
     if (!worth_opening) return;
 
@@ -526,6 +538,24 @@ void descend_into_file(Ctx& c, const Descend& d, std::size_t depth) {
     outer.swap(c.extents);
     analyze_span(c, whole, d.node_id, depth + 1, std::move(findings));
     c.extents.swap(outer);
+}
+
+// Re-scan every file a walk wrote, after the owning node is complete so the
+// manifest is consistent while a deeper level is being built. The depth cap is
+// checked once here rather than per file: a rootfs has thousands of them and
+// one diagnostic per level is what the examiner needs.
+void descend_all(Ctx& c, const std::vector<Descend>& nested, const std::string& owner_id,
+                 std::size_t depth) {
+    if (nested.empty()) return;
+    if (depth + 1 > c.opts.limits.max_depth) {
+        c.out.diagnostics.push_back({Severity::Warning, "analyze-limit-depth",
+                                     "nesting deeper than max_depth (" +
+                                         dec(c.opts.limits.max_depth) + ") under " + owner_id +
+                                         "; " + dec(nested.size()) +
+                                         " extracted file(s) were not re-scanned"});
+        return;
+    }
+    for (const Descend& d : nested) descend_into_file(c, d, depth);
 }
 
 // Open + walk one filesystem finding whose node is already in the graph, then
@@ -571,7 +601,11 @@ void process_filesystem(Ctx& c, const Span& span, const Finding& f, const std::s
                                  "run-wide max_files reached; filesystem not walked"});
                 attrs["truncated"] = "true";
             } else {
-                WalkOutcome w = walk_into_sink(c, *reader, fs_id, limits);
+                const WalkFn do_walk = [&reader](Sink& sink, const fs::WalkOptions& wo,
+                                                 fs::WalkResult& wr) {
+                    return reader->walk(sink, wo, wr);
+                };
+                WalkOutcome w = walk_into_sink(c, do_walk, "filesystems", fs_id, limits);
                 if (!w.sink_error.empty()) {
                     set_coverage(c, f.format, "partial", w.sink_error);
                     diags.push_back({Severity::Error, "analyze-sink-failed", w.sink_error});
@@ -616,20 +650,110 @@ void process_filesystem(Ctx& c, const Span& span, const Finding& f, const std::s
         for (Diagnostic& d : diags) fs_node->diagnostics.push_back(std::move(d));
     }
 
-    // Nested pass, after the filesystem node is complete so the manifest is
-    // consistent while a deeper level is being built. The depth cap is checked
-    // once here rather than per file: a rootfs has thousands of them and one
-    // diagnostic per level is what the examiner needs.
-    if (nested.empty()) return;
-    if (depth + 1 > c.opts.limits.max_depth) {
-        c.out.diagnostics.push_back({Severity::Warning, "analyze-limit-depth",
-                                     "nesting deeper than max_depth (" +
-                                         dec(c.opts.limits.max_depth) + ") under " + fs_id + "; " +
-                                         dec(nested.size()) +
-                                         " extracted file(s) were not re-scanned"});
-        return;
+    descend_all(c, nested, fs_id, depth);
+}
+
+// Open + walk one container finding whose node is already in the graph. Same
+// shape as process_filesystem: the two differ only in the reader interface and
+// in the facts info() carries.
+void process_container(Ctx& c, const Span& span, const Finding& f, const std::string& id,
+                       std::size_t depth) {
+    std::vector<Diagnostic> diags;
+    std::map<std::string, std::string> attrs;
+    std::optional<std::uint64_t> new_length;
+    std::vector<Descend> nested;
+
+    std::unique_ptr<container::ContainerReader> reader =
+        c.opts.open_container ? c.opts.open_container(f.format) : nullptr;
+    if (!reader) {
+        // Rule 7: a container we recognise but do not open is a Coverage row
+        // and a Diagnostic, never a silent node.
+        set_coverage(c, f.format, "unsupported", "no container reader registered");
+        diags.push_back({Severity::Warning, "analyze-no-reader",
+                         "no " + f.format + " container reader registered; payload not opened"});
+    } else if (f.category == "compressed" && f.size == 0) {
+        // A compressed stream the validator could not follow to an end has no
+        // extent, and the reader would run the same decode and fail the same
+        // way: the validator's probe *is* a decode (validators/common.h
+        // `compressed_stream_length`). Trying anyway turns a stray 1f 8b in
+        // binary data into an Error and drags the whole format's coverage row
+        // to "partial" while real streams elsewhere decoded fine. The node
+        // keeps its "compressed-stream-unmeasured" note, which says as much,
+        // and coverage stays silent because nothing was attempted.
+    } else {
+        // A compressed stream usually has no extent yet (the validator cannot
+        // know where a deflate stream ends), so the Span runs to the end of
+        // the parent and the reader stops where the stream does.
+        const Span c_span = f.size != 0 ? span.sub(f.offset, f.size) : span.sub(f.offset);
+        if (Status st = reader->open(c_span); !st) {
+            set_coverage(c, f.format, "partial",
+                         "open failed at " + hex(span.absolute(f.offset)) + ": " + st.error);
+            diags.push_back({Severity::Error, "analyze-open-failed",
+                             f.format + " container reader rejected the structure: " + st.error});
+        } else {
+            Limits limits = c.opts.limits;
+            limits.max_files =
+                c.files_used >= limits.max_files ? 0 : limits.max_files - c.files_used;
+            limits.max_bytes =
+                c.bytes_used >= limits.max_bytes ? 0 : limits.max_bytes - c.bytes_used;
+            if (limits.max_files == 0) {
+                set_coverage(c, f.format, "partial",
+                             "run-wide max_files reached before this container");
+                diags.push_back({Severity::Warning, "analyze-limit-files",
+                                 "run-wide max_files reached; container not opened"});
+                attrs["truncated"] = "true";
+            } else {
+                const WalkFn do_walk = [&reader](Sink& sink, const fs::WalkOptions& wo,
+                                                 fs::WalkResult& wr) {
+                    return reader->walk(sink, wo, wr);
+                };
+                WalkOutcome w = walk_into_sink(c, do_walk, "containers", id, limits);
+                if (!w.sink_error.empty()) {
+                    set_coverage(c, f.format, "partial", w.sink_error);
+                    diags.push_back({Severity::Error, "analyze-sink-failed", w.sink_error});
+                } else {
+                    c.files_used = sat_add(c.files_used, w.files);
+                    c.bytes_used = sat_add(c.bytes_used, w.bytes);
+                    // info() is read after the walk: a stream reader only knows
+                    // where the stream ended once it has decoded it, and that
+                    // extent is what the validator could not supply.
+                    const container::ContainerInfo info = reader->info();
+                    if (!info.compression.empty()) attrs["compression"] = info.compression;
+                    for (const auto& [k, v] : info.attrs) attrs.emplace(k, v);
+                    if (f.size == 0 && info.size != 0)
+                        new_length = std::min<std::uint64_t>(info.size, c_span.size());
+
+                    const fs::WalkResult& r = w.result;
+                    attrs["entries"] = dec(r.entries);
+                    attrs["files"] = dec(r.files);
+                    attrs["bytes"] = dec(r.bytes);
+                    if (r.truncated) attrs["truncated"] = "true";
+                    for (const Diagnostic& d : r.diagnostics) diags.push_back(d);
+                    if (!w.status) {
+                        set_coverage(c, f.format, "partial",
+                                     "walk failed at " + hex(span.absolute(f.offset)) + ": " +
+                                         w.status.error);
+                        diags.push_back({Severity::Error, "analyze-walk-failed", w.status.error});
+                    } else if (r.truncated) {
+                        set_coverage(c, f.format, "partial",
+                                     "a limit stopped the walk at " + hex(span.absolute(f.offset)));
+                    } else {
+                        set_coverage(c, f.format, "supported", "");
+                    }
+                    const Node copy = *c.out.find(id);  // add_node may reallocate
+                    nested = add_file_nodes(c, id, copy, r.entries_out);
+                    c.listings.emplace_back(id, r.entries_out);
+                }
+            }
+        }
     }
-    for (const Descend& d : nested) descend_into_file(c, d, depth);
+
+    if (Node* n = c.out.find(id)) {
+        for (const auto& [k, v] : attrs) n->attrs[k] = v;
+        if (new_length) n->location.length = *new_length;
+        for (Diagnostic& d : diags) n->diagnostics.push_back(std::move(d));
+    }
+    descend_all(c, nested, id, depth);
 }
 
 // ------------------------------------------------------------------ regions
@@ -692,6 +816,25 @@ struct Item {
     std::uint64_t gap_len = 0;
     std::string gap_parent;  // partition id, or empty for the span's parent
 };
+
+// [off, off+len) minus every range in `claims`, in order. Used to report a gap
+// against the extents as they stand after the readers ran.
+std::vector<Claim> subtract_claims(std::uint64_t off, std::uint64_t len,
+                                   std::vector<Claim> claims) {
+    std::vector<Claim> out;
+    const std::uint64_t end = sat_add(off, len);
+    std::sort(claims.begin(), claims.end(),
+              [](const Claim& a, const Claim& b) { return a.offset < b.offset; });
+    std::uint64_t cursor = off;
+    for (const Claim& cl : claims) {
+        if (cl.end <= cursor || cl.offset >= end) continue;
+        if (cl.offset > cursor) out.push_back({cursor, std::min(cl.offset, end)});
+        cursor = std::max(cursor, cl.end);
+        if (cursor >= end) break;
+    }
+    if (cursor < end) out.push_back({cursor, end});
+    return out;
+}
 
 // Gaps between merged claims, reported to `items` under `parent`.
 void note_gaps(const Ctx& c, std::vector<Claim> claims, std::uint64_t from, std::uint64_t to,
@@ -923,10 +1066,23 @@ void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::s
     });
 
     // Pass 4: nodes, in byte order.
+    //
+    // `resolved` holds each finding's extent as it stands *after* its reader
+    // ran, which is not what pass 3 saw. A compressed stream has no extent
+    // until the reader decodes it (the validator cannot know where a deflate
+    // stream ends), so pass 3 treated its bytes as unclaimed and planned a gap
+    // over them. Findings sort before gaps at the same offset, so by the time a
+    // gap item comes up the container that owns those bytes has its real
+    // length, and the gap is reported against that instead of over it.
+    std::vector<Claim> resolved;
     for (const Item& it : items) {
         if (it.is_gap) {
             const std::string parent = it.gap_parent.empty() ? parent_id : it.gap_parent;
-            c.out.add_node(gap_node(span, it.offset, it.gap_len, parent));
+            for (const Claim& part : subtract_claims(it.offset, it.gap_len, resolved)) {
+                const std::uint64_t len = part.end - part.offset;
+                if (len >= c.opts.min_region_bytes)
+                    c.out.add_node(gap_node(span, part.offset, len, parent));
+            }
             continue;
         }
         const Finding& f = findings[it.finding];
@@ -934,20 +1090,18 @@ void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::s
         const std::string parent = parent_for(c, f.offset, parent_id);
         const NodeKind kind = kind_for(f);
         Node n = node_from_finding(f, span, parent, kind);
-        if (kind == NodeKind::Container) {
-            // Rule 7: a container we recognise but do not open (Phase 1a) is a
-            // Coverage row and a Diagnostic, never a silent node.
-            set_coverage(c, f.format, "unsupported", "no container reader registered");
-            n.diagnostics.push_back(
-                {Severity::Warning, "analyze-no-reader",
-                 "no " + f.format + " container reader registered; payload not opened"});
-        }
         const std::string id = c.out.add_node(std::move(n)).id;
         if (kind == NodeKind::Filesystem || kind == NodeKind::Container)
             c.extents.push_back({id, f.offset, f_end});
         if (kind == NodeKind::Filesystem) process_filesystem(c, span, f, id, depth);
-        // Phase 1a: kind == Container -> open a ContainerReader, walk its payload
-        // into a Sink, then analyze_span(c, payload_span, id, depth + 1).
+        if (kind == NodeKind::Container) process_container(c, span, f, id, depth);
+        // The reader may have given the node the extent the validator could
+        // not (see `resolved` above).
+        if (const Node* n = c.out.find(id); n != nullptr && n->location.length != 0) {
+            const std::uint64_t end =
+                std::min(sat_add(f.offset, n->location.length), span.size());
+            if (end > f.offset) resolved.push_back({f.offset, end});
+        }
     }
 }
 

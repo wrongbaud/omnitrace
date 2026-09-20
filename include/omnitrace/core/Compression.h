@@ -38,6 +38,32 @@ const char* codec_name(Codec c);
 Status decompress(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
                   std::uint64_t max_out);
 
+// Decompress the stream at the start of `in` and report how many input bytes
+// it used, so the caller can size the stream inside a larger image.
+/// Like `decompress`, and additionally sets `consumed` to the number of input
+/// bytes the stream used: one past the last byte of the last member, so a
+/// gzip or xz stream embedded in a larger image gets a real extent. Only the
+/// wrapped stream codecs (`Zlib`, `Deflate`, `Gzip`, `Xz`, `Lzma`) measure it;
+/// for the others the whole input is the unit and `consumed` is `in.size()`.
+/// On failure `consumed` is how far the decoder got, which is still the best
+/// available bound for a truncated or corrupt stream.
+Status decompress_stream(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
+                         std::uint64_t max_out, std::uint64_t& consumed);
+
+// How long the stream at the start of `in` is, without keeping its output.
+/// Run the decoder to the end of the stream and report only its measurements:
+/// `consumed` input bytes and `produced` output bytes. The payload is
+/// discarded as it is produced, so measuring a multi-gigabyte stream costs one
+/// 64 KiB window. This is what lets a validator give a compressed finding a
+/// real extent — a deflate or xz header says nothing about where the stream
+/// ends — without holding the decompressed image in memory.
+///
+/// Only the wrapped stream codecs (`Zlib`, `Deflate`, `Gzip`, `Xz`, `Lzma`)
+/// are supported; anything else fails with "decompress-unsupported". On any
+/// failure `consumed` and `produced` still hold how far the decoder got.
+Status stream_length(Codec c, std::span<const std::uint8_t> in, std::uint64_t max_out,
+                     std::uint64_t& consumed, std::uint64_t& produced);
+
 // Raw-block variants used by filesystems (SquashFS/UBIFS blocks, JFFS2 nodes):
 // exact expected output size, fail if the stream produces more or less.
 /// Block variant for filesystems that know the decompressed size (SquashFS

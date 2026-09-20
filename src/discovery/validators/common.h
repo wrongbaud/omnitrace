@@ -8,7 +8,9 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
+#include "omnitrace/core/Compression.h"
 #include "omnitrace/discovery/Signature.h"
 
 namespace omnitrace::discovery::validators {
@@ -147,6 +149,58 @@ inline std::uint64_t sat_add(std::uint64_t a, std::uint64_t b) {
 inline std::uint64_t sat_mul(std::uint64_t a, std::uint64_t b) {
     if (a == 0 || b == 0) return 0;
     return a > UINT64_MAX / b ? UINT64_MAX : a * b;
+}
+
+// Length of the compressed stream at `start`, from running the decoder to the
+// end and keeping only the measurements (core/Compression.h `stream_length`,
+// which discards the payload as it goes). 0 when it could not be measured.
+//
+// The caller assigns f.size and the tier rather than this helper, so that
+// scripts/gen_docs.py reads them out of the validator it documents.
+//
+// Why a validator does this at all: a deflate or xz header says nothing about
+// where the stream ends, so without the walk the finding has size 0. A finding
+// with no extent claims no bytes, which means the analysis pass plans an
+// "unidentified" region over the very bytes the stream occupies and a nested
+// find inside it is parented to the image instead of to the stream.
+//
+// The work is bounded from the TOML, never from a constant here: `max_ratio`
+// caps the output as a multiple of the input still available (a small stream
+// that claims to expand forever is a bomb and is abandoned) and `max_payload`
+// is the absolute ceiling. When the walk does not reach the end the finding
+// keeps size 0 and says why, which is exactly the pre-measurement behaviour.
+inline std::uint64_t compressed_stream_length(Finding& f, const Span& span, std::uint64_t start,
+                                             ::omnitrace::compress::Codec codec,
+                                             const Signature& sig) {
+    const std::uint64_t avail = remaining(span, start);
+    if (avail == 0) return 0;
+    const std::uint64_t ratio = extra_u64(sig, "max_ratio").value_or(1000);
+    const std::uint64_t ceiling = extra_u64(sig, "max_payload").value_or(4ull << 30);
+    const std::uint64_t cap = std::min(ceiling, sat_mul(avail, ratio));
+
+    const std::optional<std::span<const std::uint8_t>> view =
+        span.view(start, static_cast<std::size_t>(avail));
+    std::optional<std::vector<std::uint8_t>> copy;
+    std::span<const std::uint8_t> in;
+    if (view) {
+        in = *view;
+    } else {
+        // A Source that cannot map (a word-swapped view) has to be copied, and
+        // copying the whole tail of an image to size one stream is not worth
+        // it. The finding keeps size 0.
+        return 0;
+    }
+
+    std::uint64_t consumed = 0, produced = 0;
+    const Status st = ::omnitrace::compress::stream_length(codec, in, cap, consumed, produced);
+    if (!st) {
+        diag(f, Severity::Info, "compressed-stream-unmeasured",
+             "the " + f.format + " stream does not decode to an end (" + st.error +
+                 "); its extent is unknown and it claims no bytes");
+        return 0;
+    }
+    f.attrs["payload_bytes"] = dec(produced);
+    return consumed;
 }
 
 // Shared by the partition-table validators (mbr.cpp, gpt.cpp): the sector

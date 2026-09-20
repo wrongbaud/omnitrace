@@ -152,22 +152,26 @@ bool may_absorb(const Finding& owner, const Finding& f) {
     return !is_partition_table(f) || is_partition_table(owner);
 }
 
-// Confidence part of the containment rule: strictly higher, or equal when `f`
-// is a compressed stream inside something that is not one.
+// Confidence part of the containment rule: strictly higher, or any tier at all
+// when `f` is a compressed stream inside something that is not one.
 //
 // A SquashFS or JFFS2 is built out of gzip/xz/lz4/zstd blocks, so its range is
-// full of compressed-stream hits that are noise, not finds. Normally the
-// filesystem outranks them and absorbs them. When it is truncated it drops to
-// Structural, the same tier those validators cap at, and the strict rule
-// releases every one of them: a SquashFS cut short by an extraction limit
-// turned into 131 spurious top-level containers. Equal-confidence nesting is
-// still kept for everything else (an ext4 inside an MBR partition stays
-// visible), and a compressed stream still outranks nothing: it is only ever
-// the absorbed side here.
+// full of compressed-stream hits that are its data, not separate finds. Tier
+// ordering is the wrong tool for deciding that: a truncated SquashFS drops to
+// Structural (a cut image cannot show its tables), while a gzip or xz stream
+// that the validator could walk to its end reaches Consistent. Either of those
+// alone flips the comparison, and a SquashFS cut short by an extraction limit
+// turned into 131 spurious top-level containers. Containment is the real
+// argument — bytes inside a sized structure belong to it — so a compressed
+// stream is absorbed by any enclosing finding that is not itself one.
+//
+// Only sized findings can own anything (a size-0 finding has no extent), so
+// this cannot let a bare magic hit swallow a stream. Equal-confidence nesting
+// is still kept for everything else: an ext4 inside an MBR partition stays
+// visible. Absorption stays one-directional, so two nested streams both stay.
 bool outranks(const Finding& owner, const Finding& f) {
     if (owner.confidence > f.confidence) return true;
-    return owner.confidence == f.confidence && is_compressed_stream(f) &&
-           !is_compressed_stream(owner);
+    return is_compressed_stream(f) && !is_compressed_stream(owner);
 }
 
 std::vector<Finding> resolve(std::vector<Finding> in) {

@@ -77,22 +77,23 @@ With `opts.resolve_conflicts` (default) findings are sorted by
 * a finding whose `[offset, offset+size)` lies inside a kept finding's range
   with **strictly higher** confidence is moved into that finding's
   `also_matched` (innermost container wins);
-* the one exception: a finding of category `compressed` is also absorbed at
-  **equal** confidence, by any enclosing finding that is not itself a
-  compressed stream;
+* the one exception: a finding of category `compressed` is absorbed by any
+  enclosing finding that is not itself a compressed stream, **at any tier**;
 * everything else is kept. Equal-confidence nesting is otherwise kept (an ext4
   inside an MBR partition stays visible), and partial overlaps are kept.
 
-Compressed-stream validators never exceed `Structural` — a deflate header
-carries nothing to cross-check — so the xz/gzip/lz4/zstd streams that make up a
-SquashFS or sit inside a JFFS2 file are absorbed into the filesystem finding
-rather than listed beside it. The equal-confidence exception is what keeps that
-true when the filesystem is itself only `Structural`: a SquashFS cut short by
-an extraction limit is demoted by `squashfs-truncated`, and under the strict
-rule alone it released every compressed block inside it (a 1 GiB-truncated
-image produced 131 spurious top-level containers). Absorption is
-one-directional — a compressed stream never absorbs anything at equal
-confidence — so two nested streams still both stay visible.
+The exception exists because a SquashFS or JFFS2 is *built out of* gzip, xz,
+lz4 and zstd blocks: those hits are the filesystem's data, not separate finds.
+Tier ordering is the wrong instrument for saying so, and both sides of the
+comparison move. A SquashFS cut short by an extraction limit is demoted to
+`structural` by `squashfs-truncated`, because a cut image cannot show its
+tables; a gzip or xz stream the validator walked to its end reaches
+`consistent`. Either one alone flips a strict comparison, and the truncated
+case produced 131 spurious top-level containers out of one filesystem.
+Containment is the real argument — bytes inside a sized structure belong to it
+— so that is what the rule uses. Only a sized finding can own anything (a
+size-0 finding has no extent), so a bare magic hit cannot swallow a stream,
+and absorption is one-directional, so two nested streams both stay visible.
 
 Without resolution the same total order is still applied, so output is
 byte-identical run to run.

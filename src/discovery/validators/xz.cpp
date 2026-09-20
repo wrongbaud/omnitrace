@@ -46,6 +46,11 @@ std::optional<Finding> validate_xz(const Span& span, std::uint64_t start, const 
         return f;
     }
     f.confidence = Confidence::Structural;
+    if (const std::uint64_t n = compressed_stream_length(f, span, start, compress::Codec::Xz, sig);
+        n != 0) {
+        f.size = n;
+        f.confidence = Confidence::Consistent;
+    }
     f.evidence = "stream header CRC ok, check " + std::string(check_name);
     return f;
 }

@@ -19,9 +19,13 @@
 //      found even when the whole-image scan missed it. Unclaimed space inside
 //      a partition, and between top-level claims, becomes Region nodes.
 //   4. Every Filesystem node, wherever it is nested, is walked with the reader
-//      the caller supplies into <out_dir>/filesystems/<node-id>/files; one
-//      File node per emitted entry. Containers without a reader are a Coverage
-//      row ("unsupported") and a Diagnostic, never silent.
+//      the caller supplies into <out_dir>/filesystems/<node-id>/files, and
+//      every Container node with the container reader the caller supplies into
+//      <out_dir>/containers/<node-id>/files; one File node per emitted entry.
+//      A gzip or xz container holds one entry, "payload"; the reader also
+//      reports where the stream ended, so the node gets the extent the
+//      validator could not know. A container with no registered reader is a
+//      Coverage row ("unsupported") and a Diagnostic, never silent.
 //   5. Every file that walk wrote to the host is re-scanned. When it holds a
 //      filesystem or a partition table at Structural or better and at least
 //      min_region_bytes long, the whole pass
@@ -40,8 +44,8 @@
 //      is skipped with a Coverage row {"carve","partial",...} and a Diagnostic.
 //
 // analyze_span() is the per-span worker and is called recursively for every
-// extracted file. Container payloads are the remaining case: a Container node
-// with no registered reader is still only a Coverage row and a Diagnostic.
+// file a filesystem or container walk wrote to the host, so a payload that is
+// itself an image is analysed like any other extracted file.
 //
 // Layering: this file lives in discovery and therefore cannot link against the
 // filesystems library. Readers are supplied by the caller through
@@ -51,10 +55,9 @@
 /// a case directory, with its options and the mount-script helpers.
 ///
 /// What it does today versus the plan: the image, the partitions inside it,
-/// and every file extracted from a filesystem, re-scanned and analysed again
-/// when it is itself an image (`Limits::max_depth` bounds the nesting).
-/// Container payloads are not opened: no `container::ContainerReader` is
-/// registered yet. Word-swap detection *is* implemented (see `ImageViewHook`).
+/// every file extracted from a filesystem or a container payload, re-scanned
+/// and analysed again when it is itself an image (`Limits::max_depth` bounds
+/// the nesting). Word-swap detection *is* implemented (see `ImageViewHook`).
 /// docs/CASE_LAYOUT.md documents the resulting nodes, attrs and files.
 #pragma once
 #include <cstdint>
@@ -69,6 +72,7 @@
 #include "omnitrace/core/Sink.h"
 #include "omnitrace/core/Source.h"
 #include "omnitrace/core/Status.h"
+#include "omnitrace/containers/Container.h"
 #include "omnitrace/discovery/Signature.h"
 #include "omnitrace/filesystems/Filesystem.h"
 
@@ -80,6 +84,15 @@ namespace omnitrace::discovery {
 /// CLI passes a lambda around `fs::FilesystemRegistry::instance().create`.
 using ReaderLookup =
     std::function<std::unique_ptr<fs::FilesystemReader>(const std::string& format)>;
+
+// Returns a container reader for `format`, or nullptr when none is available.
+/// Container reader factory, the `container::ContainerReader` twin of
+/// `ReaderLookup`. Supplied by the caller for the same layering reason: this
+/// header lives in discovery and cannot link the containers library. The CLI
+/// passes a lambda around `container::ContainerRegistry::instance().create`.
+/// Empty: every container is "unsupported", as before any reader existed.
+using ContainerLookup =
+    std::function<std::unique_ptr<container::ContainerReader>(const std::string& format)>;
 
 // Scanner used for the whole image and for every partition re-scan. Tests
 // substitute hand-made findings; the default is scan(span, builtin, opts.scan).
@@ -132,6 +145,8 @@ struct AnalyzeOptions {
     std::uint64_t min_region_bytes =
         4096;                  ///< Gaps shorter than this are not reported as Region nodes.
     ReaderLookup open_reader;  ///< Reader factory. Empty: every filesystem is "unsupported".
+    ContainerLookup
+        open_container;  ///< Container reader factory. Empty: every container is "unsupported".
     Scanner scanner;  ///< Scanner override (tests). Empty: the builtin signatures with `scan`.
     ImageViewHook image_view;  ///< See `ImageViewHook`. Empty: automatic word-swap detection.
     Carve carve =

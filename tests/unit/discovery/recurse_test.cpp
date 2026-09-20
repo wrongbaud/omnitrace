@@ -16,6 +16,8 @@
 #include <iterator>
 #include <random>
 
+#include <zlib.h>
+
 #include "helpers.h"
 #include "omnitrace/core/Hash.h"
 #include "omnitrace/discovery/Recurse.h"
@@ -68,6 +70,22 @@ Bytes synthetic_squashfs(std::uint64_t bytes_used = 200000) {
     test::put_u64le(b, 80, bytes_used - 100);
     test::put_u64le(b, 88, ~0ull);
     return b;
+}
+
+// A real gzip member, so the validator can walk the deflate stream and give
+// the finding its extent (a synthetic header cannot be measured).
+Bytes gzip_of(const Bytes& raw) {
+    z_stream zs{};
+    EXPECT_EQ(deflateInit2(&zs, Z_BEST_SPEED, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY), Z_OK);
+    Bytes out(deflateBound(&zs, static_cast<uLong>(raw.size())) + 64);
+    zs.next_in = const_cast<Bytef*>(raw.data());
+    zs.avail_in = static_cast<uInt>(raw.size());
+    zs.next_out = out.data();
+    zs.avail_out = static_cast<uInt>(out.size());
+    EXPECT_EQ(deflate(&zs, Z_FINISH), Z_STREAM_END);
+    out.resize(zs.total_out);
+    deflateEnd(&zs);
+    return out;
 }
 
 fsys::path temp_dir(const char* tag) {
@@ -267,6 +285,70 @@ class FakeReader final : public fs::FilesystemReader {
     Span span_;
 };
 
+// Stands in for a container reader: accepts a gzip header and emits one
+// "payload" entry whose bytes the test supplies, reporting an extent the
+// validator could not know (a gzip finding has size 0).
+struct FakeContainerBehaviour {
+    std::string payload;          // bytes of the single entry
+    std::uint64_t stream_len = 0; // what info().size reports; 0 = unknown
+    bool open_fails = false;
+};
+
+class FakeContainer final : public container::ContainerReader {
+   public:
+    explicit FakeContainer(FakeContainerBehaviour b) : b_(std::move(b)) {}
+    std::string format() const override { return "gzip"; }
+    Status open(const Span& span) override {
+        if (b_.open_fails) return Status::fail("fake-container-refused");
+        static const std::uint8_t magic[3] = {0x1F, 0x8B, 0x08};
+        if (!span.matches_at(0, std::span<const std::uint8_t>(magic, 3)))
+            return Status::fail("fake-container-bad-magic");
+        opened_ = true;
+        return Status::success();
+    }
+    container::ContainerInfo info() const override {
+        container::ContainerInfo i;
+        i.format = "gzip";
+        i.compression = "gzip";
+        i.size = b_.stream_len;
+        return i;
+    }
+    Status walk(Sink& sink, const fs::WalkOptions& opts, fs::WalkResult& out) override {
+        if (!opened_) return Status::fail("fake-container-not-open");
+        FileMeta meta;
+        meta.path = "payload";
+        meta.kind = EntryKind::Regular;
+        meta.mode = 0644;
+        meta.size = b_.payload.size();
+        const Bytes data(b_.payload.begin(), b_.payload.end());
+        EntryResult r;
+        Status st;
+        if (opts.extract_data) {
+            st = sink.file(meta, std::span<const std::uint8_t>(data.data(), data.size()), r);
+        } else {
+            st = sink.begin_file(meta);
+            if (st) st = sink.end_file(r);
+        }
+        if (!st) return Status::success();
+        ++out.entries;
+        ++out.files;
+        out.bytes += data.size();
+        out.entries_out.push_back(std::move(r));
+        return Status::success();
+    }
+
+   private:
+    FakeContainerBehaviour b_;
+    bool opened_ = false;
+};
+
+ContainerLookup fake_container_lookup(FakeContainerBehaviour b = {}) {
+    return [b](const std::string& format) -> std::unique_ptr<container::ContainerReader> {
+        if (format != "gzip") return nullptr;
+        return std::make_unique<FakeContainer>(b);
+    };
+}
+
 ReaderLookup fake_lookup(FakeBehaviour b = {}) {
     return [b](const std::string& format) -> std::unique_ptr<fs::FilesystemReader> {
         if (format != "squashfs") return nullptr;
@@ -452,6 +534,150 @@ TEST(Analyze, ContainerWithoutReaderIsCoveredNotSilent) {
 }
 
 // -------------------------------------------------------------- extraction
+
+// With a reader the container is opened: its payload lands in
+// containers/<id>/files, the node gets the extent the reader measured, and the
+// bytes the container now owns are not also reported as an unidentified gap.
+TEST(Analyze, ContainerWithReaderIsWalkedSizedAndDescendedInto) {
+    // A real stream: a compressed container the validator could not measure is
+    // never opened (the reader would repeat the same failed decode), so the
+    // reader path needs a stream that actually decodes.
+    const Bytes stream = gzip_of(Bytes(40000, 'C'));
+    ASSERT_LT(stream.size(), 8u * 1024u);
+    Bytes b(64 * 1024, 0);
+    std::copy(stream.begin(), stream.end(), b.begin() + 16 * 1024);
+
+    // The payload the reader hands back is itself a filesystem, so the nested
+    // pass picks it up.
+    const Bytes inner = synthetic_squashfs(3000);
+    FakeContainerBehaviour cb;
+    cb.payload.assign(inner.begin(), inner.end());
+    cb.stream_len = stream.size();
+
+    TempDir out("container");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.open_reader = fake_lookup();
+    opts.open_container = fake_container_lookup(cb);
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "img.bin", opts, m, listings));
+
+    const Node* gzn = node_at(m, NodeKind::Container, 16 * 1024, "gzip");
+    ASSERT_NE(gzn, nullptr);
+    EXPECT_FALSE(has_diag(gzn->diagnostics, "analyze-no-reader"));
+    EXPECT_EQ(gzn->location.length, stream.size());
+    EXPECT_EQ(gzn->attrs.at("compression"), "gzip");
+    EXPECT_EQ(gzn->attrs.at("entries"), "1");
+    EXPECT_EQ(coverage_for(m, "gzip")->status, "supported");
+
+    // The payload landed under containers/, not filesystems/.
+    EXPECT_TRUE(fsys::exists(out.path / "containers" / gzn->id / "files" / "payload"));
+
+    // File node for the payload, and the nested filesystem under it.
+    const auto kids = m.children_of(gzn->id);
+    ASSERT_EQ(kids.size(), 1u);
+    EXPECT_EQ(kids[0]->kind, NodeKind::File);
+    EXPECT_EQ(kids[0]->file->path, "payload");
+    EXPECT_EQ(kids[0]->attrs.at("nested_image"), "true");
+    const auto inner_nodes = m.children_of(kids[0]->id);
+    ASSERT_FALSE(inner_nodes.empty());
+    EXPECT_EQ(inner_nodes[0]->kind, NodeKind::Filesystem);
+    EXPECT_EQ(inner_nodes[0]->format, "squashfs");
+
+}
+
+// A real gzip member is measured by the validator, so the finding has an
+// extent before the gap pass runs and no "unidentified" region is reported
+// over the bytes the stream occupies.
+TEST(Analyze, RealCompressedStreamIsSizedByTheValidator) {
+    const Bytes payload(200000, 'R');  // compresses well, so the stream is short
+    const Bytes gz = gzip_of(payload);
+    ASSERT_LT(gz.size(), 32u * 1024u);
+    Bytes b(64 * 1024, 0);
+    std::copy(gz.begin(), gz.end(), b.begin() + 16 * 1024);
+
+    AnalyzeOptions opts;
+    opts.extract = false;
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "img.bin", opts, m, listings));
+
+    const Node* gzn = node_at(m, NodeKind::Container, 16 * 1024, "gzip");
+    ASSERT_NE(gzn, nullptr);
+    EXPECT_EQ(gzn->location.length, gz.size());
+    EXPECT_EQ(gzn->confidence, static_cast<std::uint8_t>(Confidence::Consistent));
+    EXPECT_EQ(gzn->attrs.at("payload_bytes"), std::to_string(payload.size()));
+
+    const std::uint64_t start = 16u * 1024u;
+    for (const Node& n : m.nodes()) {
+        if (n.kind != NodeKind::Region) continue;
+        const bool overlaps = n.location.offset < start + gz.size() &&
+                              n.location.offset + n.location.length > start;
+        EXPECT_FALSE(overlaps) << n.id << " @ " << n.location.offset;
+    }
+}
+
+// A compressed stream the validator could not follow to an end is never handed
+// to a reader: the probe and the decode are the same work, so trying again
+// would only turn a stray magic into an error.
+TEST(Analyze, UnmeasurableCompressedStreamIsNotOpened) {
+    Bytes b(64 * 1024, 0);
+    const std::uint8_t gz[] = {0x1F, 0x8B, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0x03};
+    std::copy(std::begin(gz), std::end(gz), b.begin() + 16 * 1024);
+    FakeContainerBehaviour cb;
+    cb.payload = "never reached";
+    AnalyzeOptions opts;
+    opts.extract = false;
+    opts.open_container = fake_container_lookup(cb);
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "img.bin", opts, m, listings));
+    const Node* gzn = node_at(m, NodeKind::Container, 16 * 1024, "gzip");
+    ASSERT_NE(gzn, nullptr);
+    EXPECT_TRUE(m.children_of(gzn->id).empty());
+    EXPECT_FALSE(has_diag(gzn->diagnostics, "analyze-walk-failed"));
+    EXPECT_EQ(coverage_for(m, "gzip"), nullptr);  // no row: nothing was attempted
+    EXPECT_TRUE(listings.empty());
+}
+
+// A header the decoder cannot follow to an end keeps size 0 and says so: the
+// finding claims no bytes, exactly as before the walk existed.
+TEST(Analyze, UnmeasurableCompressedStreamStaysUnsized) {
+    Bytes b(64 * 1024, 0);
+    const std::uint8_t gz[] = {0x1F, 0x8B, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0x03};
+    std::copy(std::begin(gz), std::end(gz), b.begin() + 16 * 1024);
+    AnalyzeOptions opts;
+    opts.extract = false;
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "img.bin", opts, m, listings));
+    const Node* gzn = node_at(m, NodeKind::Container, 16 * 1024, "gzip");
+    ASSERT_NE(gzn, nullptr);
+    EXPECT_EQ(gzn->location.length, 0u);
+    EXPECT_EQ(gzn->confidence, static_cast<std::uint8_t>(Confidence::Structural));
+    EXPECT_TRUE(has_diag(gzn->diagnostics, "compressed-stream-unmeasured"));
+}
+
+// A container reader that refuses the bytes is a partial coverage row and a
+// diagnostic on the node, like a filesystem reader that refuses to open.
+TEST(Analyze, ContainerReaderThatRefusesToOpen) {
+    const Bytes stream = gzip_of(Bytes(40000, 'D'));
+    Bytes b(64 * 1024, 0);
+    std::copy(stream.begin(), stream.end(), b.begin() + 16 * 1024);
+    FakeContainerBehaviour cb;
+    cb.open_fails = true;
+    AnalyzeOptions opts;
+    opts.extract = false;
+    opts.open_container = fake_container_lookup(cb);
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "img.bin", opts, m, listings));
+    const Node* gzn = node_at(m, NodeKind::Container, 16 * 1024, "gzip");
+    ASSERT_NE(gzn, nullptr);
+    EXPECT_TRUE(has_diag(gzn->diagnostics, "analyze-open-failed"));
+    EXPECT_EQ(coverage_for(m, "gzip")->status, "partial");
+}
 
 TEST(Analyze, WalksFilesystemToDisk) {
     const Layout l = build_image();

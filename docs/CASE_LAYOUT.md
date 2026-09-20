@@ -19,16 +19,20 @@ DIR/
 ├── partitions/
 │   ├── <name>.bin            # one file per carved node (see "Carved files")
 │   └── mount.sh              # the examiner's mount template with PARTITION_NAMES / PARTITION_TYPES filled in
-└── filesystems/<node-id>/     # one directory per filesystem node, nested ones included
-    ├── listing.yaml          # every entry: metadata, digests, host path, flags, diagnostics
-    ├── listing.md            # same, as a table
-    └── files/                # the extracted tree (unless --no-extract)
-        └── .omnitrace-versions/   # superseded / deleted versions when --history recovered any
-            └── <path>/v<version>  # one file per recovered state (see "Versions")
+├── filesystems/<node-id>/     # one directory per filesystem node, nested ones included
+│   ├── listing.yaml          # every entry: metadata, digests, host path, flags, diagnostics
+│   ├── listing.md            # same, as a table
+│   └── files/                # the extracted tree (unless --no-extract)
+│       └── .omnitrace-versions/   # superseded / deleted versions when --history recovered any
+│           └── <path>/v<version>  # one file per recovered state (see "Versions")
+└── containers/<node-id>/      # the same three, per container node that had a reader
+    ├── listing.yaml
+    ├── listing.md
+    └── files/                # gzip and xz hold exactly one entry, "payload"
 ```
 
 `--layout flat` writes the Phase 0 subset only: `manifest.yaml`, `summary.md`,
-`partitions.md`, `filesystems/`. Nothing is carved and no `INFO.*`, `flash/`
+`partitions.md`, `filesystems/`, `containers/`. Nothing is carved and no `INFO.*`, `flash/`
 or `partitions/` appears.
 
 ## INFO.yaml
@@ -183,9 +187,11 @@ matching the `Warnings` column of `partitions.md`.
 
 ## filesystems/<node-id>/files
 
-`filesystems/` is flat: one directory per filesystem node, named by its node
-id, whether the filesystem sits in the image or inside a file extracted from
-another one. The nesting lives in the graph, not in the paths, so a deeply
+`filesystems/` and `containers/` are flat: one directory per node that a
+reader walked, named by its node id, whether it sits in the image or inside a
+file extracted from something else. A container's tree lands under
+`containers/` for the same reason its node kind is `container`: gzip and xz
+hold one entry called `payload`, not a filesystem. The nesting lives in the graph, not in the paths, so a deeply
 nested tree never produces a deep host path. A `file` node with
 `nested_image: true` is the parent of the nested filesystem node, and that
 node's `location.source` is the extracted file it was read from — a path

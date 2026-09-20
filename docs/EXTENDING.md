@@ -364,30 +364,43 @@ file set identical to the reference tool, or explain each difference.
 
 Same shape, different registry. `container::ContainerReader`
 ([Container.h:40](../include/omnitrace/containers/Container.h#L40)) has
-`format()`, `open()`, `info()` and `walk()`; single-payload wrappers (gzip,
-uImage) emit one entry.
+`format()`, `open()`, `info()` and `walk()`; single-payload wrappers (gzip, xz,
+uImage) emit one entry named `payload`.
+
+The worked example is `src/containers/stream/StreamReader.{h,cpp}`, which
+serves both `gzip` and `xz` from one class, with
+`tests/unit/containers/stream_test.cpp` as the test shape.
 
 1. `src/containers/<name>/<Name>Reader.{h,cpp}`, registered with
    `OMNITRACE_REGISTER_CONTAINER("<format>", <Name>Reader)`.
 2. Anchor: define `omnitrace_container_anchor_<name>()` and call it from
    `link_builtin_containers()` in
-   [src/containers/Registry.cpp:14](../src/containers/Registry.cpp#L14),
-   which is empty today.
-3. Tests in `tests/unit/containers/` (the directory does not exist yet;
-   creating it is enough, `omnitrace_module` globs it).
+   [src/containers/Registry.cpp](../src/containers/Registry.cpp), beside
+   `omnitrace_container_anchor_stream()`.
+3. Tests in `tests/unit/containers/` (`omnitrace_module` globs the directory).
 
-Note what does not exist yet: `analyze()` recognises containers and carves
-them but never opens one. The branch is the comment at
-[Recurse.cpp:850](../src/discovery/Recurse.cpp#L850); a `ContainerReader`
-lookup (`AnalyzeOptions` has no `open_container` yet) and a recursive
-`analyze_span(c, payload_span, id, depth + 1)` call are needed before a
-container reader changes the manifest. Until then the Coverage row for the
-format stays `unsupported`.
+That is all: `analyze()` looks the reader up through
+`AnalyzeOptions::open_container`, which the CLI fills from the registry, walks
+it into `containers/<node-id>/files/` and re-scans every file it wrote, so a
+payload that is itself an image is followed automatically. Nothing in
+`Recurse.cpp` needs editing.
 
-How to verify: `./build/linux-gcc/src/containers/test_containers` once tests
-exist (the executable is only created when `tests/unit/containers/` has a
-source), and `ContainerRegistry::instance().create("<format>")` returning
-non-null.
+Two things worth copying from `StreamReader`:
+
+* **Report an extent.** `info().size` is the input length the container
+  actually used; `analyze` gives it to the node when the validator left the
+  finding unsized, which is what stops an `unidentified` region being reported
+  over the container's own bytes. For a compressed stream, sizing it in the
+  *validator* (`compressed_stream_length` in
+  `src/discovery/validators/common.h`) is better still, because gap and
+  parenting decisions happen before any reader runs.
+* **Use literal diagnostic codes.** A code built at run time
+  (`format_ + "-failed"`) is invisible to `scripts/gen_docs.py`, so it would
+  reach manifests without a catalogue entry. `StreamReader` uses layer-scoped
+  literals (`container-decompress-failed`, ...) for exactly that reason.
+
+How to verify: `./build/linux-gcc/src/containers/test_containers`, and
+`ContainerRegistry::instance().create("<format>")` returning non-null.
 
 ## Add a CLI subcommand
 

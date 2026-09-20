@@ -16,19 +16,20 @@ reader registries by `scripts/gen_docs.py` and checked by `scripts/check_docs.py
 so it cannot drift from the code the way a table written here would.
 
 Today that is 50 signatures over 35 format ids, 23 validators, 7 filesystem
-readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and no
-container reader. `--history` is recovered by the ext, JFFS2 and QNX6 readers.
+readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and 2
+container readers (`gzip`, `xz`, one `StreamReader` serving both).
+`--history` is recovered by the ext, JFFS2 and QNX6 readers.
 
 Nested analysis runs for extracted files: every file a walk writes to the host
 is re-scanned, and one holding a filesystem or a partition table at Structural
 or better and at least `min_region_bytes` long is analysed again with the File node as its parent
 (`descend_into_file` in `src/discovery/Recurse.cpp`), bounded by
-`Limits::max_depth`. On the QNX corpus that recovers 17 nested SquashFS, 12
-nested QNX6 and 3 nested QNX IFS filesystems. Container payloads are the
-remaining gap: a Container node with no registered reader is
-a Coverage row with status `unsupported` and an `analyze-no-reader` diagnostic
-(`src/discovery/Recurse.cpp`), and the hand-off point is the comment at the end
-of `analyze_span`.
+`Limits::max_depth`. A container payload is walked into
+`containers/<node-id>/files` by `process_container` and then re-scanned the
+same way, so a `.tar.gz` holding a filesystem is followed to the end. A
+container whose format has no registered reader (`lz4`, `zstd`, `tar`, `cpio`,
+`zip`, `7z`, `uimage`, `fit`, `android-boot`, `android-sparse`, `ubi`) is a
+Coverage row with status `unsupported` and an `analyze-no-reader` diagnostic.
 
 Word-swapped dumps are detected by `detect_word_swap` (`src/core/Swap.cpp:334`)
 and analysed through a `SwappedSource` view; the Image node gets
@@ -43,17 +44,21 @@ and analysed through a `SwappedSource` view; the Image node gets
 Items 1-3 of the original list (the ext4, JFFS2, QNX6 and QNX IFS readers) and
 the extracted-file half of item 4 are done; see the section above.
 
-1. **Container readers: FIT, gzip, xz** (`src/containers/`), registered with
-   `OMNITRACE_REGISTER_CONTAINER` (`include/omnitrace/containers/Container.h`),
-   and the payload half of the recursion: walk the payload into a Sink, then
-   `analyze_span(c, payload_span, id, depth + 1)` at the end of `analyze_span`.
-   The extracted-file path already provides the depth accounting, the extent
-   isolation and the tests to copy.
+1. **More container readers**, now that the plumbing exists
+   (`process_container` in `src/discovery/Recurse.cpp`, `StreamReader` as the
+   worked example, `tests/unit/containers/stream_test.cpp` as the test shape).
+   In rough order of value: `tar` and `cpio` (archives, many entries each),
+   `fit` and `uimage` (multi-image wrappers; the FDT parser to reuse is in
+   `src/discovery/validators/fit.cpp` and would move to `src/core/`), `lz4` and
+   `zstd` (the last two single-payload streams, which also need their
+   validators to measure the extent the way gzip and xz now do).
 2. **UBIFS and YAFFS2 readers**, both with history (UBIFS sqnum order, YAFFS2
    sequence numbers); fixtures `ubifs.img`, `ubi.img`, `yaffs2.img`,
    `yaffs2-yaffsecc.img` exist.
-3. **Sizing validators for zip, gzip and the QNX magics**, so a zip inside a
-   partition claims its bytes and nested finds are parented correctly.
+3. **Sizing validators for zip, lz4 and zstd**, so they claim their bytes and
+   parent nested finds correctly. gzip and xz now do this through
+   `compressed_stream_length` in `src/discovery/validators/common.h`; the QNX
+   magics were sized when their validators landed.
 4. **Write the corrected view of a word-swapped image** into the case directory
    (today only the detection is recorded; `src/discovery/Recurse.cpp`
    `ImageViewHook` is the extension point).

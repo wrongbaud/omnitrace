@@ -328,25 +328,28 @@ signature name, then format. It then keeps or absorbs each finding:
    larger, then alphabetically first one in front).
 2. Fully inside a kept finding that outranks it (`outranks`,
    [Scan.cpp:160](../src/discovery/Scan.cpp#L160)): absorbed by the innermost
-   such finding. Outranking is strictly higher confidence, or equal confidence
-   when the inner finding is a compressed stream (category `compressed`) and
-   the outer one is not.
+   such finding. Outranking is strictly higher confidence, or — for a
+   compressed stream (category `compressed`) inside anything that is not one —
+   containment at any tier.
 3. Otherwise kept. Equal-confidence nesting and partial overlaps stay visible.
 4. A partition-table finding is only ever absorbed by another partition
    table (`may_absorb`, [Scan.cpp:150](../src/discovery/Scan.cpp#L150)), so a
    filesystem at LBA 0 cannot hide the MBR beneath it.
 
-Example, from `router.bin`: the SquashFS at `0x1c9245` is Consistent (85)
-with a size, and the 107 xz streams found inside it are Structural (60), so
-all 107 land in the SquashFS finding's `also_matched` and `scan --json` shows
-`"also_matched": [...]` on that one finding.
+Example, from `router.bin`: the SquashFS at `0x1c9245` is Consistent (85) with
+a size, and every xz stream found inside it lands in its `also_matched`, so
+`scan --json` reports three top-level findings (uimage, squashfs, jffs2) and
+shows the streams nested under the SquashFS. How many appear there is an
+artefact of the scan, not a contract: an xz stream that the validator measures
+covers the blocks stored after it, and the same-signature coverage skip then
+does not re-report those, so the list is shorter than the number of blocks.
 
 The compressed-stream clause in rule 2 is what keeps that working when the
-filesystem is itself only Structural. A SquashFS whose `bytes_used` runs past
-the data is demoted by `squashfs-truncated` to the same tier the stream
-validators cap at; under strict ranking alone it released every block inside
-it, and a 1 GiB-truncated image from the QNX corpus reported 131 spurious
-top-level containers instead of one filesystem. Tests:
+tiers move, and both of them do: a SquashFS whose `bytes_used` runs past the
+data is demoted to Structural by `squashfs-truncated`, and a gzip or xz stream
+the validator walked to its end is promoted to Consistent. Under strict ranking
+a 1 GiB-truncated image from the QNX corpus reported 131 spurious top-level
+containers instead of one filesystem. Tests:
 [tests/unit/discovery/resolve_test.cpp](../tests/unit/discovery/resolve_test.cpp).
 
 ## 5. Recurse: the passes of analyze()

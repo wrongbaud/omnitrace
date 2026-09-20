@@ -70,6 +70,14 @@ std::optional<Finding> validate_gzip(const Span& span, std::uint64_t start, cons
     if ((*flg & kFComment) != 0) f.attrs["has_comment"] = "true";
     if ((*flg & kFHcrc) != 0) f.attrs["has_header_crc"] = "true";
     f.attrs["header_len"] = dec(pos - start);
+    // Walking the deflate stream is the only way to know where it ends, and
+    // an extent is what lets the finding claim its bytes (docs/formats/
+    // compressed-streams.md).
+    if (const std::uint64_t n = compressed_stream_length(f, span, start, compress::Codec::Gzip, sig);
+        n != 0) {
+        f.size = n;
+        f.confidence = Confidence::Consistent;
+    }
     f.evidence = "deflate member, os " + os_name(*os) +
                  (f.attrs.count("original_name") ? ", name \"" + f.attrs["original_name"] + "\""
                                                  : std::string{});

@@ -109,38 +109,48 @@ bool is_xz_header(std::span<const std::uint8_t> in, std::size_t off) {
 class Appender {
    public:
     Appender(std::vector<std::uint8_t>& out, std::uint64_t max_out)
-        : out_(out), max_(max_out), buf_(kWindow) {}
+        : out_(&out), max_(max_out), buf_(kWindow) {}
+    // Counting mode: the decoder runs to the end of the stream but the output
+    // is discarded, so measuring a 2 GiB stream costs one 64 KiB window.
+    explicit Appender(std::uint64_t max_out) : max_(max_out), buf_(kWindow) {}
 
     std::uint8_t* scratch() { return buf_.data(); }
     // Bytes a decoder may write into scratch() this round: at most kWindow,
     // and one more than the remaining allowance so an over-cap stream is
     // detected on the byte that crosses the line, never silently clipped.
     std::size_t window() const {
-        const std::uint64_t remaining = max_ - out_.size();
+        const std::uint64_t remaining = max_ - size();
         return remaining >= kWindow ? kWindow : static_cast<std::size_t>(remaining) + 1;
     }
     // Append n bytes from scratch(); false if that would exceed the cap.
     bool commit(std::size_t n) {
-        if (n > max_ - out_.size()) return false;
-        out_.insert(out_.end(), buf_.begin(), buf_.begin() + static_cast<std::ptrdiff_t>(n));
+        if (n > max_ - size()) return false;
+        if (out_ != nullptr)
+            out_->insert(out_->end(), buf_.begin(), buf_.begin() + static_cast<std::ptrdiff_t>(n));
+        else
+            counted_ += n;
         return true;
     }
-    std::uint64_t remaining() const { return max_ - out_.size(); }
+    std::uint64_t remaining() const { return max_ - size(); }
+    /// Bytes produced so far, whether stored or only counted.
+    std::uint64_t size() const { return out_ != nullptr ? out_->size() : counted_; }
 
    private:
-    std::vector<std::uint8_t>& out_;
+    std::vector<std::uint8_t>* out_ = nullptr;
+    std::uint64_t counted_ = 0;
     std::uint64_t max_;
     std::vector<std::uint8_t> buf_;
 };
 
 // ---------------------------------------------------------------- zlib
 
-Status inflate_zlib(std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
-                    std::uint64_t max_out, int window_bits) {
+Status inflate_zlib(std::span<const std::uint8_t> in, std::vector<std::uint8_t>* out,
+                    std::uint64_t max_out, int window_bits, std::uint64_t* consumed = nullptr,
+                    std::uint64_t* produced = nullptr) {
     if (in.empty()) return Status::fail(kEmpty);
     z_stream zs{};
     if (inflateInit2(&zs, window_bits) != Z_OK) return Status::fail(kInit);
-    Appender ap(out, max_out);
+    Appender ap = out != nullptr ? Appender(*out, max_out) : Appender(max_out);
     std::size_t ip = 0;
     Status result = Status::success();
     const bool allow_members = window_bits > 15;  // gzip or auto-detect modes
@@ -181,6 +191,10 @@ Status inflate_zlib(std::span<const std::uint8_t> in, std::vector<std::uint8_t>&
         break;
     }
     inflateEnd(&zs);
+    // `ip` is one past the last byte the stream (or the last concatenated
+    // member) used, which is the stream's extent in the enclosing image.
+    if (consumed != nullptr) *consumed = ip;
+    if (produced != nullptr) *produced = ap.size();
     return result;
 }
 
@@ -203,8 +217,9 @@ bool next_xz_stream(std::span<const std::uint8_t> in, std::size_t& ip) {
     return true;
 }
 
-Status inflate_lzma(std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
-                    std::uint64_t max_out, bool xz) {
+Status inflate_lzma(std::span<const std::uint8_t> in, std::vector<std::uint8_t>* out,
+                    std::uint64_t max_out, bool xz, std::uint64_t* consumed = nullptr,
+                    std::uint64_t* produced = nullptr) {
     if (in.empty()) return Status::fail(kEmpty);
     const std::uint64_t memlimit = lzma_memlimit_for(max_out);
     lzma_stream s = LZMA_STREAM_INIT;
@@ -212,7 +227,7 @@ Status inflate_lzma(std::span<const std::uint8_t> in, std::vector<std::uint8_t>&
         return xz ? lzma_stream_decoder(&s, memlimit, 0) : lzma_alone_decoder(&s, memlimit);
     };
     if (init() != LZMA_OK) return Status::fail(kInit);
-    Appender ap(out, max_out);
+    Appender ap = out != nullptr ? Appender(*out, max_out) : Appender(max_out);
     std::size_t ip = 0;
     Status result = Status::success();
     unsigned stalls = 0;
@@ -272,6 +287,8 @@ Status inflate_lzma(std::span<const std::uint8_t> in, std::vector<std::uint8_t>&
         break;
     }
     lzma_end(&s);
+    if (consumed != nullptr) *consumed = ip;
+    if (produced != nullptr) *produced = ap.size();
     return result;
 }
 
@@ -467,22 +484,27 @@ Status copy_through(std::span<const std::uint8_t> in, std::vector<std::uint8_t>&
     return Status::success();
 }
 
+// `consumed`, when given, is set to the input length the stream actually used.
+// Only the wrapped stream formats can report it; for the block codecs the
+// whole input is the unit, so it stays at in.size().
 Status decompress_impl(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
-                       std::uint64_t max_out, bool exact) {
+                       std::uint64_t max_out, bool exact,
+                       std::uint64_t* consumed = nullptr) {
     out.clear();
+    if (consumed != nullptr) *consumed = in.size();
     switch (c) {
         case Codec::None:
             return copy_through(in, out, max_out);
         case Codec::Zlib:
-            return inflate_zlib(in, out, max_out, 15 + 32);  // zlib or gzip, auto-detected
+            return inflate_zlib(in, &out, max_out, 15 + 32, consumed);  // zlib or gzip
         case Codec::Deflate:
-            return inflate_zlib(in, out, max_out, -15);
+            return inflate_zlib(in, &out, max_out, -15, consumed);
         case Codec::Gzip:
-            return inflate_zlib(in, out, max_out, 15 + 16);
+            return inflate_zlib(in, &out, max_out, 15 + 16, consumed);
         case Codec::Xz:
-            return inflate_lzma(in, out, max_out, true);
+            return inflate_lzma(in, &out, max_out, true, consumed);
         case Codec::Lzma:
-            return inflate_lzma(in, out, max_out, false);
+            return inflate_lzma(in, &out, max_out, false, consumed);
         case Codec::Lz4:
             if (starts_with_le32(in, 0, kLz4FrameMagic) ||
                 starts_with_le32(in, 0, kLz4SkippableMagic, kLz4SkippableMask))
@@ -509,6 +531,32 @@ Status decompress_impl(Codec c, std::span<const std::uint8_t> in, std::vector<st
 Status decompress(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
                   std::uint64_t max_out) {
     return decompress_impl(c, in, out, max_out, false);
+}
+
+Status stream_length(Codec c, std::span<const std::uint8_t> in, std::uint64_t max_out,
+                     std::uint64_t& consumed, std::uint64_t& produced) {
+    consumed = 0;
+    produced = 0;
+    switch (c) {
+        case Codec::Zlib:
+            return inflate_zlib(in, nullptr, max_out, 15 + 32, &consumed, &produced);
+        case Codec::Deflate:
+            return inflate_zlib(in, nullptr, max_out, -15, &consumed, &produced);
+        case Codec::Gzip:
+            return inflate_zlib(in, nullptr, max_out, 15 + 16, &consumed, &produced);
+        case Codec::Xz:
+            return inflate_lzma(in, nullptr, max_out, true, &consumed, &produced);
+        case Codec::Lzma:
+            return inflate_lzma(in, nullptr, max_out, false, &consumed, &produced);
+        default:
+            return Status::fail(kUnsupported);
+    }
+}
+
+Status decompress_stream(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
+                         std::uint64_t max_out, std::uint64_t& consumed) {
+    consumed = in.size();
+    return decompress_impl(c, in, out, max_out, false, &consumed);
 }
 
 Status decompress_exact(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,

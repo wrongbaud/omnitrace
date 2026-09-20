@@ -79,11 +79,14 @@ The end-to-end pipeline:
    compressed streams / uImage wrappers `container` nodes, anything else
    identified (raw kernels, bootloaders, DTBs) a `region` node with its format
    set. A partition with nothing at its first byte is scanned again on its own;
-4. open every filesystem that has a registered reader over its bytes and walk
-   it into `DIR/filesystems/<node-id>/files/`, hashing as it writes, producing
-   one `file` node per entry; formats without a reader are reported in the
-   coverage table as `unsupported`;
-5. re-scan every file that landed on disk. A file that is itself an image — a
+4. open every filesystem and container that has a registered reader over its
+   bytes and walk it into `DIR/filesystems/<node-id>/files/` (or
+   `DIR/containers/<node-id>/files/`), hashing as it writes, producing one
+   `file` node per entry; formats without a reader are reported in the coverage
+   table as `unsupported`. A gzip or xz container holds one entry, `payload`,
+   and its reader also reports where the stream ended, which becomes the node's
+   extent when the validator could not measure it;
+5. re-scan every file that landed on disk, a container payload included. A file that is itself an image — a
    filesystem or a partition table, identified at `structural` or better and
    at least 4 KiB long — gets `nested_image: true` and is analysed again from step 2 with the `file`
    node as its parent, so a
@@ -113,7 +116,7 @@ The end-to-end pipeline:
 | Option | Effect |
 |---|---|
 | `-o, --out DIR` | Case directory. Created if missing; existing files are overwritten. Required. |
-| `--layout corpus\|flat` | `corpus` (default): the examiner template of `docs/CASE_LAYOUT.md` (`INFO.yaml` + `manifest.yaml` alias, `INFO.md`, `flash/SOURCE.yaml`, `partitions/`, `filesystems/`, plus `summary.md` / `partitions.md`). `flat`: the Phase 0 files only (`manifest.yaml`, `summary.md`, `partitions.md`, `filesystems/`), nothing carved. |
+| `--layout corpus\|flat` | `corpus` (default): the examiner template of `docs/CASE_LAYOUT.md` (`INFO.yaml` + `manifest.yaml` alias, `INFO.md`, `flash/SOURCE.yaml`, `partitions/`, `filesystems/`, `containers/`, plus `summary.md` / `partitions.md`). `flat`: the Phase 0 files only (`manifest.yaml`, `summary.md`, `partitions.md`, `filesystems/`, `containers/`), nothing carved. |
 | `--carve none\|table\|all` | What lands in `partitions/`: `all` (default) every partition entry and every nested find directly under the image or a partition (`0x03100000-squashfs.bin`); `table` entries only (`p6-system.bin`, `p6.bin`); `none` no `partitions/` directory. |
 | `--max-carve-bytes N` | Largest file to carve (default 4 GiB; `64M`, `2G` accepted, 1024-based). A larger partition is not written: its node gets `carve_skipped` and a warning, and coverage gets `carve / partial / "<name> skipped: <size> exceeds --max-carve-bytes"`. |
 | `--copy-image` | Also copy the evidence into `flash/<name>` (verified by SHA-256 after the copy). Default: `flash/SOURCE.yaml` only refers to the original path. |

@@ -136,22 +136,34 @@ TEST(Resolve, EqualConfidenceNestingIsKept) {
 }
 
 // The one exception to EqualConfidenceNestingIsKept. A SquashFS or JFFS2 is
-// built out of gzip/xz/lz4/zstd blocks and normally outranks them, but a
-// truncated one drops to Structural — the tier those validators cap at — and
-// would otherwise release every block inside it as a top-level finding.
-TEST(Resolve, CompressedStreamsAreAbsorbedAtEqualConfidence) {
+// built out of gzip/xz/lz4/zstd blocks, which are its data and not separate
+// finds, and tier ordering cannot express that: a truncated filesystem drops
+// to Structural while a stream the validator walked to its end reaches
+// Consistent. Containment decides instead, at any tier.
+TEST(Resolve, CompressedStreamsInsideAnythingElseAreAbsorbed) {
     Bytes buf(4096, 0);
     plant(buf, 100, "OUT!", 1, 1000);  // structural container, [100, 1100)
-    plant(buf, 200, "ZIP!", 1, 50);    // structural stream inside -> absorbed
-    plant(buf, 300, "ZIP!", 2, 50);    // higher than the container -> kept
+    plant(buf, 200, "ZIP!", 1, 50);    // equal tier inside -> absorbed
+    plant(buf, 300, "ZIP!", 2, 50);    // higher tier inside -> absorbed too
     plant(buf, 2000, "ZIP!", 1, 50);   // outside -> kept
     const auto found = scan(test::span_of(buf), set());
-    ASSERT_EQ(found.size(), 3u);
+    ASSERT_EQ(found.size(), 2u);
     EXPECT_EQ(found[0].offset, 100u);
-    ASSERT_EQ(found[0].also_matched.size(), 1u);
+    ASSERT_EQ(found[0].also_matched.size(), 2u);
     EXPECT_EQ(found[0].also_matched[0].offset, 200u);
-    EXPECT_EQ(found[1].offset, 300u);
-    EXPECT_EQ(found[2].offset, 2000u);
+    EXPECT_EQ(found[0].also_matched[1].offset, 300u);
+    EXPECT_EQ(found[1].offset, 2000u);
+}
+
+// A non-compressed find at a higher tier inside a lower-tier one is still
+// kept: the exception is only for compressed streams.
+TEST(Resolve, NonCompressedHigherTierInsideLowerIsStillKept) {
+    Bytes buf(4096, 0);
+    plant(buf, 100, "OUT!", 1, 1000);
+    plant(buf, 200, "INN!", 2, 50);
+    const auto found = scan(test::span_of(buf), set());
+    ASSERT_EQ(found.size(), 2u);
+    EXPECT_TRUE(found[0].also_matched.empty());
 }
 
 // Absorption at equal confidence is one-directional: a compressed stream is
