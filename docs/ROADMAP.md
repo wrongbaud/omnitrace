@@ -16,11 +16,12 @@ reader registries by `scripts/gen_docs.py` and checked by `scripts/check_docs.py
 so it cannot drift from the code the way a table written here would.
 
 Today that is 53 signatures over 37 format ids, 29 validators, 7 filesystem
-readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and 14
-container formats read by 8 readers: `gzip`, `bzip2`, `xz`, `lzma`, `lz4` and
-`zstd` (one `StreamReader`), `tar`, `cpio`, `zip`, `uimage`, `fit`,
+readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and 15
+container formats read by 9 readers: `gzip`, `bzip2`, `xz`, `lzma`, `lz4` and
+`zstd` (one `StreamReader`), `tar`, `cpio`, `zip`, `uimage`, `fit`, `ubi`,
 `android-boot` and `android-vendor-boot` (one reader), and `android-sparse`.
-`--history` is recovered by the ext, JFFS2 and QNX6 readers.
+`--history` is recovered by the ext, JFFS2 and QNX6 readers, and by the UBI
+reader for superseded logical erase blocks.
 
 Nested analysis runs for extracted files: every file a walk writes to the host
 is re-scanned, and one holding a filesystem or a partition table at Structural
@@ -29,8 +30,8 @@ or better and at least `min_region_bytes` long is analysed again with the File n
 `Limits::max_depth`. A container payload is walked into
 `containers/<node-id>/files` by `process_container` and then re-scanned the
 same way, so a `.tar.gz` holding a filesystem is followed to the end. A
-container whose format has no registered reader (`7z` and `ubi` are what is
-left) is a Coverage row with status `unsupported` and an `analyze-no-reader`
+container whose format has no registered reader (`7z` is the only one left) is
+a Coverage row with status `unsupported` and an `analyze-no-reader`
 diagnostic.
 
 Word-swapped dumps are detected by `detect_word_swap` (`src/core/Swap.cpp:334`)
@@ -47,18 +48,17 @@ Items 1-4 of the original list are done: the ext4, JFFS2, QNX6 and QNX IFS
 readers, and both halves of the container work (readers plus the payload
 recursion). See the section above.
 
-1. **The remaining container readers.** `ubi`, which is really UBI volume
-   reassembly and pairs with the UBIFS reader below, and `7z`.
-   `src/containers/` holds eight readers over fourteen formats and
-   `tests/unit/containers/` the test shapes.
+1. **UBIFS and YAFFS2 readers**, both with history (UBIFS sqnum order, YAFFS2
+   sequence numbers); fixtures `ubifs.img`, `ubi.img`, `yaffs2.img`,
+   `yaffs2-yaffsecc.img` exist. UBIFS is the one that pays off first: the UBI
+   reader now hands it a properly reassembled volume.
 2. **The lzop file format** (`89 4c 5a 4f 00 0d 0a 1a 0a`), the last
    compressed format with no signature. It needs no new dependency -- the
    in-tree LZO1X decoder already serves SquashFS and JFFS2 -- but it is a
    multi-block container rather than a single-payload stream, so it is shaped
    like `CpioReader` rather than `StreamReader`.
-3. **UBIFS and YAFFS2 readers**, both with history (UBIFS sqnum order, YAFFS2
-   sequence numbers); fixtures `ubifs.img`, `ubi.img`, `yaffs2.img`,
-   `yaffs2-yaffsecc.img` exist.
+3. **The `7z` container reader**, the last container format with a signature
+   and no reader.
 4. **Verify a stream against its own checksum.** Every compressed format here
    carries one (gzip CRC32, xz check, lz4 and zstd content checksums) and none
    is compared against the decoded payload, so `verified` is unreachable for

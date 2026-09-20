@@ -1065,6 +1065,10 @@ tar-truncated:
   meaning: a tar member or the archive itself runs past the available data
   action: the dump is short; entries before the cut are still extracted
 
+ubi-bad-peb:
+  meaning: one or more PEBs have an unreadable erase-counter header and were skipped by the volume rebuild
+  action: the flash has bad or damaged blocks; the volumes those PEBs held LEBs for are short, so check ubi-leb-gap on each volume
+
 ubi-ec-crc-mismatch:
   meaning: the erase-counter header CRC does not match; size unknown
   action: a corrupt first PEB; try the next PEB or ubireader
@@ -1073,6 +1077,22 @@ ubi-ec-fields-insane:
   meaning: the EC header CRC is fine but version or offsets are out of range
   action: unusual or hostile image
 
+ubi-leb-gap:
+  meaning: a volume is missing one or more logical erase blocks; they are filled with 0xFF so the blocks after them keep their offsets
+  action: the image is partial or the blocks were bad; a filesystem on the volume will read past the gap but the gap's own contents are lost
+
+ubi-leb-superseded:
+  meaning: a volume holds an older copy of a logical erase block, left by an interrupted update or a wear-levelling move
+  action: re-run with --history to extract the older copies; each is the block as it was before it was rewritten
+
+ubi-limit-entries:
+  meaning: Limits::max_nodes_per_fs was reached before every volume was emitted
+  action: raise --max-files; the volumes already written are complete
+
+ubi-no-volumes:
+  meaning: no PEB carries a volume-identifier header, so there is no volume to rebuild
+  action: the image is erase-counter headers only (a freshly formatted flash), or the VID headers are damaged
+
 ubi-single-peb:
   meaning: no second EC header was found, so the PEB size and image size are unknown
   action: a single PEB or a mis-sized dump; identification only
@@ -1080,6 +1100,10 @@ ubi-single-peb:
 ubi-truncated-header:
   meaning: fewer than 64 bytes for the EC header
   action: magic-tier hit at the end of the data
+
+ubi-vtbl-unreadable:
+  meaning: the layout volume (0x7FFFEFFF) is missing or holds no volume-table record whose CRC matches, so no volume name is known
+  action: volumes are emitted as vol<id> instead; the contents are unaffected
 
 ubifs-bad-leb-layout:
   meaning: log/lpt/orphan LEB counts do not fit into leb_cnt

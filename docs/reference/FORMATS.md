@@ -38,7 +38,7 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `cpio` | container | validated to consistent (`cpio`) | yes | yes (`src/containers/cpio/CpioReader.cpp:295`) | n.a. | - | [cpio.md](../formats/cpio.md) | signatures: `cpio-newc`, `cpio-crc`, `cpio-odc` |
 | `fit` | container | validated to verified (`fit`) | yes | yes (`src/containers/fit/FitReader.cpp:250`) | n.a. | - | [fit.md](../formats/fit.md) | signatures: `fit` |
 | `tar` | container | validated to verified (`tar`) | yes | yes (`src/containers/tar/TarReader.cpp:342`) | n.a. | - | [tar.md](../formats/tar.md) | signatures: `tar-ustar` |
-| `ubi` | container | validated to verified (`ubi`) | yes | no | n.a. | - | [ubi.md](../formats/ubi.md) | size known only when a second EC header fixes the PEB size (`ubi-single-peb` otherwise); signatures: `ubi` |
+| `ubi` | container | validated to verified (`ubi`) | yes | yes (`src/containers/ubi/UbiReader.cpp:527`) | n.a. | - | [ubi.md](../formats/ubi.md) | size known only when a second EC header fixes the PEB size (`ubi-single-peb` otherwise); signatures: `ubi` |
 | `uimage` | container | validated to verified (`uimage`) | yes | yes (`src/containers/uimage/UImageReader.cpp:199`) | n.a. | - | [uimage.md](../formats/uimage.md) | may re-categorise as kernel; kernel and kernel_noload types are re-categorised as `kernel`; signatures: `uimage` |
 | `zip` | container | validated to consistent (`zip`) | yes | yes (`src/containers/zip/ZipReader.cpp:405`) | n.a. | - | [zip.md](../formats/zip.md) | signatures: `zip` |
 | `bzip2` | compressed | validated to consistent (`bzip2`) | yes | yes (`src/containers/stream/StreamReader.cpp:205`) | n.a. | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `bzip2` |
@@ -61,5 +61,5 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 ## Counts
 
 - 53 signatures over 37 format ids
-- 28 validators, 7 filesystem reader(s), 14 container reader(s)
+- 28 validators, 7 filesystem reader(s), 15 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

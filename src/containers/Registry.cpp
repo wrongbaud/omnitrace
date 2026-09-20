@@ -19,6 +19,7 @@ void omnitrace_container_anchor_tar();
 void omnitrace_container_anchor_zip();
 void omnitrace_container_anchor_sparse();
 void omnitrace_container_anchor_fit();
+void omnitrace_container_anchor_ubi();
 
 void link_builtin_containers() {
     // Calling each (empty) anchor is enough to make the linker keep its object
@@ -31,6 +32,7 @@ void link_builtin_containers() {
     omnitrace_container_anchor_zip();
     omnitrace_container_anchor_sparse();
     omnitrace_container_anchor_fit();
+    omnitrace_container_anchor_ubi();
 }
 }  // namespace detail
 
