@@ -740,6 +740,270 @@ def ubifs_pin(img: bytearray, leb_size: int) -> dict:
     return {"uuid": UBIFS_UUID.hex(), "inode_nodes_pinned": patched}
 
 
+UBIFS_DATA_NODE = 1
+UBIFS_DENT_NODE = 2
+UBIFS_PAD_NODE = 5
+UBIFS_MST_NODE = 7
+UBIFS_REF_NODE = 8
+UBIFS_CS_NODE = 10
+UBIFS_KEY_INO, UBIFS_KEY_DATA, UBIFS_KEY_DENT = 0, 1, 2
+UBIFS_ITYPE_REG = 0
+UBIFS_LOG_LNUM = 3
+
+
+def ubifs_node(ntype: int, body: bytes, sqnum: int) -> bytes:
+    """One node: the 24-byte common header, then `body`.
+
+    Header: magic u32, crc u32, sqnum u64, len u32, node_type u8,
+    group_type u8, pad[2]. crc covers bytes 8..len.
+    """
+    length = 24 + len(body)
+    head = struct.pack("<IIQIBBH", UBIFS_NODE_MAGIC, 0, sqnum, length, ntype, 0, 0)
+    node = bytearray(head + body)
+    struct.pack_into("<I", node, 4, ubifs_crc32(bytes(node[8:])))
+    return bytes(node)
+
+
+def ubifs_key(inum: int, ktype: int, extra: int = 0) -> bytes:
+    """The 8-byte simple key, padded to the 16 bytes the nodes reserve."""
+    return struct.pack("<II", inum, (ktype << 29) | extra) + bytes(8)
+
+
+def ubifs_data_node_bytes(inum: int, block: int, payload: bytes, sqnum: int) -> bytes:
+    """One data node holding `block` uncompressed (struct ubifs_data_node:
+    ch[24] key[16] size[4] compr_type[2] compr_size[2] data[])."""
+    body = ubifs_key(inum, UBIFS_KEY_DATA, block)
+    body += struct.pack("<IHH", len(payload), 0, 0) + payload
+    return ubifs_node(UBIFS_DATA_NODE, body, sqnum)
+
+
+def ubifs_ino_node_bytes(src: bytes, size: int, when: int, sqnum: int) -> bytes:
+    """A new inode node copied from `src` with a new size, times and sqnum, and
+    no inline data. Keeps the mode, owner and link count mkfs.ubifs wrote."""
+    body = bytearray(src[24:24 + 136])  # struct ubifs_ino_node without data[]
+    struct.pack_into("<Q", body, 48 - 24, size)              # size
+    struct.pack_into("<QQQ", body, 56 - 24, when, when, when)  # atime, ctime, mtime
+    struct.pack_into("<III", body, 80 - 24, 0, 0, 0)         # the nsec fields
+    struct.pack_into("<I", body, 112 - 24, 0)                # data_len
+    return ubifs_node(UBIFS_INO_NODE, bytes(body), sqnum)
+
+
+def ubifs_dent_node_bytes(parent: int, name: bytes, child: int, itype: int, sqnum: int,
+                          nhash: int) -> bytes:
+    """One directory entry (struct ubifs_dent_node: ch[24] key[16] inum[8]
+    padding1[1] type[1] nlen[2] cookie[4] name[]). `child == 0` is the record
+    UBIFS writes on unlink."""
+    body = ubifs_key(parent, UBIFS_KEY_DENT, nhash)
+    body += struct.pack("<QBBHI", child, 0, itype, len(name), 0) + name
+    return ubifs_node(UBIFS_DENT_NODE, body, sqnum)
+
+
+def ubifs_ref_node_bytes(lnum: int, offs: int, sqnum: int) -> bytes:
+    """A log reference node naming a bud (ch[24] lnum[4] offs[4] jhead[4]
+    padding[28]); UBIFS_REF_NODE_SZ is 64."""
+    return ubifs_node(UBIFS_REF_NODE, struct.pack("<III", lnum, offs, 0) + bytes(28), sqnum)
+
+
+def ubifs_sweep(img: bytes, leb_size: int) -> list[dict]:
+    """Every node on the medium, found by sweeping for the magic at every
+    8-byte boundary and keeping what verifies. The same thing the reader does,
+    written independently so the fixture is not checked against itself."""
+    out = []
+    for lnum in range(len(img) // leb_size):
+        base = lnum * leb_size
+        for i in range(0, leb_size - 4, 8):
+            if struct.unpack_from("<I", img, base + i)[0] != UBIFS_NODE_MAGIC:
+                continue
+            crc, sqnum, length = struct.unpack_from("<IQI", img, base + i + 4)
+            if length < 24 or i + length > leb_size:
+                continue
+            if ubifs_crc32(img[base + i + 8 : base + i + length]) != crc:
+                continue
+            out.append({"lnum": lnum, "offs": i, "off": base + i, "len": length,
+                        "sqnum": sqnum, "type": img[base + i + 20],
+                        "raw": img[base + i : base + i + length]})
+    return out
+
+
+def ubifs_tree(nodes: list[dict]) -> tuple[dict, dict]:
+    """(path -> inode, inode -> inode node) from the dent and inode nodes."""
+    inodes, dents = {}, {}
+    for n in nodes:
+        if n["len"] < 32:
+            continue  # a pad node is 28 bytes and has no key
+        inum, word = struct.unpack_from("<II", n["raw"], 24)
+        ktype = word >> 29
+        if n["type"] == UBIFS_INO_NODE and n["len"] >= 160 and ktype == UBIFS_KEY_INO:
+            inodes[inum] = n
+        elif n["type"] == UBIFS_DENT_NODE and n["len"] > 56 and ktype == UBIFS_KEY_DENT:
+            child = struct.unpack_from("<Q", n["raw"], 40)[0]
+            nlen = struct.unpack_from("<H", n["raw"], 50)[0]
+            name = n["raw"][56:56 + nlen].decode("utf-8", "surrogateescape")
+            dents.setdefault(inum, []).append((name, child, n["raw"][49], word & ((1 << 29) - 1)))
+    paths = {}
+
+    def walk(ino, prefix):
+        for name, child, itype, nhash in sorted(dents.get(ino, [])):
+            path = f"{prefix}{name}"
+            paths[path] = {"inum": child, "type": itype, "parent": ino, "hash": nhash}
+            if itype == 1:
+                walk(child, path + "/")
+
+    walk(1, "")
+    return paths, inodes
+
+
+def build_ubifs_history(ctx: Ctx) -> Optional[dict]:
+    """The base tree, then the journal a running device would have left.
+
+    mkfs.ubifs only ever writes a clean image: everything is in the index and
+    the log holds nothing but a commit-start node. The states a forensic
+    reader has to recover -- an older version of a file, and a file that was
+    deleted -- only exist once something has been written *since* the last
+    commit. So this appends a bud: two further versions of history/config.txt
+    and an unlink record for history/deleted.txt, with a reference node in the
+    log pointing at it, which is byte for byte the state the medium is in
+    after those three operations.
+
+    What the reader must then show: config.txt with its third content, no
+    deleted.txt, and, with --history, the first two versions of config.txt and
+    the deleted file's contents.
+    """
+    leb, min_io = 129024, 2048
+    features = Features(owner_method="devtable")
+    tree = filtered_tree(base_tree(), features)
+    stg = ctx.work / "stage-ubifs-history"
+    stage(stg, tree)
+    dt = ctx.work / "ubifs-history.devtable"
+    img = ctx.out / "ubifs-history.img"
+    img.unlink(missing_ok=True)
+    argv = ["mkfs.ubifs", "-r", str(stg), "-m", str(min_io), "-e", str(leb), "-c", "128",
+            "-x", "zlib", "-o", str(img)] + devtable(tree, dt, features)
+    ctx.run(argv)
+    raw = bytearray(img.read_bytes())
+    pinned = ubifs_pin(raw, leb)
+
+    nodes = ubifs_sweep(bytes(raw), leb)
+    paths, inodes = ubifs_tree(nodes)
+    cfg, dele = paths["history/config.txt"], paths["history/deleted.txt"]
+    hi = max(n["sqnum"] for n in nodes)
+
+    # A bud has to go in an erase block nothing else uses.
+    free = [i for i in range(len(raw) // leb)
+            if all(b == 0xFF for b in raw[i * leb:(i + 1) * leb])]
+    if not free:
+        raise RuntimeError("ubifs-history: no free erase block for a bud")
+    bud = free[0]
+
+    appended, at, sq = [], 0, hi
+    def put(node: bytes, what: dict) -> int:
+        nonlocal at, sq
+        off = bud * leb + at
+        if at + len(node) > leb:
+            raise RuntimeError("ubifs-history: the bud does not fit in one erase block")
+        raw[off:off + len(node)] = node
+        appended.append({**what, "lnum": bud, "offs": at, "offset": off, "length": len(node)})
+        at = (at + len(node) + 7) & ~7
+        return off
+
+    src_ino = inodes[cfg["inum"]]["raw"]
+    versions = []
+    for i, data in enumerate((CONFIG_V2, CONFIG_V3)):
+        when = T0 + 100 + 10 * i
+        sq += 1
+        put(ubifs_data_node_bytes(cfg["inum"], 0, data, sq), {"node": "data", "ino": cfg["inum"]})
+        sq += 1
+        off = put(ubifs_ino_node_bytes(src_ino, len(data), when, sq),
+                  {"node": "inode", "ino": cfg["inum"], "sqnum": sq})
+        versions.append({"data": data, "mtime": when, "sqnum": sq, "node_offset": off})
+    sq += 1
+    unlink_off = put(
+        ubifs_dent_node_bytes(dele["parent"], b"deleted.txt", 0, UBIFS_ITYPE_REG, sq,
+                              dele["hash"]),
+        {"node": "dent-unlink", "parent": dele["parent"], "sqnum": sq})
+    unlink_sqnum = sq
+
+    # The log: a reference node right after the commit-start node the master
+    # node points at, which is what makes the bud part of this commit.
+    mst = min((n for n in nodes if n["type"] == UBIFS_MST_NODE), key=lambda n: n["lnum"])
+    log_lnum = struct.unpack_from("<I", mst["raw"], 44)[0]
+    cs = [n for n in nodes if n["lnum"] == log_lnum and n["type"] == UBIFS_CS_NODE]
+    if not cs or cs[0]["offs"] != 0:
+        raise RuntimeError("ubifs-history: no commit-start node at the log head")
+    # Walk past the commit-start node and the padding that fills out its
+    # minimum-I/O unit, the way UBIFS itself would before writing a reference
+    # node: a pad node is 28 bytes plus pad_len zeros, and the whole run is
+    # skipped as one.
+    off = 0
+    while True:
+        magic, _c, _sq, length = struct.unpack_from("<IIQI", raw, log_lnum * leb + off)
+        if magic != UBIFS_NODE_MAGIC:
+            break
+        if raw[log_lnum * leb + off + 20] == UBIFS_PAD_NODE:
+            pad_len = struct.unpack_from("<I", raw, log_lnum * leb + off + 24)[0]
+            off += (length + pad_len + 7) & ~7
+        else:
+            off += (length + 7) & ~7
+    if off % min_io:
+        raise RuntimeError(f"ubifs-history: the log head ends at {off}, not a min_io boundary")
+    ref_at = log_lnum * leb + off
+    sq += 1
+    ref = ubifs_ref_node_bytes(bud, 0, sq)
+    raw[ref_at:ref_at + len(ref)] = ref
+    appended.append({"node": "ref", "lnum": log_lnum, "offs": ref_at - log_lnum * leb,
+                     "offset": ref_at, "length": len(ref), "bud_lnum": bud})
+    img.write_bytes(bytes(raw))
+
+    # Re-sweep: every appended node must verify on its own terms.
+    after = ubifs_sweep(img.read_bytes(), leb)
+    if len(after) != len(nodes) + len(appended):
+        raise RuntimeError(f"ubifs-history: swept {len(after)} nodes, expected "
+                           f"{len(nodes) + len(appended)}")
+
+    # The live tree now carries config v3 and no deleted.txt.
+    for e in tree:
+        if e.path == "history/config.txt":
+            e.content, e.mtime = CONFIG_V3, versions[-1]["mtime"]
+    tree = [e for e in tree if e.path != "history/deleted.txt"]
+
+    del_ino_node = inodes[dele["inum"]]["raw"]
+    return image_doc(
+        "ubifs-history", "ubifs", img, ctx.version("mkfs.ubifs", ["mkfs.ubifs", "-V"]),
+        argv[1:], features, tree,
+        attrs={"min_io_size": min_io, "leb_size": leb, "max_leb_cnt": 128,
+               "compression": "zlib", "bud_lnum": bud, **pinned},
+        history={
+            "superseded": [
+                {"path": "history/config.txt", "inode": cfg["inum"], "version": 1,
+                 "size": len(CONFIG_V1), "sha256": sha256(CONFIG_V1), "mtime": T0 + 30},
+                {"path": "history/config.txt", "inode": cfg["inum"], "version": 2,
+                 "size": len(CONFIG_V2), "sha256": sha256(CONFIG_V2),
+                 "mtime": versions[0]["mtime"], "node_offset": versions[0]["node_offset"]},
+            ],
+            "current": [
+                {"path": "history/config.txt", "inode": cfg["inum"], "version": 0,
+                 "size": len(CONFIG_V3), "sha256": sha256(CONFIG_V3),
+                 "mtime": versions[1]["mtime"], "node_offset": versions[1]["node_offset"]},
+            ],
+            "deleted": [
+                {"path": "history/deleted.txt", "inode": dele["inum"], "version": 1,
+                 "size": len(DELETED_TXT), "sha256": sha256(DELETED_TXT),
+                 "mtime": struct.unpack_from("<Q", del_ino_node, 72)[0],
+                 "unlink_node_offset": unlink_off, "unlink_sqnum": unlink_sqnum,
+                 "content_recoverable": True},
+            ],
+            "appended_nodes": appended,
+            "note": (
+                "Nodes appended after the mkfs.ubifs output, in erase block %d, with a reference "
+                "node in the log so the journal replay reaches them: two (data, inode) pairs for "
+                "history/config.txt and a directory entry pointing at inode 0 for "
+                "history/deleted.txt, which is how UBIFS records an unlink. sqnum continues from "
+                "the highest mkfs wrote. The original nodes of both files stay where they were." % bud
+            ),
+        },
+    )
+
+
 def build_ubifs(ctx: Ctx) -> Optional[dict]:
     features = Features(owner_method="devtable")
     tree = filtered_tree(base_tree(), features)
@@ -1214,6 +1478,7 @@ BUILDERS: list[tuple[str, list[str], Callable[[Ctx], Optional[dict]]]] = [
     ("jffs2-be", ["mkfs.jffs2"], lambda c: build_jffs2(c, "big", False)),
     ("jffs2-history", ["mkfs.jffs2"], lambda c: build_jffs2(c, "little", True)),
     ("ubifs", ["mkfs.ubifs", "ubinize"], build_ubifs),
+    ("ubifs-history", ["mkfs.ubifs"], build_ubifs_history),
     ("yaffs2", ["mkyaffs2"], lambda c: build_yaffs2(c, "mtd")),
     ("yaffs2-yaffsecc", ["mkyaffs2"], lambda c: build_yaffs2(c, "yaffs")),
     ("ext4", ["mkfs.ext4", "debugfs"], build_ext4),

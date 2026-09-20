@@ -115,6 +115,54 @@ the deletion record it is and drops the name, counting it in
 a block the index and journal do not have is a hole and reads as zeros, and
 each block is decompressed on its own, so nothing larger than 4 KiB is held.
 
+## History
+
+UBIFS never overwrites in place. A node stays exactly where it was written
+until garbage collection reclaims its erase block, so the state a file was in
+before its last write, and the inode and blocks of a file that has been
+deleted, are usually still on the medium. With `WalkOptions::history` the
+reader sweeps for them.
+
+**The sweep.** Every erase block is scanned for the node magic at each 8-byte
+boundary -- UBIFS pads every node to 8, so that is a scan of the candidates,
+not of every byte -- and the CRC decides. A sequential walk would miss what
+sits in the tail of an erase block that was partly reused, which is exactly
+where a deleted file's nodes end up. It costs about 0.3s per 180 MiB and is
+only done when asked for.
+
+Nodes are then grouped by key: inode nodes per inode, data nodes per (inode,
+block), directory entries per (parent, name), each ordered by `sqnum`.
+
+**What comes out of it.**
+
+* **Deleted files.** A name whose newest directory entry points at inode 0 was
+  unlinked. The entry before it names the inode, and the state that inode was
+  in at that moment is its newest inode node with `sqnum` no higher than the
+  unlink's, with the blocks to match. The entry is emitted with
+  `deleted = true`, its `unlink_sqnum` and `unlink_node_offset` in
+  `FileMeta::extra`; earlier states of the same file follow as
+  `deleted + superseded`.
+* **Earlier states of live files.** Every inode node of a live inode other
+  than the one the index and journal agree on is a past state, with the
+  content its blocks held at that `sqnum`. A node written *after* the live one
+  was never committed -- an interrupted write, not a past -- and carries
+  `newer_than_live`.
+* **Inodes with no name.** An inode whose directory entry has already been
+  reclaimed, or one unlinked while it was still open, has no name to be
+  emitted under. It goes to `lost+found/#<inum>` with `name_lost`, which is
+  also what makes a volume with a wrecked index still yield its files.
+
+**Version numbers** are path-scoped and start at 1, oldest first, so
+`(path, version)` is unique and `DiskSink` never needs to disambiguate
+`.omnitrace-versions/<path>/v<n>`. The live entry keeps version 0, which is
+what makes the live tree byte-identical with and without `--history`.
+
+**The one state it cannot reconstruct** is a data-only rewrite: UBIFS marks a
+point in time with an inode node, so a block overwritten without the inode
+being written again leaves the old block on the medium with nothing to say
+when it stopped being current. In practice a write updates `mtime` and so
+writes the inode node too.
+
 ## Diagnostics
 
 From the validator: `ubifs-bad-superblock` (magic), `ubifs-bad-leb-layout`
@@ -134,23 +182,21 @@ From the reader:
 | `ubifs-directory-loop` | warning | a directory is its own ancestor; the branch stops there |
 | `ubifs-limit-nodes` | warning | `max_nodes_per_fs` stopped the walk |
 | `ubifs-sink-error` | warning | the Sink refused an entry |
-| `ubifs-history-unsupported` | info | `--history` was asked for; see below |
+| `ubifs-history-scan` | info | what the `--history` sweep found and recovered |
+| `ubifs-deleted-unresolved` | info | an unlink record whose target or directory is no longer on the medium |
+| `ubifs-limit-history-nodes` | warning | the sweep hit its node cap; older states beyond it were not recovered |
 
 `open()` fails with `ubifs-bad-magic`, `ubifs-bad-superblock`,
 `ubifs-bad-master` or `ubifs-truncated`.
 
 ## Not yet supported
 
-* **History.** UBIFS never overwrites in place: a superseded inode or data
-  node stays on the medium until garbage collection reclaims its erase block,
-  and an unlinked name leaves its inode and blocks behind. Recovering those
-  is a scan of every erase block for nodes and a per-`sqnum` reconstruction,
-  which this reader does not do yet; `--history` says so rather than
-  silently emitting nothing extra. This is the next piece of work on it.
 * Authentication (format 5 HMAC nodes) is not verified.
 * Encrypted UBIFS (`fscrypt`) contents are extracted as stored.
-* The orphan area is not read, so an inode unlinked while still open is not
-  recovered from there.
+* The orphan area is not read. An inode unlinked while still open is listed
+  there as well as left on the medium, so `--history` still recovers it, but
+  under `lost+found/#<inum>` rather than by the name the orphan record would
+  give it.
 
 ## Verified on
 
@@ -162,7 +208,16 @@ From the reader:
 * The same fixture inside a `ubinize` UBI image
   (`tests/fixtures/out/ubi.img`): the volume is reassembled first and the
   filesystem reads identically through it.
-* A crafted dirty copy of the fixture: a bud holding a newer `etc/passwd` and
-  an unlink record for `history/deleted.txt`, with a reference node in the
-  log. The walk shows the journal's `etc/passwd`, not the index's, and 19
-  entries instead of 20 -- which is what a mount would show.
+* `tests/fixtures/out/ubifs-history.img`: the same tree with a hand-assembled
+  journal bud (two further versions of `history/config.txt` and an unlink
+  record for `history/deleted.txt`, with a reference node in the log), built
+  by `tests/fixtures/generate.py` and described in
+  [TESTING.md](../TESTING.md#ubifs-history-nodes). The live tree shows
+  `config.txt` at v3 and no `deleted.txt`; `--history` recovers v1 and v2 of
+  `config.txt` and `deleted.txt`'s 1126 bytes, all byte-identical to the
+  ground truth the builder recorded.
+* A copy of the fixture whose index branches were rewritten to point at random
+  erase blocks, one of them back at the index node itself: the index walk
+  yields nothing, and `--history` still recovers all ten regular files under
+  `lost+found/#<inum>`, every one byte-identical to the intact fixture. That
+  is the case the sweep exists for.

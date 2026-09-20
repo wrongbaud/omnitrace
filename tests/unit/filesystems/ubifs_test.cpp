@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "../../../src/discovery/crc32.h"
+#include "omnitrace/core/Hash.h"
 #include "omnitrace/core/Sink.h"
 #include "omnitrace/core/Source.h"
 #include "omnitrace/core/Span.h"
@@ -264,6 +265,14 @@ const EntryResult* entry_named(const WalkResult& r, const std::string& path) {
     return nullptr;
 }
 
+/// The SHA-256 of the given byte runs concatenated: the recovered content is
+/// only right if its bytes are, not just its length.
+std::string sha256_of(const std::vector<Bytes>& parts) {
+    Hasher h;
+    for (const Bytes& b : parts) h.update(std::span<const std::uint8_t>(b.data(), b.size()));
+    return h.finish().sha256;
+}
+
 bool has_code(const std::vector<Diagnostic>& ds, const std::string& code) {
     for (const Diagnostic& d : ds) {
         if (d.code == code) return true;
@@ -275,14 +284,19 @@ using Branch = std::pair<Image::Where, std::array<std::uint32_t, 3>>;
 
 /// `/hello.txt`, one block, committed to the index. The base every test
 /// builds on.
+///
+/// The sqnums follow the order UBIFS writes in: a write puts its data nodes
+/// down first and the inode node, carrying the new size and times, last. The
+/// history pass relies on that -- the state of a file when an inode node was
+/// written is the blocks whose sqnum does not pass it.
 Image one_file() {
     Image img;
     img.superblock();
     img.log_start();
     const Image::Where root_ino = img.inode(kLeafLeb, kRootIno, 0040755, 0, 10);
-    const Image::Where f_ino = img.inode(kLeafLeb, 20, 0100644, 5, 11);
+    const Image::Where f_data = img.data(kLeafLeb, 20, 0, "index", 11);
     const Image::Where f_dent = img.dent(kLeafLeb, kRootIno, "hello.txt", 20, kItReg, 12);
-    const Image::Where f_data = img.data(kLeafLeb, 20, 0, "index", 13);
+    const Image::Where f_ino = img.inode(kLeafLeb, 20, 0100644, 5, 13);
     const Image::Where idx = img.index(
         kIdxLeb, std::vector<Branch>{{root_ino, {kRootIno, kKIno, 0}},
                                      {f_ino, {20, kKIno, 0}},
@@ -396,10 +410,10 @@ TEST(UbifsReader, AHoleReadsAsZeros) {
     img.superblock();
     img.log_start();
     const Image::Where root_ino = img.inode(kLeafLeb, kRootIno, 0040755, 0, 10);
-    const Image::Where f_ino = img.inode(kLeafLeb, 20, 0100644, 4096 + 4, 11);
-    const Image::Where f_dent = img.dent(kLeafLeb, kRootIno, "sparse.bin", 20, kItReg, 12);
     // Block 0 is simply not written, which is how UBIFS makes a hole.
-    const Image::Where f_data = img.data(kLeafLeb, 20, 1, "tail", 13);
+    const Image::Where f_data = img.data(kLeafLeb, 20, 1, "tail", 11);
+    const Image::Where f_dent = img.dent(kLeafLeb, kRootIno, "sparse.bin", 20, kItReg, 12);
+    const Image::Where f_ino = img.inode(kLeafLeb, 20, 0100644, 4096 + 4, 13);
     const Image::Where idx =
         img.index(kIdxLeb, std::vector<Branch>{{root_ino, {kRootIno, kKIno, 0}},
                                                {f_ino, {20, kKIno, 0}},
@@ -474,15 +488,130 @@ TEST(UbifsReader, ADirectoryThatIsItsOwnAncestorStopsTheBranch) {
     EXPECT_LT(w.r.entries, 10u);
 }
 
-TEST(UbifsReader, HistoryIsAskedForAndSaysItHasNone) {
-    const Image img = one_file();
+// --- history -----------------------------------------------------------
+//
+// UBIFS never overwrites in place, so the node a write replaced stays where
+// it was until garbage collection reclaims its erase block. Recovering those
+// is a sweep of the medium, not a walk of the index, and these cover what the
+// sweep has to get right.
+
+TEST(UbifsReader, HistoryRecoversTheVersionTheJournalReplaced) {
+    Image img = one_file();  // the index holds "index" (5 bytes)
+    img.data(kBudLeb, 20, 0, "journal!", 100);
+    img.inode(kBudLeb, 20, 0100644, 8, 101);
+    img.log_ref(kBudLeb, 0, 102);
+
     std::shared_ptr<const Source> keep;
     auto reader = make_ubifs();
     ASSERT_TRUE(reader->open(span_of(img.bytes(), keep)));
     const Walked w = walk_it(*reader, /*history=*/true);
     ASSERT_TRUE(w.st);
-    EXPECT_TRUE(has_code(w.r.diagnostics, "ubifs-history-unsupported"));
-    EXPECT_EQ(w.r.superseded, 0u);
+    EXPECT_EQ(w.r.superseded, 1u);
+
+    const EntryResult* live = entry_named(w.r, "hello.txt");
+    ASSERT_NE(live, nullptr);
+    EXPECT_EQ(live->meta.size, 8u);
+    EXPECT_EQ(live->meta.version, 0u);  // the live entry is never numbered
+
+    // The committed state is still on the medium and still readable.
+    const EntryResult* old_state = nullptr;
+    for (const EntryResult& e : w.r.entries_out)
+        if (e.meta.superseded && e.meta.path == "hello.txt") old_state = &e;
+    ASSERT_NE(old_state, nullptr);
+    EXPECT_EQ(old_state->meta.version, 1u);
+    EXPECT_EQ(old_state->meta.size, 5u);
+    EXPECT_EQ(old_state->digests.sha256, sha256_of({{'i', 'n', 'd', 'e', 'x'}}));
+    EXPECT_EQ(old_state->meta.extra.count("sqnum"), 1u);
+}
+
+TEST(UbifsReader, HistoryRecoversADeletedFileWithItsContents) {
+    Image img = one_file();
+    img.dent(kBudLeb, kRootIno, "hello.txt", 0, kItReg, 100);  // the unlink
+    img.log_ref(kBudLeb, 0, 101);
+
+    std::shared_ptr<const Source> keep;
+    auto reader = make_ubifs();
+    ASSERT_TRUE(reader->open(span_of(img.bytes(), keep)));
+    const Walked w = walk_it(*reader, /*history=*/true);
+    ASSERT_TRUE(w.st);
+    // Gone from the live tree, recovered by the history pass.
+    EXPECT_EQ(w.r.deleted, 1u);
+    const EntryResult* gone = entry_named(w.r, "hello.txt");
+    ASSERT_NE(gone, nullptr);
+    EXPECT_TRUE(gone->meta.deleted);
+    EXPECT_FALSE(gone->meta.superseded);
+    EXPECT_EQ(gone->meta.size, 5u);
+    EXPECT_EQ(gone->digests.sha256, sha256_of({{'i', 'n', 'd', 'e', 'x'}}));
+    EXPECT_EQ(gone->meta.extra.count("unlink_node_offset"), 1u);
+}
+
+TEST(UbifsReader, HistoryFindsNodesNothingPointsAt) {
+    Image img = one_file();
+    // An inode and its data in a block no index branch and no bud names:
+    // a file whose directory entry was reclaimed, or one unlinked while it
+    // was still open. Only a sweep of the medium finds it.
+    img.data(kBudLeb, 55, 0, "orphan", 200);
+    img.inode(kBudLeb, 55, 0100600, 6, 201);
+
+    std::shared_ptr<const Source> keep;
+    auto reader = make_ubifs();
+    ASSERT_TRUE(reader->open(span_of(img.bytes(), keep)));
+    EXPECT_EQ(reader->info().attrs.at("bud_lebs"), "0");  // nothing referenced it
+    const Walked w = walk_it(*reader, /*history=*/true);
+    ASSERT_TRUE(w.st);
+    const EntryResult* found = entry_named(w.r, "lost+found/#55");
+    ASSERT_NE(found, nullptr);
+    EXPECT_TRUE(found->meta.deleted);
+    EXPECT_EQ(found->meta.inode, 55u);
+    EXPECT_EQ(found->meta.mode, 0100600u);
+    EXPECT_EQ(found->digests.sha256, sha256_of({{'o', 'r', 'p', 'h', 'a', 'n'}}));
+    EXPECT_EQ(found->meta.extra.at("name_lost"), "true");
+}
+
+TEST(UbifsReader, HistoryLeavesTheLiveTreeAlone) {
+    Image img = one_file();
+    img.data(kBudLeb, 20, 0, "journal!", 100);
+    img.inode(kBudLeb, 20, 0100644, 8, 101);
+    img.log_ref(kBudLeb, 0, 102);
+
+    std::shared_ptr<const Source> keep;
+    auto a = make_ubifs();
+    auto b = make_ubifs();
+    ASSERT_TRUE(a->open(span_of(img.bytes(), keep)));
+    ASSERT_TRUE(b->open(span_of(img.bytes(), keep)));
+    const Walked off = walk_it(*a, false);
+    const Walked on = walk_it(*b, true);
+    EXPECT_EQ(off.r.superseded, 0u);
+    EXPECT_EQ(off.r.deleted, 0u);
+    for (const EntryResult& e : off.r.entries_out) {
+        EXPECT_FALSE(e.meta.superseded);
+        EXPECT_FALSE(e.meta.deleted);
+    }
+    // The same live entry, byte for byte, in both modes.
+    const EntryResult* l1 = entry_named(off.r, "hello.txt");
+    const EntryResult* l2 = entry_named(on.r, "hello.txt");
+    ASSERT_NE(l1, nullptr);
+    ASSERT_NE(l2, nullptr);
+    EXPECT_EQ(l1->meta.size, l2->meta.size);
+    EXPECT_EQ(l1->meta.version, l2->meta.version);
+    EXPECT_EQ(l1->digests.sha256, l2->digests.sha256);
+}
+
+TEST(UbifsReader, AnUnlinkWhoseTargetIsGoneIsReportedNotInvented) {
+    Image img = one_file();
+    // An unlink for a name that has no earlier entry on the medium: the
+    // record says something was deleted, but not what.
+    img.dent(kBudLeb, kRootIno, "vanished", 0, kItReg, 100, /*hash=*/9);
+    img.log_ref(kBudLeb, 0, 101);
+
+    std::shared_ptr<const Source> keep;
+    auto reader = make_ubifs();
+    ASSERT_TRUE(reader->open(span_of(img.bytes(), keep)));
+    const Walked w = walk_it(*reader, /*history=*/true);
+    ASSERT_TRUE(w.st);
+    EXPECT_EQ(entry_named(w.r, "vanished"), nullptr);
+    EXPECT_TRUE(has_code(w.r.diagnostics, "ubifs-deleted-unresolved"));
+    EXPECT_TRUE(has_code(w.r.diagnostics, "ubifs-history-scan"));
 }
 
 TEST(UbifsReader, OpenRejectsWhatIsNotAUbifsVolume) {
@@ -519,8 +648,8 @@ TEST(UbifsReader, AnIndexBranchPointingAtNothingIsReported) {
     img.superblock();
     img.log_start();
     const Image::Where root_ino = img.inode(kLeafLeb, kRootIno, 0040755, 0, 10);
-    const Image::Where f_dent = img.dent(kLeafLeb, kRootIno, "ok", 20, kItReg, 12);
-    const Image::Where f_ino = img.inode(kLeafLeb, 20, 0100644, 0, 11);
+    const Image::Where f_dent = img.dent(kLeafLeb, kRootIno, "ok", 20, kItReg, 11);
+    const Image::Where f_ino = img.inode(kLeafLeb, 20, 0100644, 0, 12);
     // A fourth branch into an erase block that holds nothing.
     const Image::Where nowhere{5, 0, 160};
     const Image::Where idx = img.index(

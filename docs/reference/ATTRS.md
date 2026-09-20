@@ -739,23 +739,23 @@ Source: `src/filesystems/ubifs/UbifsReader.cpp` (20 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `bad_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:624` | nodes that failed their CRC or could not be read (absent when none) |
-| `bud_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:621` | journal bud erase blocks replayed |
-| `commit_no` | `src/filesystems/ubifs/UbifsReader.cpp:614` | commit number of the master node the reader used |
-| `data_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:620` | distinct (inode, block) data nodes the index and journal name |
-| `dentries` | `src/filesystems/ubifs/UbifsReader.cpp:619` | live directory entries after the journal replay |
-| `fanout` | `src/filesystems/ubifs/UbifsReader.cpp:613` | index B-tree fanout from the superblock |
-| `fmt_version` | `src/filesystems/ubifs/UbifsReader.cpp:605` | UBIFS format version |
-| `index_leaves` | `src/filesystems/ubifs/UbifsReader.cpp:617` | leaf branches the index walk collected |
-| `index_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:616` | index nodes walked |
-| `index_size` | `src/filesystems/ubifs/UbifsReader.cpp:615` | bytes of index the master node reports |
-| `inodes` | `src/filesystems/ubifs/UbifsReader.cpp:618` | distinct inode nodes the index and journal name |
-| `journal_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:622` | nodes the journal replay applied on top of the index |
-| `leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:610` | logical erase blocks the volume uses |
-| `leb_size` | `src/filesystems/ubifs/UbifsReader.cpp:609` | usable bytes per logical erase block |
-| `log_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:612` | erase blocks reserved for the log |
-| `max_leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:611` | largest volume size the superblock allows, in erase blocks |
-| `min_io_size` | `src/filesystems/ubifs/UbifsReader.cpp:608` | minimum I/O unit of the underlying flash |
-| `ro_compat_version` | `src/filesystems/ubifs/UbifsReader.cpp:606` | read-only compatibility version |
-| `unlink_records` | `src/filesystems/ubifs/UbifsReader.cpp:623` | directory entries pointing at inode 0, the record UBIFS writes on unlink (absent when none) |
-| `uuid` | `src/filesystems/ubifs/UbifsReader.cpp:607` | filesystem UUID from the superblock |
+| `bad_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1029` | nodes that failed their CRC or could not be read (absent when none) |
+| `bud_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:1026` | journal bud erase blocks replayed |
+| `commit_no` | `src/filesystems/ubifs/UbifsReader.cpp:1019` | commit number of the master node the reader used |
+| `data_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1025` | distinct (inode, block) data nodes the index and journal name |
+| `dentries` | `src/filesystems/ubifs/UbifsReader.cpp:1024` | live directory entries after the journal replay |
+| `fanout` | `src/filesystems/ubifs/UbifsReader.cpp:1018` | index B-tree fanout from the superblock |
+| `fmt_version` | `src/filesystems/ubifs/UbifsReader.cpp:1010` | UBIFS format version |
+| `index_leaves` | `src/filesystems/ubifs/UbifsReader.cpp:1022` | leaf branches the index walk collected |
+| `index_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1021` | index nodes walked |
+| `index_size` | `src/filesystems/ubifs/UbifsReader.cpp:1020` | bytes of index the master node reports |
+| `inodes` | `src/filesystems/ubifs/UbifsReader.cpp:1023` | distinct inode nodes the index and journal name |
+| `journal_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1027` | nodes the journal replay applied on top of the index |
+| `leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:1015` | logical erase blocks the volume uses |
+| `leb_size` | `src/filesystems/ubifs/UbifsReader.cpp:1014` | usable bytes per logical erase block |
+| `log_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:1017` | erase blocks reserved for the log |
+| `max_leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:1016` | largest volume size the superblock allows, in erase blocks |
+| `min_io_size` | `src/filesystems/ubifs/UbifsReader.cpp:1013` | minimum I/O unit of the underlying flash |
+| `ro_compat_version` | `src/filesystems/ubifs/UbifsReader.cpp:1011` | read-only compatibility version |
+| `unlink_records` | `src/filesystems/ubifs/UbifsReader.cpp:1028` | directory entries pointing at inode 0, the record UBIFS writes on unlink (absent when none) |
+| `uuid` | `src/filesystems/ubifs/UbifsReader.cpp:1012` | filesystem UUID from the superblock |

@@ -89,6 +89,10 @@ constexpr std::uint16_t kComprNone = 0, kComprLzo = 1, kComprZlib = 2, kComprZst
 // branch back at its own parent, and the visited set below stops the cycle,
 // but a merely enormous tree still has to terminate.
 constexpr std::uint64_t kMaxIndexNodes = 1u << 22;
+// The history sweep reads every erase block looking for nodes, so both the
+// node count and the read size need a bound.
+constexpr std::uint64_t kMaxHistoryNodes = 1u << 22;
+constexpr std::uint64_t kSweepChunk = 1u << 20;
 constexpr std::uint64_t kMaxDepth = 512;
 constexpr std::uint64_t kMaxSymlinkTarget = 4096;
 // The largest LEB any real producer makes is well under this; it bounds the
@@ -105,6 +109,12 @@ constexpr const char* kCodeLimitNodes = "ubifs-limit-nodes";
 constexpr const char* kCodeLoop = "ubifs-directory-loop";
 constexpr const char* kCodeSinkError = "ubifs-sink-error";
 constexpr const char* kCodeShortFile = "ubifs-missing-block";
+constexpr const char* kCodeLimitHistory = "ubifs-limit-history-nodes";
+constexpr const char* kCodeHistoryScan = "ubifs-history-scan";
+constexpr const char* kCodeUnresolvedDelete = "ubifs-deleted-unresolved";
+
+// `cutoff` for a live read: no node is newer than this.
+constexpr std::uint64_t kLive = UINT64_MAX;
 
 std::string dec(std::uint64_t v) {
     return std::to_string(v);
@@ -123,6 +133,7 @@ struct Dent {
     std::uint64_t inum = 0;  // 0 in the deletion record UBIFS writes on unlink
     std::uint8_t type = 0;
     std::uint64_t sqnum = 0;
+    std::uint32_t lnum = 0, offs = 0;  // where the node is, for the history pass
 };
 
 // A node read off the medium, header decoded.
@@ -161,8 +172,34 @@ Key key_at(const Node& n, std::size_t at) {
     return k;
 }
 
+// The format fixes a minimum length per node type, and a node shorter than
+// its own structure cannot be read. mkfs.ubifs leaves a 64-byte node of type
+// 0 after the superblock in LEB 0, which is 96 bytes short of an inode node;
+// without this screen the history sweep takes it for inode 0.
+bool node_is_whole(const Node& n) {
+    switch (n.type) {
+        case kIno:
+            return n.len >= kInoNodeSize;
+        case kDent:
+        case kXent:
+            return n.len > kDentNodeSize;  // plus at least one byte of name
+        case kDataNode:
+            return n.len >= kDataNodeSize;
+        default:
+            return true;
+    }
+}
+
 std::uint64_t align8(std::uint64_t v) {
     return v > UINT64_MAX - 7 ? v : (v + 7) & ~std::uint64_t{7};
+}
+
+// How far past a padding node the next one starts. The node is 28 bytes and
+// `pad_len` more zero bytes follow it, and the whole run is what gets skipped:
+// the padding fills out a minimum-I/O unit, so rounding the node's own length
+// up first would land 8 bytes past the boundary and miss the node there.
+std::uint64_t pad_advance(const Node& n) {
+    return align8(static_cast<std::uint64_t>(n.len) + n.u32(kChSize));
 }
 
 const char* compr_name(std::uint16_t v) {
@@ -227,6 +264,17 @@ struct UbifsReader::Impl {
     std::uint64_t bad_nodes = 0, unlinked_dents = 0;
     std::string index_problem, journal_problem;
 
+    // History. UBIFS never overwrites in place: a node stays where it was
+    // written until garbage collection reclaims its erase block, so the older
+    // states of a file, and the inodes and blocks of a deleted one, are still
+    // on the medium. These are filled by a sweep of every erase block under
+    // WalkOptions::history and hold *every* version, the live one included.
+    std::map<std::uint32_t, std::vector<Ref>> ino_versions;
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::vector<Ref>> block_versions;
+    std::map<std::pair<std::uint32_t, std::string>, std::vector<Dent>> dent_versions;
+    std::uint64_t swept_nodes = 0, unresolved_deletes = 0;
+    bool sweep_hit_limit = false;
+
     // Per-walk state.
     struct Walk {
         Sink* sink = nullptr;
@@ -235,6 +283,9 @@ struct UbifsReader::Impl {
         std::vector<std::uint8_t> block, decoded, zeros;
         std::set<std::uint32_t> on_path;   // directory loop guard
         std::set<std::uint32_t> seen_ino;  // for the hard-link count
+        // Where the live tree put each inode, so the history pass can name a
+        // superseded version and put a deleted name under its parent.
+        std::map<std::uint32_t, std::string> live_path;
         bool stop = false;
     };
 
@@ -251,8 +302,18 @@ struct UbifsReader::Impl {
 
     void emit_tree(std::uint32_t inum, const std::string& prefix, unsigned depth, Walk& w);
     void emit_entry(const std::string& path, const Dent& d, Walk& w);
-    bool stream_file(const std::string& path, std::uint32_t inum, std::uint64_t size, Walk& w,
-                     bool& truncated, std::vector<Diagnostic>& diags);
+    bool stream_file(const std::string& path, std::uint32_t inum, std::uint64_t size,
+                     std::uint64_t cutoff, Walk& w, bool& truncated,
+                     std::vector<Diagnostic>& diags);
+
+    // History.
+    void sweep_for_nodes();
+    void note_version(const Key& k, const Ref& r, const Node& n);
+    const Ref* block_at(std::uint32_t inum, std::uint32_t block, std::uint64_t cutoff) const;
+    void emit_history(Walk& w);
+    void emit_state(const std::string& path, std::uint32_t inum, const Ref& ino_ref,
+                    std::uint64_t cutoff, bool deleted, bool superseded, std::uint64_t version,
+                    Walk& w, std::map<std::string, std::string> extra);
     std::vector<std::uint8_t> inline_data(const Node& ino) const;
     std::string xattr_summary(std::uint32_t inum) const;
     bool block_data(const Ref& r, std::vector<std::uint8_t>& out, std::string& why,
@@ -417,6 +478,10 @@ bool UbifsReader::Impl::walk_index(std::uint32_t root_ln, std::uint32_t root_off
                 ++bad_nodes;
                 continue;
             }
+            if (!node_is_whole(leaf)) {
+                ++bad_nodes;
+                continue;
+            }
             r.sqnum = leaf.sqnum;
             ++leaf_count;
             note_leaf(key_at(leaf, kChSize), r, leaf);
@@ -454,7 +519,7 @@ void UbifsReader::Impl::replay_journal() {
         while (offs + kChSize <= leb_size) {
             if (!read_node(lnum, static_cast<std::uint32_t>(offs), n)) break;
             if (n.type == kPad) {
-                offs = align8(align8(n.len) + n.u32(kChSize));
+                offs += pad_advance(n);
                 continue;
             }
             if (n.type != kRef) break;  // a second commit-start ends this one's log
@@ -478,7 +543,7 @@ void UbifsReader::Impl::replay_bud(std::uint32_t lnum, std::uint32_t offs) {
     while (at + kChSize <= leb_size) {
         if (!read_node(lnum, static_cast<std::uint32_t>(at), n)) break;
         if (n.type == kPad) {
-            at += align8(align8(n.len) + n.u32(kChSize));
+            at += pad_advance(n);
             continue;
         }
         if (!n.crc_ok) {
@@ -487,7 +552,8 @@ void UbifsReader::Impl::replay_bud(std::uint32_t lnum, std::uint32_t offs) {
             ++bad_nodes;
             break;
         }
-        if (n.type == kIno || n.type == kDataNode || n.type == kDent || n.type == kXent) {
+        if ((n.type == kIno || n.type == kDataNode || n.type == kDent || n.type == kXent) &&
+            node_is_whole(n)) {
             Ref r;
             r.lnum = lnum;
             r.offs = static_cast<std::uint32_t>(at);
@@ -497,6 +563,345 @@ void UbifsReader::Impl::replay_bud(std::uint32_t lnum, std::uint32_t offs) {
             note_leaf(key_at(n, kChSize), r, n);
         }
         at += align8(n.len);
+    }
+}
+
+// ------------------------------------------------------------------ history
+
+void UbifsReader::Impl::note_version(const Key& k, const Ref& r, const Node& n) {
+    switch (k.type) {
+        case kKeyIno:
+            ino_versions[k.inum].push_back(r);
+            break;
+        case kKeyData:
+            block_versions[{k.inum, k.block}].push_back(r);
+            break;
+        case kKeyDent: {
+            const std::uint64_t nlen = n.u16(50);
+            if (nlen == 0 || nlen > kMaxNameLen || kDentNodeSize + nlen > n.raw.size()) return;
+            Dent d;
+            d.name.assign(reinterpret_cast<const char*>(n.raw.data()) + kDentNodeSize,
+                          static_cast<std::size_t>(nlen));
+            d.inum = n.u64(40);
+            d.type = n.u8(49);
+            d.sqnum = r.sqnum;
+            d.lnum = r.lnum;
+            d.offs = r.offs;
+            dent_versions[{k.inum, d.name}].push_back(std::move(d));
+            break;
+        }
+        default:
+            break;  // xattr entries are summarised from the live tree only
+    }
+}
+
+// Every node still on the medium, not just the ones the index and the journal
+// point at. A sequential scan would miss what sits in the tail of an erase
+// block that was partly reused, so this sweeps for the node magic at every
+// 8-byte boundary and lets the CRC decide -- the same argument the JFFS2
+// reader makes, and the reason a deleted file is recoverable at all.
+void UbifsReader::Impl::sweep_for_nodes() {
+    // walk() may be called more than once on the same reader, and these hold
+    // every node on the medium: appending to them twice would emit every
+    // historical state twice.
+    ino_versions.clear();
+    block_versions.clear();
+    dent_versions.clear();
+    swept_nodes = 0;
+    unresolved_deletes = 0;
+    sweep_hit_limit = false;
+
+    std::vector<std::uint8_t> buf;
+    Node n;
+    for (std::uint32_t lnum = 0; lnum < leb_cnt && !sweep_hit_limit; ++lnum) {
+        const std::uint64_t base = leb_at(lnum);
+        for (std::uint64_t off = 0; off + kChSize <= leb_size;) {
+            const std::size_t want = static_cast<std::size_t>(
+                std::min<std::uint64_t>(kSweepChunk, leb_size - off));
+            const std::uint8_t* p = nullptr;
+            if (const auto v = span.view(base + off, want)) {
+                p = v->data();
+            } else {
+                buf.resize(want);
+                if (span.read(base + off, std::span<std::uint8_t>(buf.data(), want)) != want) break;
+                p = buf.data();
+            }
+            // Only an 8-aligned offset can start a node: UBIFS pads every one
+            // to 8, so this is a scan of the candidates, not of every byte.
+            for (std::size_t i = 0; i + 4 <= want; i += 8) {
+                if (load_int<std::uint32_t>(p + i, Endian::Little) != kNodeMagic) continue;
+                const std::uint64_t at = off + i;
+                if (!read_node(lnum, static_cast<std::uint32_t>(at), n) || !n.crc_ok) continue;
+                if (n.type != kIno && n.type != kDataNode && n.type != kDent) continue;
+                if (!node_is_whole(n)) continue;
+                if (++swept_nodes > kMaxHistoryNodes) {
+                    sweep_hit_limit = true;
+                    return;
+                }
+                Ref r;
+                r.lnum = lnum;
+                r.offs = static_cast<std::uint32_t>(at);
+                r.len = n.len;
+                r.sqnum = n.sqnum;
+                note_version(key_at(n, kChSize), r, n);
+            }
+            if (want < kSweepChunk) break;
+            off += want;
+        }
+    }
+}
+
+// One state of one inode: the metadata that inode node recorded, and the
+// content its blocks held at that point.
+void UbifsReader::Impl::emit_state(const std::string& path, std::uint32_t inum,
+                                   const Ref& ino_ref, std::uint64_t cutoff, bool deleted,
+                                   bool superseded, std::uint64_t version, Walk& w,
+                                   std::map<std::string, std::string> extra) {
+    Node n;
+    if (!read_node(ino_ref.lnum, ino_ref.offs, n, ino_ref.len) || n.type != kIno) return;
+
+    FileMeta m;
+    m.path = path;
+    m.inode = inum;
+    m.deleted = deleted;
+    m.superseded = superseded;
+    m.version = version;
+    const std::uint32_t mode = n.u32(104);
+    m.mode = mode & 0xFFFFu;
+    m.kind = EntryKind::Regular;
+    switch (mode & 0170000u) {
+        case 0040000u:
+            m.kind = EntryKind::Directory;
+            break;
+        case 0120000u:
+            m.kind = EntryKind::Symlink;
+            break;
+        case 0060000u:
+            m.kind = EntryKind::BlockDevice;
+            break;
+        case 0020000u:
+            m.kind = EntryKind::CharDevice;
+            break;
+        case 0010000u:
+            m.kind = EntryKind::Fifo;
+            break;
+        case 0140000u:
+            m.kind = EntryKind::Socket;
+            break;
+        default:
+            break;
+    }
+    const std::uint64_t size = n.u64(48);
+    m.size = size;
+    m.uid = n.u32(96);
+    m.gid = n.u32(100);
+    m.nlink = n.u32(92);
+    m.atime = static_cast<std::int64_t>(n.u64(56));
+    m.ctime = static_cast<std::int64_t>(n.u64(64));
+    m.mtime = static_cast<std::int64_t>(n.u64(72));
+    m.atime_nsec = n.u32(80);
+    m.ctime_nsec = n.u32(84);
+    m.mtime_nsec = n.u32(88);
+    for (auto& [k, v] : extra) m.extra[k] = std::move(v);
+    m.extra["sqnum"] = dec(ino_ref.sqnum);
+    m.extra["node_offset"] = dec(leb_at(ino_ref.lnum) + ino_ref.offs);
+    if (m.kind == EntryKind::Symlink) {
+        std::vector<std::uint8_t> t = inline_data(n);
+        if (t.size() > kMaxSymlinkTarget) t.resize(static_cast<std::size_t>(kMaxSymlinkTarget));
+        m.link_target.assign(t.begin(), t.end());
+        m.size = t.size();
+    }
+
+    std::vector<Diagnostic> diags;
+    bool truncated = false;
+    if (m.kind == EntryKind::Regular) {
+        if (const Status st = w.sink->begin_file(m); !st) {
+            diag(*w.out, Severity::Warning, kCodeSinkError, "'" + path + "': " + st.error);
+            return;
+        }
+        bool sink_ok = true;
+        if (w.opts->extract_data)
+            sink_ok = stream_file(path, inum, size, cutoff, w, truncated, diags);
+        EntryResult r;
+        if (const Status st = w.sink->end_file(r); !st) {
+            diag(*w.out, Severity::Warning, kCodeSinkError, "'" + path + "': " + st.error);
+            if (r.meta.path.empty()) return;
+        }
+        if (!sink_ok || truncated) r.truncated = true;
+        for (Diagnostic& dg : diags) r.diagnostics.push_back(std::move(dg));
+        w.out->bytes += r.digests.bytes;
+        count_entry(*w.out, r.meta);
+        if (deleted) ++w.out->deleted;
+        if (superseded) ++w.out->superseded;
+        w.out->entries_out.push_back(std::move(r));
+        return;
+    }
+    EntryResult r;
+    if (const Status st = w.sink->entry(m, r); !st) {
+        diag(*w.out, Severity::Warning, kCodeSinkError, "'" + path + "': " + st.error);
+        return;
+    }
+    count_entry(*w.out, r.meta);
+    if (deleted) ++w.out->deleted;
+    if (superseded) ++w.out->superseded;
+    w.out->entries_out.push_back(std::move(r));
+}
+
+// One historical entry, before its version number is known.
+struct Historical {
+    std::string path;
+    std::uint32_t inum = 0;
+    Ref ino_ref;
+    bool deleted = false;
+    bool superseded = false;
+    std::map<std::string, std::string> extra;
+};
+
+void UbifsReader::Impl::emit_history(Walk& w) {
+    sweep_for_nodes();
+    auto by_sqnum = [](const Ref& a, const Ref& b) { return a.sqnum < b.sqnum; };
+    for (auto& [inum, v] : ino_versions) std::sort(v.begin(), v.end(), by_sqnum);
+    for (auto& [k, v] : block_versions) std::sort(v.begin(), v.end(), by_sqnum);
+    for (auto& [k, v] : dent_versions) {
+        std::sort(v.begin(), v.end(),
+                  [](const Dent& a, const Dent& b) { return a.sqnum < b.sqnum; });
+    }
+
+    std::vector<Historical> work;
+    std::set<std::uint32_t> recovered;
+
+    // Every state of `inum` up to `cutoff`, newest last. The newest of them
+    // is the state the file was in at that moment; the rest are its past.
+    auto states_up_to = [&](std::uint32_t inum, std::uint64_t cutoff) {
+        std::vector<Ref> out;
+        const auto it = ino_versions.find(inum);
+        if (it == ino_versions.end()) return out;
+        for (const Ref& r : it->second) {
+            if (r.sqnum > cutoff) break;
+            out.push_back(r);
+        }
+        return out;
+    };
+
+    // Deleted names. UBIFS unlinks by writing an entry that points at inode
+    // 0, so a name whose newest entry does that is gone -- and the inode and
+    // the blocks the entry before it named are still where they were written.
+    for (const auto& [key, versions] : dent_versions) {
+        if (versions.empty() || versions.back().inum != 0) continue;
+        const Dent& unlink = versions.back();
+        const Dent* named = nullptr;
+        for (auto it = versions.rbegin(); it != versions.rend(); ++it) {
+            if (it->inum != 0 && it->sqnum < unlink.sqnum) {
+                named = &*it;
+                break;
+            }
+        }
+        const auto parent = w.live_path.find(key.first);
+        const auto inum = named == nullptr ? 0u : static_cast<std::uint32_t>(named->inum);
+        const std::vector<Ref> states = states_up_to(inum, unlink.sqnum);
+        if (named == nullptr || parent == w.live_path.end() || states.empty()) {
+            // Either the entry it removed is no longer on the medium, or the
+            // directory that held it is itself gone. The name is still
+            // evidence, so say so rather than dropping it in silence.
+            ++unresolved_deletes;
+            diag(*w.out, Severity::Info, kCodeUnresolvedDelete,
+                 "an unlink record for '" + sanitize_utf8(key.second) + "' in inode " +
+                     dec(key.first) + " could not be resolved to " +
+                     (named == nullptr ? "the entry it removed"
+                                       : (states.empty() ? "an inode still on the medium"
+                                                         : "a path")));
+            continue;
+        }
+        recovered.insert(inum);
+        const std::string path =
+            parent->second.empty() ? named->name : parent->second + "/" + named->name;
+        for (std::size_t i = 0; i < states.size(); ++i) {
+            Historical h;
+            h.path = path;
+            h.inum = inum;
+            h.ino_ref = states[i];
+            h.deleted = true;
+            h.superseded = i + 1 < states.size();
+            h.extra["unlink_sqnum"] = dec(unlink.sqnum);
+            h.extra["unlink_node_offset"] = dec(leb_at(unlink.lnum) + unlink.offs);
+            work.push_back(std::move(h));
+        }
+    }
+
+    // Earlier states of what is still there.
+    for (const auto& [inum, path] : w.live_path) {
+        const auto it = ino_versions.find(inum);
+        if (it == ino_versions.end() || it->second.size() < 2) continue;
+        const auto live = inodes.find(inum);
+        for (const Ref& r : it->second) {
+            if (live != inodes.end() && r.lnum == live->second.lnum &&
+                r.offs == live->second.offs)
+                continue;  // the state the live tree already shows
+            Historical h;
+            h.path = path;
+            h.inum = inum;
+            h.ino_ref = r;
+            h.superseded = true;
+            if (live != inodes.end() && r.sqnum > live->second.sqnum) {
+                // Written after the state the index and the journal agree on,
+                // so it was never committed: an interrupted write, not a past.
+                h.extra["newer_than_live"] = "true";
+            }
+            work.push_back(std::move(h));
+        }
+    }
+
+    // Inodes with nodes but no name anywhere: an unlink whose directory entry
+    // has already been reclaimed, or a file unlinked while still open. The
+    // content is recoverable even though the name is not, and lost+found is
+    // where a reader puts what it could not name.
+    for (const auto& [inum, versions] : ino_versions) {
+        if (versions.empty() || inum == kRootIno || inum == 0) continue;
+        if (w.live_path.count(inum) != 0 || recovered.count(inum) != 0) continue;
+        for (std::size_t i = 0; i < versions.size(); ++i) {
+            Historical h;
+            h.path = "lost+found/#" + dec(inum);
+            h.inum = inum;
+            h.ino_ref = versions[i];
+            h.deleted = true;
+            h.superseded = i + 1 < versions.size();
+            h.extra["name_lost"] = "true";
+            work.push_back(std::move(h));
+        }
+    }
+
+    // Version numbers are path-scoped and start at 1, oldest first, so
+    // (path, version) is unique and DiskSink's .omnitrace-versions/<path>/v<n>
+    // never collides. The live entry keeps 0, which is what makes the live
+    // tree byte-identical with and without --history.
+    std::sort(work.begin(), work.end(), [](const Historical& a, const Historical& b) {
+        return a.path != b.path ? a.path < b.path : a.ino_ref.sqnum < b.ino_ref.sqnum;
+    });
+    std::map<std::string, std::uint64_t> version;
+    for (Historical& h : work) {
+        if (w.stop) break;
+        if (w.out->entries >= w.opts->limits.max_nodes_per_fs) {
+            diag(*w.out, Severity::Warning, kCodeLimitNodes,
+                 "the entry limit (" + dec(w.opts->limits.max_nodes_per_fs) +
+                     ") stopped the history pass");
+            w.out->truncated = true;
+            w.stop = true;
+            break;
+        }
+        emit_state(h.path, h.inum, h.ino_ref, h.ino_ref.sqnum, h.deleted, h.superseded,
+                   ++version[h.path], w, std::move(h.extra));
+    }
+
+    // analyze() reads info() before the walk, so what the sweep found cannot
+    // go in the node's attrs; it goes on the record here instead.
+    diag(*w.out, Severity::Info, kCodeHistoryScan,
+         dec(swept_nodes) + " node(s) still on the medium; " + dec(w.out->superseded) +
+             " superseded and " + dec(w.out->deleted) + " deleted entr(ies) recovered");
+    if (sweep_hit_limit) {
+        diag(*w.out, Severity::Warning, kCodeLimitHistory,
+             "the history sweep stopped after " + dec(kMaxHistoryNodes) +
+                 " nodes; older states beyond that point were not recovered");
+        w.out->truncated = true;
     }
 }
 
@@ -683,9 +1088,28 @@ bool UbifsReader::Impl::block_data(const Ref& r, std::vector<std::uint8_t>& out,
 
 // Stream one file's blocks in order. A block the index does not have is a
 // hole, which UBIFS makes by simply not writing it, so it reads as zeros.
+// The data node holding `block` as of `cutoff`: the newest whose sqnum does
+// not exceed it. kLive means the live map, which the index and the journal
+// already agreed on.
+const Ref* UbifsReader::Impl::block_at(std::uint32_t inum, std::uint32_t block,
+                                       std::uint64_t cutoff) const {
+    if (cutoff == kLive) {
+        const auto it = blocks.find({inum, block});
+        return it == blocks.end() ? nullptr : &it->second;
+    }
+    const auto it = block_versions.find({inum, block});
+    if (it == block_versions.end()) return nullptr;
+    const Ref* best = nullptr;
+    for (const Ref& r : it->second) {  // sorted by sqnum
+        if (r.sqnum > cutoff) break;
+        best = &r;
+    }
+    return best;
+}
+
 bool UbifsReader::Impl::stream_file(const std::string& path, std::uint32_t inum,
-                                    std::uint64_t size, Walk& w, bool& truncated,
-                                    std::vector<Diagnostic>& diags) {
+                                    std::uint64_t size, std::uint64_t cutoff, Walk& w,
+                                    bool& truncated, std::vector<Diagnostic>& diags) {
     if (w.zeros.size() != kBlockSize) w.zeros.assign(static_cast<std::size_t>(kBlockSize), 0);
     const std::uint64_t cap = std::min<std::uint64_t>(size, w.opts->limits.max_file_bytes);
     if (cap < size) truncated = true;
@@ -696,11 +1120,11 @@ bool UbifsReader::Impl::stream_file(const std::string& path, std::uint32_t inum,
             static_cast<std::size_t>(std::min<std::uint64_t>(kBlockSize, cap - pos));
         const std::uint8_t* src = w.zeros.data();
         std::size_t have = want;
-        const auto it = blocks.find({inum, bno});
-        if (it != blocks.end()) {
+        const Ref* ref = block_at(inum, bno, cutoff);
+        if (ref != nullptr) {
             std::string why;
             const char* code = kCodeShortFile;
-            if (block_data(it->second, w.decoded, why, code)) {
+            if (block_data(*ref, w.decoded, why, code)) {
                 src = w.decoded.data();
                 have = std::min(want, w.decoded.size());
                 if (have < want) {
@@ -850,7 +1274,8 @@ void UbifsReader::Impl::emit_entry(const std::string& path, const Dent& d, Walk&
             return;
         }
         bool sink_ok = true;
-        if (w.opts->extract_data) sink_ok = stream_file(path, inum, size, w, truncated, diags);
+        if (w.opts->extract_data)
+            sink_ok = stream_file(path, inum, size, kLive, w, truncated, diags);
         EntryResult r;
         if (const Status st = w.sink->end_file(r); !st) {
             diag(*w.out, Severity::Warning, kCodeSinkError, "'" + path + "': " + st.error);
@@ -900,8 +1325,12 @@ void UbifsReader::Impl::emit_tree(std::uint32_t inum, const std::string& prefix,
             break;
         }
         const std::string path = prefix.empty() ? d.name : prefix + "/" + d.name;
+        const auto child = static_cast<std::uint32_t>(d.inum);
         emit_entry(path, d, w);
-        if (d.type == kItDir) emit_tree(static_cast<std::uint32_t>(d.inum), path, depth + 1, w);
+        // The first name an inode is reached by is the one history uses for
+        // it; a hard link's second name would name the same content twice.
+        w.live_path.emplace(child, path);
+        if (d.type == kItDir) emit_tree(child, path, depth + 1, w);
     }
     w.on_path.erase(inum);
 }
@@ -929,16 +1358,13 @@ Status UbifsReader::walk(Sink& sink, const WalkOptions& opts, WalkResult& out) {
     w.sink = &sink;
     w.opts = &opts;
     w.out = &out;
+    w.live_path[kRootIno] = "";  // a name deleted from the root lands here
     m.emit_tree(kRootIno, "", 0, w);
     if (out.entries == 0 && m.dents.empty()) {
         m.diag(out, Severity::Warning, kCodeBadIndex,
                "the index holds no directory entry, so there is no tree to walk");
     }
-    if (opts.history) {
-        m.diag(out, Severity::Info, "ubifs-history-unsupported",
-               "UBIFS keeps superseded nodes until garbage collection reclaims their erase block, "
-               "but this reader does not recover them yet; only the current tree is emitted");
-    }
+    if (opts.history && !w.stop) m.emit_history(w);
     return Status::success();
 }
 

@@ -42,6 +42,7 @@ Native builds need `mksquashfs`, `mkfs.ext4` + `debugfs`, `mkfs.vfat` + `mcopy`/
 | `jffs2-le.img`, `jffs2-be.img` | `mkfs.jffs2 -e 65536 --pad` | little/big endian, cleanmarkers |
 | `jffs2-history.img` | `mkfs.jffs2` + hand-assembled nodes | see [History semantics per format](#history-semantics-per-format) |
 | `ubifs.img` | `mkfs.ubifs -m 2048 -e 129024 -c 128 -x zlib` | superblock UUID and every inode's atime/ctime pinned after the fact (CRCs recomputed) |
+| `ubifs-history.img` | `mkfs.ubifs` + a hand-assembled journal | see [History semantics per format](#history-semantics-per-format) |
 | `ubi.img` | `ubinize -m 2048 -p 131072 -s 2048 -O 2048 -Q 0x12345678` | one dynamic autoresize volume `rootfs` holding `ubifs.img` |
 | `yaffs2.img` | `mkyaffs2 -p 2048 -s 64` | page + spare (OOB) image, Linux MTD spare layout (tags at spare byte 2) |
 | `yaffs2-yaffsecc.img` | `mkyaffs2 -p 2048 -s 64 --yaffs-ecclayout` | YAFFS spare layout (tags at spare byte 0). mkyaffs2 has no inband-tags mode, so there is no "without OOB" variant; both layouts are produced instead |
@@ -134,6 +135,42 @@ Wrapper images carry `partitions:` (MBR/GPT: `name, fixture, offset, size, conte
 | 68 | | data | v2 then v3 of config.txt |
 
 `jffs2_raw_dirent` (40-byte header + name) for the unlink: `nodetype 0xE001`, `pino` = inode of `history/`, `version` = max + 3, **`ino = 0`** (that is how JFFS2 records a deletion), `mctime 1700000130`, `nsize`, `type DT_REG`, `node_crc = crc(bytes 0..32)`, `name_crc = crc(name)`. The original inode nodes of both files stay on flash; `history.superseded` lists config v1 (mkfs node) and v2 (appended), `history.current` v3, `history.deleted` `deleted.txt` with `unlink_node_offset`, and `history.appended_nodes` gives every appended node's offset and length. The builder re-parses the finished image and verifies every header CRC.
+
+**UBIFS journal and history** (`ubifs-history.img`). <a name="ubifs-history-nodes"></a>
+`mkfs.ubifs` only ever writes a clean image: everything is in the index and the
+log holds nothing but a commit-start node. The states a forensic reader has to
+recover only exist once something has been written *since* the last commit, so
+the builder appends a journal bud to the mkfs output, which is byte for byte
+the state the medium is in after three ordinary operations.
+
+Every node carries the 24-byte common header (magic `0x06101831`, crc32 over
+bytes 8..`len` with initial value `0xFFFFFFFF` and **no final XOR**, a global
+`sqnum`, `len`, `node_type`). The bud goes in the first erase block that is
+still all `0xFF`, and its nodes are written in the order UBIFS writes them --
+data first, the inode node carrying the new size and times last, `sqnum`
+increasing and continuing from the highest mkfs wrote:
+
+| node | type | key | what it says |
+|---|---|---|---|
+| data | 1 | (`config.txt` inode, type 1, block 0) | v2 of `history/config.txt`, uncompressed |
+| inode | 0 | (`config.txt` inode, type 0) | its new size and mtime 1700000100; mode, owner and link count copied from the mkfs node |
+| data | 1 | (`config.txt` inode, type 1, block 0) | v3 |
+| inode | 0 | (`config.txt` inode, type 0) | its new size and mtime 1700000110 |
+| dent | 2 | (`history` inode, type 2, the name's hash) | `deleted.txt` with **`inum = 0`**, which is how UBIFS records an unlink |
+
+A reference node (type 8, 64 bytes, naming the bud's erase block) then goes in
+the log, at the first minimum-I/O boundary after the commit-start node -- past
+the padding node that fills out the commit-start node's own unit, which is
+where UBIFS itself would put it. Without that reference nothing reaches the
+bud, so the reference is what makes the journal replay find any of this.
+
+The live tree is therefore `config.txt` at v3 and no `deleted.txt`;
+`history.superseded` lists v1 (the mkfs node, still in the index) and v2,
+`history.current` v3, and `history.deleted` `deleted.txt` with its
+`unlink_node_offset` and `unlink_sqnum`. `history.appended_nodes` gives every
+appended node's erase block, offset and length. The builder re-sweeps the
+finished image for the node magic at every 8-byte boundary and fails unless
+exactly the expected number of nodes verify.
 
 **ext4** (`ext4.img`). Populated with `debugfs -w` (no kernel, no journal). v2 and v3 of `config.txt` are written up front under temporary names so each version owns its own blocks; the history script then does `unlink` + `kill_file` on the old inode and `link`s the new one under `config.txt`, and finally `rm history/deleted.txt`. Result: three freed inodes (`lsdel` shows 26, 27, 31) that keep size, extent tree and data blocks with `dtime` set; the unlinked directory entries (`history/.config.v2`, `.config.v3`, `deleted.txt`) remain in the directory block. Without a journal nothing ties the freed inodes to `config.txt`: v1's entry was overwritten in place by the later `link` of the same name (a reader emits it as `lost+found/#26`) and v2 is named only by the unlinked `.config.v2`, so the YAML lists both under `history.deleted` (with `recovered_as` / `name_recoverable: false` for v1) and `history.superseded` is empty. `E2FSPROGS_FAKE_TIME` pins every timestamp e2fsprogs would otherwise take from the clock.
 

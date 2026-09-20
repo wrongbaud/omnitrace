@@ -1133,6 +1133,10 @@ ubifs-decompress-failed:
   meaning: a data node's payload did not decode, or it names a compression type UBIFS does not define
   action: the block is zero-filled and the file marked truncated; the volume is damaged or uses a compressor this build lacks
 
+ubifs-deleted-unresolved:
+  meaning: a directory entry pointing at inode 0 records that something was unlinked, but the entry it removed or the directory that held it is no longer on the medium
+  action: informational; the deletion happened, the name or the content behind it has already been reclaimed
+
 ubifs-directory-loop:
   meaning: a directory is its own ancestor, so the walk would never end
   action: the index is damaged or crafted; the branch stops there and everything else is still walked
@@ -1141,13 +1145,17 @@ ubifs-crc-mismatch:
   meaning: the superblock node CRC32 does not match
   action: damaged superblock; verify with ubireader
 
-ubifs-history-unsupported:
-  meaning: --history was asked for, but this reader does not yet recover the superseded nodes UBIFS leaves behind until garbage collection
-  action: informational; only the current tree is emitted
+ubifs-history-scan:
+  meaning: how many nodes the --history sweep found still on the medium, and how many superseded and deleted entries came out of them
+  action: informational; it is the count analyze() cannot put in the node's attrs, because info() is read before the walk
 
 ubifs-journal-unreplayed:
   meaning: the journal could not be replayed, so the tree is as of the last commit and anything written after it is missing
   action: the log head or its commit-start node is damaged; recent changes are not shown, which matters most on a dump taken from a running device
+
+ubifs-limit-history-nodes:
+  meaning: the --history sweep stopped after its node cap; states older than that point were not recovered
+  action: the volume holds more nodes than the sweep will read; the live tree and what was recovered are complete, the rest is not
 
 ubifs-limit-nodes:
   meaning: Limits::max_nodes_per_fs was reached before the tree was fully walked
