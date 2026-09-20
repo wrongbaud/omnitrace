@@ -22,16 +22,26 @@
 //      the caller supplies into <out_dir>/filesystems/<node-id>/files; one
 //      File node per emitted entry. Containers without a reader are a Coverage
 //      row ("unsupported") and a Diagnostic, never silent.
-//   5. With carve != Carve::None and a non-empty out_dir, every partition entry
+//   5. Every file that walk wrote to the host is re-scanned. When it holds a
+//      filesystem or a partition table at Structural or better and at least
+//      min_region_bytes long, the whole pass
+//      runs again over its bytes with the File node as the parent and depth+1, so a
+//      filesystem stored as a file inside another one (the QNX6 "storage"
+//      partition keeps its SquashFS update images that way) becomes a real
+//      Filesystem node with its own tree. Offsets under it are relative to
+//      the extracted file and Location::source_id names it. A file whose scan
+//      yields only Region finds, only Container finds (no reader can open the
+//      payload yet) or only magic-tier hits keeps no children.
+//   6. With carve != Carve::None and a non-empty out_dir, every partition entry
 //      (and, with Carve::All, every nested find) is streamed to
 //      <out_dir>/partitions/<name>.bin, hashed as it is written; the node gets
 //      digests and attrs carved_path. <out_dir>/partitions/mount.sh is then
 //      generated (see mount_script_text). A file larger than max_carve_bytes
 //      is skipped with a Coverage row {"carve","partial",...} and a Diagnostic.
 //
-// Phase 0 handles one level: the image itself. Nested recursion (re-scanning a
-// Container payload or an extracted file) is Phase 1a; the per-span worker
-// analyze_span() is the unit a later pass will call recursively.
+// analyze_span() is the per-span worker and is called recursively for every
+// extracted file. Container payloads are the remaining case: a Container node
+// with no registered reader is still only a Coverage row and a Diagnostic.
 //
 // Layering: this file lives in discovery and therefore cannot link against the
 // filesystems library. Readers are supplied by the caller through
@@ -40,12 +50,12 @@
 /// @brief `analyze()`, the driver that turns one image into a `Manifest` and
 /// a case directory, with its options and the mount-script helpers.
 ///
-/// What it does today versus the plan: one level of analysis (the image and
-/// the partitions inside it). Nested recursion into container payloads and
-/// extracted files is not implemented; `Limits::max_depth` is checked but
-/// only depth 0 is ever reached. Word-swap detection *is* implemented (see
-/// `ImageViewHook`). docs/CASE_LAYOUT.md documents the resulting nodes,
-/// attrs and files.
+/// What it does today versus the plan: the image, the partitions inside it,
+/// and every file extracted from a filesystem, re-scanned and analysed again
+/// when it is itself an image (`Limits::max_depth` bounds the nesting).
+/// Container payloads are not opened: no `container::ContainerReader` is
+/// registered yet. Word-swap detection *is* implemented (see `ImageViewHook`).
+/// docs/CASE_LAYOUT.md documents the resulting nodes, attrs and files.
 #pragma once
 #include <cstdint>
 #include <functional>

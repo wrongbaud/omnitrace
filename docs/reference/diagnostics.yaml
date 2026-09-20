@@ -25,6 +25,10 @@ analyze-limit-files:
   meaning: the run-wide --max-files budget was spent before this filesystem, so it was not walked
   action: re-run with a larger --max-files or --no-extract for an inventory
 
+analyze-nested-open-failed:
+  meaning: an extracted file could not be re-opened for nested analysis, so anything inside it was not found
+  action: check free space and permissions on the case directory; the file itself is still extracted
+
 analyze-no-image:
   meaning: analyze() was called with a null Source (caller bug)
   action: contributor error; the CLI never produces this

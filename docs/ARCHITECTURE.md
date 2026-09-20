@@ -18,8 +18,9 @@ apps/cli  →  output, discovery, containers, images, filesystems  →  core
 only (for `Finding`/`Signature`), never on each other. Recursion across
 layers is orchestrated in `discovery/Recurse` (`analyze()`), which takes
 readers through the `AnalyzeOptions::open_reader` callback rather than
-linking the reader libraries; today it handles one level (the image itself)
-and recognised containers are carved but not opened.
+linking the reader libraries. It descends into every extracted file that is
+itself an image, bounded by `Limits::max_depth`; recognised containers are
+carved but not opened, because no `container::ContainerReader` is registered.
 
 Each layer is one static library built by `omnitrace_module()` in
 `cmake/Warnings.cmake`, which globs `src/<layer>/**/*.cpp` and

@@ -30,6 +30,10 @@ namespace fsys = std::filesystem;
 
 constexpr std::uint64_t kMiB = 1u << 20;
 
+// Sentinel written into mkfs_time of the nested payload of the recursion tests,
+// so the reader can tell "I am the nested copy" from "I am the outer image".
+constexpr std::uint32_t kNestedStamp = 0xDEADBEEFu;
+
 // ------------------------------------------------------------- image build
 
 void mbr_entry(Bytes& b, std::size_t base, int i, std::uint8_t status, std::uint8_t type,
@@ -144,6 +148,12 @@ struct FakeBehaviour {
     bool open_fails = false;
     bool unsafe_path = false;
     std::uint64_t extra_files = 0;  // additional regular files, for limit tests
+    // Bytes of an extra "images/nested.img" entry, for the recursion tests.
+    // By default the payload itself (recognised by kNestedStamp) does not emit
+    // another copy, so the nesting stops at one level; nested_recursive emits
+    // it at every level so the depth cap is what stops it.
+    std::string nested_file;
+    bool nested_recursive = false;
 };
 
 class FakeReader final : public fs::FilesystemReader {
@@ -230,6 +240,17 @@ class FakeReader final : public fs::FilesystemReader {
             u.kind = EntryKind::Regular;
             u.size = 4;
             emit(u, "pwnd");
+        }
+        const auto stamp = span_.at<std::uint32_t>(8, Endian::Little);
+        const bool i_am_the_payload = stamp && *stamp == kNestedStamp;
+        if (!b_.nested_file.empty() && (b_.nested_recursive || !i_am_the_payload)) {
+            FileMeta n;
+            n.path = "images/nested.img";
+            n.kind = EntryKind::Regular;
+            n.mode = 0644;
+            n.size = b_.nested_file.size();
+            n.inode = 3;
+            if (!emit(n, b_.nested_file)) return Status::success();
         }
         for (std::uint64_t i = 0; i < b_.extra_files; ++i) {
             FileMeta x;
@@ -487,6 +508,153 @@ TEST(Analyze, WalksFilesystemToDisk) {
     const Coverage* cov = coverage_for(m, "squashfs");
     ASSERT_NE(cov, nullptr);
     EXPECT_EQ(cov->status, "supported");
+}
+
+// A file extracted from a filesystem is re-scanned, and when it is itself an
+// image the whole pass runs over it with the File node as the parent. This is
+// the QNX6 "storage" shape: update images stored as files inside the
+// filesystem.
+TEST(Analyze, NestedImageInsideExtractedFileIsAnalysed) {
+    const Layout l = build_image();
+    TempDir out("nested");
+    Bytes payload = synthetic_squashfs(3000);
+    test::put_u32le(payload, 8, kNestedStamp);
+    FakeBehaviour b;
+    b.nested_file.assign(payload.begin(), payload.end());
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.open_reader = fake_lookup(b);
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(l.bytes), "router.bin", opts, m, listings));
+
+    const Node* sq = node_at(m, NodeKind::Filesystem, kMiB, "squashfs");
+    ASSERT_NE(sq, nullptr);
+
+    // The extracted file carries the marker and the nested filesystem as a child.
+    const Node* img = nullptr;
+    for (const Node* n : m.children_of(sq->id))
+        if (n->file && n->file->path == "images/nested.img") img = n;
+    ASSERT_NE(img, nullptr);
+    EXPECT_EQ(img->kind, NodeKind::File);
+    EXPECT_EQ(img->attrs.at("nested_image"), "true");
+
+    const auto inner = m.children_of(img->id);
+    ASSERT_FALSE(inner.empty());
+    const Node* nested_fs = inner[0];
+    EXPECT_EQ(nested_fs->kind, NodeKind::Filesystem);
+    EXPECT_EQ(nested_fs->format, "squashfs");
+    // Offsets are relative to the extracted file, and source_id names it.
+    EXPECT_EQ(nested_fs->location.offset, 0u);
+    EXPECT_NE(nested_fs->location.source_id.find("images/nested.img"), std::string::npos);
+    EXPECT_NE(nested_fs->location.source_id, sq->location.source_id);
+
+    // It was walked: its own File nodes and its own listing.
+    EXPECT_EQ(nested_fs->attrs.at("label"), "fake");
+    EXPECT_EQ(m.children_of(nested_fs->id).size(), 3u);
+    ASSERT_EQ(listings.size(), 2u);
+    EXPECT_EQ(listings[1].first, nested_fs->id);
+    EXPECT_TRUE(fsys::exists(out.path / "filesystems" / nested_fs->id / "files" / "etc" /
+                             "passwd"));
+    // One level only: the inner filesystem's own nested.img is not re-emitted.
+    EXPECT_EQ(m.count(NodeKind::Filesystem), 2u);
+}
+
+// An extracted file that is ordinary data keeps no children: only a filesystem
+// or partition table, at Structural or better, is worth descending into.
+TEST(Analyze, OrdinaryExtractedFileIsNotDescendedInto) {
+    const Layout l = build_image();
+    TempDir out("nested-plain");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.open_reader = fake_lookup();
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(l.bytes), "router.bin", opts, m, listings));
+
+    const Node* sq = node_at(m, NodeKind::Filesystem, kMiB, "squashfs");
+    ASSERT_NE(sq, nullptr);
+    for (const Node* n : m.children_of(sq->id)) {
+        EXPECT_TRUE(m.children_of(n->id).empty()) << n->name;
+        EXPECT_EQ(n->attrs.count("nested_image"), 0u) << n->name;
+    }
+    EXPECT_EQ(m.count(NodeKind::Filesystem), 1u);
+    EXPECT_EQ(listings.size(), 1u);
+}
+
+// A magic-only hit is not evidence of a nested image. "PK\x03\x04" has no
+// validator, so it stays at Confidence::Magic, and it turns up constantly
+// inside compressed and binary data: on the QNX corpus, descending on
+// Magic-tier finds produced thousands of false zip and tar nodes.
+TEST(Analyze, MagicOnlyFindInExtractedFileIsNotDescendedInto) {
+    const Layout l = build_image();
+    TempDir out("nested-magic");
+    Bytes zip(600, 0x41);
+    test::put_bytes(zip, 0, "PK\x03\x04");
+    FakeBehaviour b;
+    b.nested_file.assign(zip.begin(), zip.end());
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.open_reader = fake_lookup(b);
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(l.bytes), "router.bin", opts, m, listings));
+
+    const Node* sq = node_at(m, NodeKind::Filesystem, kMiB, "squashfs");
+    ASSERT_NE(sq, nullptr);
+    const Node* img = nullptr;
+    for (const Node* n : m.children_of(sq->id))
+        if (n->file && n->file->path == "images/nested.img") img = n;
+    ASSERT_NE(img, nullptr);  // it was extracted
+    EXPECT_TRUE(m.children_of(img->id).empty());
+    EXPECT_EQ(img->attrs.count("nested_image"), 0u);
+    EXPECT_EQ(m.count(NodeKind::Container), 0u);
+}
+
+// Self-similar nesting terminates at max_depth with one diagnostic per level,
+// not one per extracted file.
+TEST(Analyze, NestedRecursionStopsAtMaxDepth) {
+    const Layout l = build_image();
+    TempDir out("nested-depth");
+    Bytes payload = synthetic_squashfs(3000);
+    test::put_u32le(payload, 8, kNestedStamp);
+    FakeBehaviour b;
+    b.nested_file.assign(payload.begin(), payload.end());
+    b.nested_recursive = true;
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.open_reader = fake_lookup(b);
+    opts.limits.max_depth = 2;
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(l.bytes), "router.bin", opts, m, listings));
+
+    // Image (depth 0) -> nested (1) -> nested (2); the level below 2 is refused.
+    EXPECT_EQ(m.count(NodeKind::Filesystem), 3u);
+    EXPECT_TRUE(has_diag(m.diagnostics, "analyze-limit-depth"));
+    std::size_t depth_diags = 0;
+    for (const Diagnostic& d : m.diagnostics)
+        if (d.code == "analyze-limit-depth") ++depth_diags;
+    EXPECT_EQ(depth_diags, 1u);
+}
+
+// With --no-extract nothing reaches the host, so there is nothing to re-scan.
+TEST(Analyze, NoExtractDoesNotDescend) {
+    const Layout l = build_image();
+    TempDir out("nested-nox");
+    Bytes payload = synthetic_squashfs(3000);
+    test::put_u32le(payload, 8, kNestedStamp);
+    FakeBehaviour b;
+    b.nested_file.assign(payload.begin(), payload.end());
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.extract = false;
+    opts.open_reader = fake_lookup(b);
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(l.bytes), "router.bin", opts, m, listings));
+    EXPECT_EQ(m.count(NodeKind::Filesystem), 1u);
+    EXPECT_EQ(listings.size(), 1u);
 }
 
 TEST(Analyze, ListingOnlyWritesNothing) {

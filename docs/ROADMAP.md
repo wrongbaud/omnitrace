@@ -6,42 +6,33 @@ This page is for a contributor deciding what to build next. It states what the c
 
 Phase 0 is complete. The pipeline in `src/discovery/Recurse.cpp:1203` (`analyze`) hashes the image, scans it, builds the evidence graph partition-first, walks every filesystem that has a reader, carves partitions and nested finds, generates `mount.sh`, and writes the case directory of `CASE_LAYOUT.md`. `INFO.yaml` round-trips through `output/Yaml.cpp` byte-identically, and the CLI refuses to exit 0 otherwise.
 
-### Identification
+### Identification and extraction
 
-21 validators are registered (`src/discovery/validators/builtin.cpp` lists their anchors) over 50 signatures in `signatures/core.toml` and `signatures/crypto.toml`.
+`docs/reference/FORMATS.md` is the matrix, per format id: whether a hit is
+magic-only or validated and to which tier, whether its extent is known, whether
+a reader extracts it, whether history is recovered, and how `partitions/mount.sh`
+treats it. It is generated from `signatures/*.toml`, the validators and the
+reader registries by `scripts/gen_docs.py` and checked by `scripts/check_docs.py`,
+so it cannot drift from the code the way a table written here would.
 
-| Validator (`src/discovery/validators/`) | Formats | Best tier | Sizes the find |
-|---|---|---|---|
-| `squashfs.cpp` | squashfs (LE, BE, `shsq`, `qshs`) | consistent | yes |
-| `jffs2.cpp` | jffs2 (LE, BE) | verified | yes |
-| `ubi.cpp` | ubi | verified | yes |
-| `ubifs.cpp` | ubifs | verified | yes |
-| `ext.cpp` | ext2 / ext3 / ext4 | verified | yes |
-| `cramfs.cpp` | cramfs (both orders) | verified | yes |
-| `romfs.cpp` | romfs | verified | yes |
-| `mbr.cpp` | mbr (with EBR chains) | consistent | table only |
-| `gpt.cpp` | gpt (512 and 4 KiB sectors, primary and backup) | verified | table only |
-| `uimage.cpp` | uimage / kernel | verified | yes |
-| `fit.cpp` | fit and dtb | verified / consistent | yes |
-| `android_boot.cpp` | android-boot, android-vendor-boot | consistent | yes |
-| `android_sparse.cpp` | android-sparse | consistent | yes |
-| `gzip.cpp`, `xz.cpp`, `lz4.cpp`, `zstd.cpp` | compressed streams | structural | no |
-| `elf.cpp` | elf | consistent | yes |
-| `luks.cpp` | luks | consistent | yes |
-| `verity.cpp` | dm-verity | consistent | yes |
+Today that is 50 signatures over 35 format ids, 23 validators, 7 filesystem
+readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and no
+container reader. `--history` is recovered by the ext, JFFS2 and QNX6 readers.
 
-Magic-only signatures (tier `magic`, size unknown, so they claim no bytes): cpio (newc, crc, odc), tar, zip, 7z, qnx6 (LE, BE), qnx-ifs, PEM certificate / request / CRL / keys, OpenSSH and PGP keys. yaffs2 has no signature yet because a useful one needs OOB-aware validation.
+Nested analysis runs for extracted files: every file a walk writes to the host
+is re-scanned, and one holding a filesystem or a partition table at Structural
+or better and at least `min_region_bytes` long is analysed again with the File node as its parent
+(`descend_into_file` in `src/discovery/Recurse.cpp`), bounded by
+`Limits::max_depth`. On the QNX corpus that recovers 17 nested SquashFS, 12
+nested QNX6 and 3 nested QNX IFS filesystems. Container payloads are the
+remaining gap: a Container node with no registered reader is
+a Coverage row with status `unsupported` and an `analyze-no-reader` diagnostic
+(`src/discovery/Recurse.cpp`), and the hand-off point is the comment at the end
+of `analyze_span`.
 
-Word-swapped dumps are detected by `detect_word_swap` (`src/core/Swap.cpp:334`) and analysed through a `SwappedSource` view; the Image node gets `image-word-swapped`.
-
-### Extraction
-
-| Registry | Readers registered |
-|---|---|
-| `fs::FilesystemRegistry` (`src/filesystems/Registry.cpp:15`) | `squashfs` (`src/filesystems/squashfs/SquashfsReader.cpp`; gzip, xz, lzo, lz4, zstd, lzma) |
-| `container::ContainerRegistry` (`src/containers/Registry.cpp`) | none |
-
-Every other filesystem and container the scanner identifies is a `Coverage` row with status `unsupported` and an `analyze-no-reader` diagnostic (`src/discovery/Recurse.cpp:460`, `:841`). Nested recursion (re-scanning a container payload) is not implemented; the hand-off point is the comment at `src/discovery/Recurse.cpp:850`. `--history` is accepted but no registered reader records history yet.
+Word-swapped dumps are detected by `detect_word_swap` (`src/core/Swap.cpp:334`)
+and analysed through a `SwappedSource` view; the Image node gets
+`image-word-swapped`.
 
 ### Test assets
 
@@ -49,15 +40,27 @@ Every other filesystem and container the scanner identifies is a `Coverage` row 
 
 ## Next, in order
 
-1. **ext4 reader** (`src/filesystems/ext/`). Fixture `ext4.img` already carries three freed inodes with `dtime` set and unlinked directory entries, so history can be tested from day one. Byte-identity against `debugfs` is the acceptance bar.
-2. **JFFS2 reader with history** (`src/filesystems/jffs2/`). The validator already walks and CRC-checks every node (`src/discovery/validators/jffs2.cpp`); the reader replays inode and dirent versions, newest wins for the live tree, every older version becomes `superseded`, every `ino == 0` dirent a `deleted` record. Ground truth: `jffs2-history.expected.yaml`.
-3. **QNX6 and QNX IFS readers**, with a sizing validator for the `qnx6` and `qnx-ifs` magics so they stop being magic-only.
-4. **Container readers: FIT, gzip, xz** (`src/containers/`), registered with `OMNITRACE_REGISTER_CONTAINER` (`include/omnitrace/containers/Container.h`), and the recursion step at `src/discovery/Recurse.cpp:850` that scans a payload with `analyze_span`.
-5. **UBIFS and YAFFS2 readers**, both with history (UBIFS sqnum order, YAFFS2 sequence numbers); fixtures `ubifs.img`, `ubi.img`, `yaffs2.img`, `yaffs2-yaffsecc.img` exist.
-6. **Sizing validators for zip, gzip and the QNX magics**, so a zip inside a partition claims its bytes and nested finds are parented correctly.
-7. **Write the corrected view of a word-swapped image** into the case directory (today only the detection is recorded; `src/discovery/Recurse.cpp:1233` is the extension point).
-8. **Phase 2**: artifact extractors, YAML rule packs under `rules/`, `omnitrace report`. `DEVELOPMENT_PLAN.md` §5.4 to §7.
-9. **Phase 4**: web UI, only after the CLI and library are released (decision `core-before-ui`).
+Items 1-3 of the original list (the ext4, JFFS2, QNX6 and QNX IFS readers) and
+the extracted-file half of item 4 are done; see the section above.
+
+1. **Container readers: FIT, gzip, xz** (`src/containers/`), registered with
+   `OMNITRACE_REGISTER_CONTAINER` (`include/omnitrace/containers/Container.h`),
+   and the payload half of the recursion: walk the payload into a Sink, then
+   `analyze_span(c, payload_span, id, depth + 1)` at the end of `analyze_span`.
+   The extracted-file path already provides the depth accounting, the extent
+   isolation and the tests to copy.
+2. **UBIFS and YAFFS2 readers**, both with history (UBIFS sqnum order, YAFFS2
+   sequence numbers); fixtures `ubifs.img`, `ubi.img`, `yaffs2.img`,
+   `yaffs2-yaffsecc.img` exist.
+3. **Sizing validators for zip, gzip and the QNX magics**, so a zip inside a
+   partition claims its bytes and nested finds are parented correctly.
+4. **Write the corrected view of a word-swapped image** into the case directory
+   (today only the detection is recorded; `src/discovery/Recurse.cpp`
+   `ImageViewHook` is the extension point).
+5. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
+   `omnitrace report`. `DEVELOPMENT_PLAN.md` §5.4 to §7.
+6. **Phase 4**: web UI, only after the CLI and library are released (decision
+   `core-before-ui`).
 
 ## Good first improvements
 

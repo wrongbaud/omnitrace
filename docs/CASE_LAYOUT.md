@@ -19,7 +19,7 @@ DIR/
 ├── partitions/
 │   ├── <name>.bin            # one file per carved node (see "Carved files")
 │   └── mount.sh              # the examiner's mount template with PARTITION_NAMES / PARTITION_TYPES filled in
-└── filesystems/<node-id>/
+└── filesystems/<node-id>/     # one directory per filesystem node, nested ones included
     ├── listing.yaml          # every entry: metadata, digests, host path, flags, diagnostics
     ├── listing.md            # same, as a table
     └── files/                # the extracted tree (unless --no-extract)
@@ -183,6 +183,19 @@ matching the `Warnings` column of `partitions.md`.
 
 ## filesystems/<node-id>/files
 
+`filesystems/` is flat: one directory per filesystem node, named by its node
+id, whether the filesystem sits in the image or inside a file extracted from
+another one. The nesting lives in the graph, not in the paths, so a deeply
+nested tree never produces a deep host path. A `file` node with
+`nested_image: true` is the parent of the nested filesystem node, and that
+node's `location.source` is the extracted file it was read from — a path
+under this case directory, exactly as `--out` was given — with offsets
+relative to that file (everything at the top level is relative to the evidence
+instead). The manifest therefore stays byte-identical run to run for the same
+image *and the same `--out`*; point `--out` somewhere else and the nested
+`location.source` values move with it. Follow `nested_image` in `INFO.yaml` to
+get from a file to the tree recovered out of it.
+
 The extracted tree is a faithful copy of what the filesystem shows: every
 live entry lands at its own path under `files/`, directories with owner
 `rwx` kept so extraction can continue beneath them, symlink targets stored
@@ -239,3 +252,10 @@ are ours, not evidence.
   `carve` coverage row explaining why; nothing is skipped silently.
 - Files under `filesystems/<node-id>/files/` are the extracted tree of that
   filesystem node; `listing.yaml` there carries the metadata and digests.
+- A `file` node with `nested_image: true` was itself an image: its children are
+  what the re-scan found, and any filesystem among them has its own
+  `filesystems/<node-id>/` directory. The marker is set only when the re-scan
+  found a filesystem or a partition table at `structural` or better and at
+  least 4 KiB long, so an
+  ordinary file, a lone `zip` magic inside compressed data and a container
+  nothing can open yet all stay childless.

@@ -351,21 +351,22 @@ top-level containers instead of one filesystem. Tests:
 
 ## 5. Recurse: the passes of analyze()
 
-`analyze()` ([Recurse.cpp:1203](../src/discovery/Recurse.cpp#L1203)) is the
+`analyze()` ([Recurse.cpp:1288](../src/discovery/Recurse.cpp#L1288)) is the
 driver the CLI calls. In order:
 
 | # | Pass | Where |
 |---|---|---|
-| 1 | Hash the image (`hash_span`), append an `Evidence` row and the Image node | [Recurse.cpp:1209](../src/discovery/Recurse.cpp#L1209), [:1218](../src/discovery/Recurse.cpp#L1218) |
-| 2 | Word-swap detection; pick the Source view the rest runs on | [Recurse.cpp:1239](../src/discovery/Recurse.cpp#L1239) |
-| 3 | `analyze_span()` scans the whole Span (`run_scanner`) | [Recurse.cpp:617](../src/discovery/Recurse.cpp#L617), [:624](../src/discovery/Recurse.cpp#L624) |
-| 4 | Partition tables to Partition nodes: `choose_tables()` folds a GPT backup into its primary, each table becomes a `role: table` node plus one node per entry from `parse_partitions()`; a table lying inside an entry of an earlier table is kept as `nested: true` with no entries | [Recurse.cpp:629](../src/discovery/Recurse.cpp#L629), [:342](../src/discovery/Recurse.cpp#L342), [:252](../src/discovery/Recurse.cpp#L252) |
-| 5 | Per-partition rescan: a partition with nothing at its first byte (and not uniformly filled) is scanned on its own sub-Span; hits at offset 0 are kept with `partition-rescan` | [Recurse.cpp:771](../src/discovery/Recurse.cpp#L771) |
-| 6 | Claims and gaps: every sized finding claims `[offset, end)`; `note_gaps()` turns unclaimed space of at least `min_region_bytes` into gap items, at the top level and inside every partition | [Recurse.cpp:798](../src/discovery/Recurse.cpp#L798), [:599](../src/discovery/Recurse.cpp#L599) |
-| 7 | Nodes in byte order: `parent_for()` picks the innermost enclosing extent (containment parenting), `kind_for()` maps category to NodeKind, gaps become `unidentified` Region nodes with `fill` when uniform | [Recurse.cpp:826](../src/discovery/Recurse.cpp#L826), [:180](../src/discovery/Recurse.cpp#L180), [:194](../src/discovery/Recurse.cpp#L194), [:558](../src/discovery/Recurse.cpp#L558) |
-| 8 | Filesystem walks: `process_filesystem()` opens the reader over the finding's sub-Span, walks it through `walk_into_sink()` into a `DiskSink` or `ListingSink`, adds one File node per `EntryResult`, and records a Coverage row (`supported`, `partial`, `unsupported`) | [Recurse.cpp:452](../src/discovery/Recurse.cpp#L452), [:385](../src/discovery/Recurse.cpp#L385), [:426](../src/discovery/Recurse.cpp#L426) |
-| 9 | Carving: `carve_all()` streams every partition entry and (with `Carve::All`) every nested find directly under the image or a partition to `partitions/<name>.bin`, hashing as it writes, then writes `mount.sh` from `mount_script_text()` | [Recurse.cpp:920](../src/discovery/Recurse.cpp#L920), [:861](../src/discovery/Recurse.cpp#L861), [:1048](../src/discovery/Recurse.cpp#L1048) |
-| 10 | Coverage bookkeeping throughout: `set_coverage()` keeps one row per format and never lets `supported` overwrite `partial`; `carve_partial()` accumulates skipped carves | [Recurse.cpp:145](../src/discovery/Recurse.cpp#L145), [:161](../src/discovery/Recurse.cpp#L161) |
+| 1 | Hash the image (`hash_span`), append an `Evidence` row and the Image node | [Recurse.cpp:1294](../src/discovery/Recurse.cpp#L1294), [:1303](../src/discovery/Recurse.cpp#L1303) |
+| 2 | Word-swap detection; pick the Source view the rest runs on | [Recurse.cpp:1324](../src/discovery/Recurse.cpp#L1324) |
+| 3 | `analyze_span()` scans the whole Span (`run_scanner`) | [Recurse.cpp:698](../src/discovery/Recurse.cpp#L698), [:705](../src/discovery/Recurse.cpp#L705) |
+| 4 | Partition tables to Partition nodes: `choose_tables()` folds a GPT backup into its primary, each table becomes a `role: table` node plus one node per entry from `parse_partitions()`; a table lying inside an entry of an earlier table is kept as `nested: true` with no entries | [Recurse.cpp:710](../src/discovery/Recurse.cpp#L710), [:342](../src/discovery/Recurse.cpp#L342), [:252](../src/discovery/Recurse.cpp#L252) |
+| 5 | Per-partition rescan: a partition with nothing at its first byte (and not uniformly filled) is scanned on its own sub-Span; hits at offset 0 are kept with `partition-rescan` | [Recurse.cpp:851](../src/discovery/Recurse.cpp#L851) |
+| 6 | Claims and gaps: every sized finding claims `[offset, end)`; `note_gaps()` turns unclaimed space of at least `min_region_bytes` into gap items, at the top level and inside every partition | [Recurse.cpp:878](../src/discovery/Recurse.cpp#L878), [:679](../src/discovery/Recurse.cpp#L679) |
+| 7 | Nodes in byte order: `parent_for()` picks the innermost enclosing extent (containment parenting), `kind_for()` maps category to NodeKind, gaps become `unidentified` Region nodes with `fill` when uniform | [Recurse.cpp:906](../src/discovery/Recurse.cpp#L906), [:180](../src/discovery/Recurse.cpp#L180), [:194](../src/discovery/Recurse.cpp#L194), [:638](../src/discovery/Recurse.cpp#L638) |
+| 8 | Filesystem walks: `process_filesystem()` opens the reader over the finding's sub-Span, walks it through `walk_into_sink()` into a `DiskSink` or `ListingSink`, adds one File node per `EntryResult`, and records a Coverage row (`supported`, `partial`, `unsupported`) | [Recurse.cpp:515](../src/discovery/Recurse.cpp#L515), [:394](../src/discovery/Recurse.cpp#L394), [:441](../src/discovery/Recurse.cpp#L441) |
+| 9 | Nested analysis: every file the walk wrote to the host is mapped and re-scanned by `descend_into_file()`; one holding a filesystem or a partition table at Structural or better and at least `min_region_bytes` long gets `nested_image: true` and the whole pass again with the File node as parent and `depth + 1`, so offsets under it are relative to that file and `Location::source_id` names it. `Ctx::extents` is swapped out for the nested call because extents are Span-relative, while the run-wide `max_files` / `max_bytes` budgets are deliberately shared. The depth cap is checked once per filesystem, not once per file | [Recurse.cpp:482](../src/discovery/Recurse.cpp#L482), [:596](../src/discovery/Recurse.cpp#L596) |
+| 10 | Carving: `carve_all()` streams every partition entry and (with `Carve::All`) every nested find directly under the image or a partition to `partitions/<name>.bin`, hashing as it writes, then writes `mount.sh` from `mount_script_text()` | [Recurse.cpp:1005](../src/discovery/Recurse.cpp#L1005), [:946](../src/discovery/Recurse.cpp#L946), [:1133](../src/discovery/Recurse.cpp#L1133) |
+| 11 | Coverage bookkeeping throughout: `set_coverage()` keeps one row per format and never lets `supported` overwrite `partial`; `carve_partial()` accumulates skipped carves | [Recurse.cpp:145](../src/discovery/Recurse.cpp#L145), [:161](../src/discovery/Recurse.cpp#L161) |
 
 Two rules the code enforces that are easy to miss:
 
@@ -376,11 +377,13 @@ Two rules the code enforces that are easy to miss:
   byte order, so ids are stable across runs
   ([Recurse.cpp:3](../src/discovery/Recurse.cpp#L3)).
 
-The plan calls for nested recursion (re-scanning a container payload with
-`depth + 1`); today `analyze_span()` runs once for the image and the
-container branch is a comment ([Recurse.cpp:850](../src/discovery/Recurse.cpp#L850)).
-Containers are recognised and carved but not opened, and each one produces
-an `unsupported` Coverage row.
+`analyze_span()` is called recursively for extracted files (pass 9). The
+container payload is the remaining case: a Container node is recognised and
+carved but never opened, because no `container::ContainerReader` is registered,
+so each one produces an `unsupported` Coverage row and an `analyze-no-reader`
+diagnostic. The hand-off is the comment at the end of `analyze_span()`
+([Recurse.cpp:933](../src/discovery/Recurse.cpp#L933)); the extracted-file path
+already provides the depth accounting and the extent isolation it needs.
 
 ### The Node graph for router.bin
 
@@ -397,9 +400,9 @@ an `unsupported` Coverage row.
   - n003390 region "unidentified" @ 0xff000c 64.0 KiB (65524) [reject (0)]
 ```
 
-`n000005` to `n003387` are the 3383 File nodes the SquashFS reader emitted;
-the JFFS2 finding is carved but has no reader yet, so coverage says
-`jffs2 unsupported`.
+`n000005` to `n003387` are the 3383 File nodes the SquashFS reader emitted.
+With `--no-extract` nothing reaches the host, so nothing is re-scanned; a run
+that extracts also descends into every file either reader wrote.
 
 ## 6. Filesystems: the reader contract and SquashfsReader
 

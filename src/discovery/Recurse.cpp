@@ -374,6 +374,15 @@ std::vector<TableUse> choose_tables(const std::vector<Finding>& findings) {
 
 // ------------------------------------------------------------- filesystems
 
+// analyze_span and process_filesystem are mutually recursive: walking a
+// filesystem extracts files, and an extracted file may itself be an image
+// (the QNX6 "storage" partition of the corpus keeps SquashFS update images
+// that way). The findings overload lets a caller that has already scanned the
+// Span hand the result over instead of scanning it twice.
+void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::size_t depth);
+void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::size_t depth,
+                  std::vector<Finding> findings);
+
 struct WalkOutcome {
     fs::WalkResult result;
     std::uint64_t files = 0, bytes = 0;
@@ -423,8 +432,15 @@ WalkOutcome walk_into_sink(Ctx& c, fs::FilesystemReader& reader, const std::stri
     return w;
 }
 
-void add_file_nodes(Ctx& c, const std::string& fs_id, const Node& fs_node,
-                    const std::vector<EntryResult>& entries) {
+// An extracted file to re-scan, and the File node it becomes the content of.
+struct Descend {
+    std::string node_id;
+    std::string host_path;
+};
+
+std::vector<Descend> add_file_nodes(Ctx& c, const std::string& fs_id, const Node& fs_node,
+                                    const std::vector<EntryResult>& entries) {
+    std::vector<Descend> nested;
     for (const EntryResult& r : entries) {
         Node fn;
         fn.kind = NodeKind::File;
@@ -444,13 +460,80 @@ void add_file_nodes(Ctx& c, const std::string& fs_id, const Node& fs_node,
         if (!r.written && c.opts.extract && r.meta.kind == EntryKind::Regular &&
             r.host_path.empty())
             fn.attrs["written"] = "false";
-        c.out.add_node(std::move(fn));
+        const std::string id = c.out.add_node(std::move(fn)).id;
+        // Only a regular file whose bytes actually reached the host can be
+        // re-scanned: there is nothing to map otherwise. With --no-extract
+        // host_path is always empty, so nothing is descended into.
+        if (r.written && !r.host_path.empty() && r.meta.kind == EntryKind::Regular &&
+            r.meta.size != 0)
+            nested.push_back({id, r.host_path});
     }
+    return nested;
 }
 
-// Open + walk one filesystem finding whose node is already in the graph.
-void process_filesystem(Ctx& c, const Span& span, const Finding& f, const std::string& fs_id) {
+// Re-scan one extracted file and, when it holds something worth opening, run
+// the whole pass over it with the File node as the parent.
+//
+// "Worth opening" is a Filesystem or a Partition table found at Structural or
+// better. Both halves matter, measured on the QNX corpus (14.7 GiB, 163k
+// extracted files):
+//
+//   * Kind. A Region find (an ELF, a DTB, a certificate) is identified bytes
+//     with nothing to open, and every rootfs is full of them. A Container is
+//     worth descending into only once a container::ContainerReader can open
+//     the payload; none is registered, so a Container find would add a node
+//     and an "analyze-no-reader" warning and recover nothing. Add
+//     NodeKind::Container here when the first container reader lands.
+//   * Tier. Confidence::Magic means the magic matched and nothing was
+//     validated. The magic-only signatures (zip, tar, cpio, 7z) hit constantly
+//     inside compressed and binary data: descending on them produced 3988 zip
+//     and 1994 tar nodes, every one a false positive, against 32 real nested
+//     filesystems. Requiring Structural also drops the romfs hits the validator
+//     itself calls "magic string inside other data".
+//   * Extent. The find must claim at least min_region_bytes, the floor the
+//     pass already applies to unidentified space. A high tier is not by itself
+//     a size: the JFFS2 validator CRC-checks nodes and reaches Verified on a
+//     single valid 12-byte node, so the `mtd` binary in the router rootfs
+//     holds a "verified jffs2 filesystem" of 12 bytes. Nothing can be
+//     recovered out of an image smaller than a gap worth reporting.
+void descend_into_file(Ctx& c, const Descend& d, std::size_t depth) {
+    std::shared_ptr<MappedFile> file;
+    if (Status st = MappedFile::open(d.host_path, file); !st) {
+        if (Node* n = c.out.find(d.node_id))
+            n->diagnostics.push_back(
+                {Severity::Warning, "analyze-nested-open-failed",
+                 "the extracted file could not be re-read for nested analysis: " + st.error});
+        return;
+    }
+    if (file->size() == 0) return;
+    const Span whole = Span::whole(file);
+
+    std::vector<Finding> findings = run_scanner(c, whole);
+    bool worth_opening = false;
+    for (const Finding& f : findings) {
+        const NodeKind k = kind_for(f);
+        if (k != NodeKind::Filesystem && k != NodeKind::Partition) continue;
+        worth_opening = worth_opening || (f.confidence >= Confidence::Structural &&
+                                          f.size >= c.opts.min_region_bytes);
+    }
+    if (!worth_opening) return;
+
+    if (Node* n = c.out.find(d.node_id)) n->attrs["nested_image"] = "true";
+    // Extents are Span-relative, so the image's must not be visible while a
+    // different Source is analysed; everything else in Ctx (the run-wide
+    // budgets, the coverage index) is deliberately shared.
+    std::vector<Extent> outer;
+    outer.swap(c.extents);
+    analyze_span(c, whole, d.node_id, depth + 1, std::move(findings));
+    c.extents.swap(outer);
+}
+
+// Open + walk one filesystem finding whose node is already in the graph, then
+// re-scan every file it extracted (`depth` is the level `span` sits at).
+void process_filesystem(Ctx& c, const Span& span, const Finding& f, const std::string& fs_id,
+                        std::size_t depth) {
     std::vector<Diagnostic> diags;
+    std::vector<Descend> nested;
     std::map<std::string, std::string> attrs;
     std::optional<std::uint64_t> new_length;
 
@@ -520,18 +603,33 @@ void process_filesystem(Ctx& c, const Span& span, const Finding& f, const std::s
                         set_coverage(c, f.format, "supported", "");
                     }
                     const Node fs_copy = *c.out.find(fs_id);  // add_node may reallocate
-                    add_file_nodes(c, fs_id, fs_copy, r.entries_out);
+                    nested = add_file_nodes(c, fs_id, fs_copy, r.entries_out);
                     c.listings.emplace_back(fs_id, r.entries_out);
                 }
             }
         }
     }
 
-    Node* fs_node = c.out.find(fs_id);
-    if (!fs_node) return;
-    for (const auto& [k, v] : attrs) fs_node->attrs[k] = v;
-    if (new_length) fs_node->location.length = *new_length;
-    for (Diagnostic& d : diags) fs_node->diagnostics.push_back(std::move(d));
+    if (Node* fs_node = c.out.find(fs_id)) {
+        for (const auto& [k, v] : attrs) fs_node->attrs[k] = v;
+        if (new_length) fs_node->location.length = *new_length;
+        for (Diagnostic& d : diags) fs_node->diagnostics.push_back(std::move(d));
+    }
+
+    // Nested pass, after the filesystem node is complete so the manifest is
+    // consistent while a deeper level is being built. The depth cap is checked
+    // once here rather than per file: a rootfs has thousands of them and one
+    // diagnostic per level is what the examiner needs.
+    if (nested.empty()) return;
+    if (depth + 1 > c.opts.limits.max_depth) {
+        c.out.diagnostics.push_back({Severity::Warning, "analyze-limit-depth",
+                                     "nesting deeper than max_depth (" +
+                                         dec(c.opts.limits.max_depth) + ") under " + fs_id + "; " +
+                                         dec(nested.size()) +
+                                         " extracted file(s) were not re-scanned"});
+        return;
+    }
+    for (const Descend& d : nested) descend_into_file(c, d, depth);
 }
 
 // ------------------------------------------------------------------ regions
@@ -612,16 +710,17 @@ void note_gaps(const Ctx& c, std::vector<Claim> claims, std::uint64_t from, std:
     gap(cursor, to);
 }
 
-// Analyze one Span whose bytes belong to `parent_id`. Phase 1a will call this
-// again for Container payloads and extracted files, with depth + 1.
-void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::size_t depth) {
+// Analyze one Span whose bytes belong to `parent_id`, with `findings` already
+// scanned from it. `descend_into_file` calls this for an extracted file that
+// is itself an image; Container payloads will use it too.
+void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::size_t depth,
+                  std::vector<Finding> findings) {
     if (depth > c.opts.limits.max_depth) {
         c.out.diagnostics.push_back({Severity::Warning, "analyze-limit-depth",
                                      "nesting deeper than max_depth (" +
                                          dec(c.opts.limits.max_depth) + ") under " + parent_id});
         return;
     }
-    std::vector<Finding> findings = run_scanner(c, span);
     bool any_gpt = false;
     for (const Finding& f : findings)
         any_gpt = any_gpt || (f.category == "partition-table" && f.format == "gpt");
@@ -846,10 +945,14 @@ void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::s
         const std::string id = c.out.add_node(std::move(n)).id;
         if (kind == NodeKind::Filesystem || kind == NodeKind::Container)
             c.extents.push_back({id, f.offset, f_end});
-        if (kind == NodeKind::Filesystem) process_filesystem(c, span, f, id);
+        if (kind == NodeKind::Filesystem) process_filesystem(c, span, f, id, depth);
         // Phase 1a: kind == Container -> open a ContainerReader, walk its payload
         // into a Sink, then analyze_span(c, payload_span, id, depth + 1).
     }
+}
+
+void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::size_t depth) {
+    analyze_span(c, span, parent_id, depth, run_scanner(c, span));
 }
 
 // ------------------------------------------------------------------ carving

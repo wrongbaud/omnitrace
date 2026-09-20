@@ -31,6 +31,7 @@ src/discovery/Recurse.cpp:
   index: "pN, the slot number of a partition entry (MBR logicals count from p5)"
   label: GPT partition name (sanitized UTF-8) or the volume label a filesystem reader reports
   logical: "true on an MBR entry that came from the EBR chain"
+  nested_image: true on a File node whose extracted bytes were re-scanned and hold a filesystem or partition table at structural or better and at least min_region_bytes long; the finds are its children
   nested: "true on a partition-table node found inside another table's entry; its entries were not expanded"
   others: device, fifo, socket and unknown entries emitted (WalkResult::others)
   protective: "true on an MBR 0xEE entry that only guards a GPT"

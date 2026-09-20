@@ -83,14 +83,31 @@ The end-to-end pipeline:
    it into `DIR/filesystems/<node-id>/files/`, hashing as it writes, producing
    one `file` node per entry; formats without a reader are reported in the
    coverage table as `unsupported`;
-5. report every unclaimed gap of at least 4 KiB, at the top level and inside
+5. re-scan every file that landed on disk. A file that is itself an image — a
+   filesystem or a partition table, identified at `structural` or better and
+   at least 4 KiB long — gets `nested_image: true` and is analysed again from step 2 with the `file`
+   node as its parent, so a
+   SquashFS stored as a file inside a QNX6 filesystem becomes a real
+   `filesystem` node with its own tree under `DIR/filesystems/<its-id>/files/`.
+   Offsets below it are relative to the extracted file and `location.source_id`
+   names it. A file keeps no children when its scan finds only identified
+   bytes (an ELF, a certificate), only a container (nothing can open a payload
+   until a container reader is registered), or only magic-tier hits — the
+   magic-only signatures `zip`, `tar`, `cpio` and `7z` match constantly inside
+   compressed data and are not evidence of a nested image. Nor is a high tier
+   by itself a size: the JFFS2 validator CRC-checks nodes and reaches
+   `verified` on a single valid 12-byte one, so a find shorter than the 4 KiB
+   floor the pass applies to unidentified space is left alone. `--max-depth`
+   bounds the nesting and `--no-extract` skips this step entirely, because
+   nothing reaches the host;
+6. report every unclaimed gap of at least 4 KiB, at the top level and inside
    every partition, as a `region` node named `unidentified` (with `fill: 0xff`
    / `fill: 0x00` when the gap is uniform, i.e. erased flash or padding);
-6. carve every partition entry and (with `--carve all`) every nested find into
+7. carve every partition entry and (with `--carve all`) every nested find into
    `DIR/partitions/<name>.bin`, streaming and hashing, and generate
    `DIR/partitions/mount.sh`; anything larger than `--max-carve-bytes` is
    skipped with a `carve` coverage row and a diagnostic on the node;
-7. write the case directory (`docs/CASE_LAYOUT.md`), re-read `INFO.yaml`, and
+8. write the case directory (`docs/CASE_LAYOUT.md`), re-read `INFO.yaml`, and
    refuse to exit 0 unless it re-serialises byte-identically.
 
 | Option | Effect |
@@ -102,7 +119,7 @@ The end-to-end pipeline:
 | `--copy-image` | Also copy the evidence into `flash/<name>` (verified by SHA-256 after the copy). Default: `flash/SOURCE.yaml` only refers to the original path. |
 | `--no-extract` | Walk filesystems for metadata only (`ListingSink`). `listing.yaml` is still written; `files/` is not. Faster, and useful when the examiner only needs the inventory. |
 | `--history` | Ask readers for superseded and deleted versions (JFFS2 / UBIFS / YAFFS2 keep them). Extracted versions land in `files/.omnitrace-versions/<path>/v<version>`. |
-| `--max-depth N` | Nested extraction levels (default 8). Phase 0 only analyses the image itself; the option is honoured by the recursion pass that follows. |
+| `--max-depth N` | Nesting levels analysed (default 8). The image is level 0, a file extracted from a filesystem in it is level 1, a file extracted from a filesystem inside *that* is level 2. When the cap stops a level the run gets one `analyze-limit-depth` warning naming the filesystem and how many extracted files were not re-scanned — one per level, not one per file. `0` analyses the image and nothing nested. |
 | `--max-files N` | Entries emitted per run, across all filesystems (default 500000). When the budget is spent the remaining filesystems are recorded but not walked. |
 | `--max-bytes N` | Total bytes written per run (default 4 GiB). |
 | `--max-file-bytes N` | Largest single extracted entry (default 1 GiB; `2G`, `8G` accepted, 1024-based). A larger entry is written up to the cap and cut there: the file node gets `truncated: "true"` and a `<fmt>-limit-file-bytes` warning. Raise it when a filesystem holds whole nested images as files — the QNX6 `storage` partition of the corpus keeps SquashFS update images of 1.0-1.6 GiB, and at the default each one is cut mid-image and will not read back as a filesystem. |
