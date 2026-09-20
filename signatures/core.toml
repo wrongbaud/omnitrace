@@ -542,3 +542,13 @@ probe_chunks = 16
 max_chunks = 4194304
 description = "YAFFS2 image. The format has no superblock and no magic, so this anchors on the object header of a directory whose parent is the root (type 3, parent 1) and the validator finds the chunk grid by making the tag ECCs verify; the finding starts at the first chunk it can walk back to"
 references = ["https://yaffs.net/documents/how-yaffs-works", "https://github.com/yaffs/yaffs2"]
+
+[[signature]]
+name = "lzop"
+format = "lzop"
+category = "compressed"
+hex = "894c5a4f000d0a1a0a"
+endian = "big"
+validator = "lzop"
+description = "lzop (.lzo) file: the nine-byte magic, then a checksummed header and blocks whose lengths are in the stream, so the extent is a walk of the block headers with no decompression"
+references = ["https://www.lzop.org/", "https://github.com/lzop/lzop"]

@@ -780,7 +780,11 @@ def attrs_sections() -> dict[str, dict[str, object]]:
     by_file: dict[str, list[str]] = {}
     for name, (file, _line, _fn) in validators.items():
         by_file.setdefault(file, []).append(name)
+    # Container readers set attrs too: analyze() copies ContainerInfo::attrs
+    # onto the node exactly as it does a filesystem's, so they reach manifests
+    # and belong in the catalogue.
     candidates = sorted(VALIDATOR_DIR.glob("*.cpp")) + sorted((ROOT / "src" / "filesystems").rglob("*.cpp"))
+    candidates += sorted((ROOT / "src" / "containers").rglob("*.cpp"))
     candidates += [ROOT / "src" / "discovery" / "Recurse.cpp"]
     for path in candidates:
         text = strip_comments(read(path))

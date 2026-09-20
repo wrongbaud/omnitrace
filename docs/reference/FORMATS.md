@@ -46,6 +46,7 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `gzip` | compressed | validated to consistent (`gzip`) | yes | yes (`src/containers/stream/StreamReader.cpp:208`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `gzip` |
 | `lz4` | compressed | validated to consistent (`lz4`) | yes | yes (`src/containers/stream/StreamReader.cpp:206`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `lz4-frame` |
 | `lzma` | compressed | validated to consistent (`lzma`) | yes | yes (`src/containers/stream/StreamReader.cpp:210`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `lzma-lc3-lp0-pb2`, `lzma-lc1-lp2-pb2` |
+| `lzop` | compressed | validated to consistent (`lzop`) | yes | yes (`src/containers/lzop/LzopReader.cpp:264`) | no | - | [lzop.md](../formats/lzop.md) | signatures: `lzop` |
 | `xz` | compressed | validated to consistent (`xz`) | yes | yes (`src/containers/stream/StreamReader.cpp:209`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `xz` |
 | `zstd` | compressed | validated to consistent (`zstd`) | yes | yes (`src/containers/stream/StreamReader.cpp:207`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `zstd` |
 | `gpt` | partition-table | validated to verified (`gpt`) | yes | no | n.a. | - | [partition-tables.md](../formats/partition-tables.md) | size is the table extent (header + entry array); the disk extent is `disk_size`; signatures: `gpt`, `gpt-4k` |
@@ -61,6 +62,6 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 
 ## Counts
 
-- 54 signatures over 38 format ids
-- 29 validators, 9 filesystem reader(s), 15 container reader(s)
+- 55 signatures over 39 format ids
+- 30 validators, 9 filesystem reader(s), 16 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

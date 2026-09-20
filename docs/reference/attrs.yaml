@@ -8,6 +8,69 @@
 #   <source path>:
 #     <key>: one line
 
+src/containers/androidboot/AndroidBootReader.cpp:
+  board_name: the board name the boot header records, sanitised
+  header_version: Android boot image header version (0-4)
+  page_size: page size the header declares, which every section is aligned to
+
+src/containers/cpio/CpioReader.cpp:
+  entries: members emitted, the trailer excluded
+  variant: which cpio the archive is (newc, crc, odc, bin)
+
+src/containers/fit/FitReader.cpp:
+  default_configuration: /configurations/default, when the tree names one
+  description: the root description property
+  image_count: subnodes of /images
+  totalsize: the FDT header's totalsize; external payloads may extend past it
+  version: FDT format version
+
+src/containers/lzop/LzopReader.cpp:
+  bad_checksums: blocks whose data did not match the checksum lzop stored (absent when none)
+  blocks: blocks across every member
+  level: compression level the first member's header records
+  members: lzop members laid end to end in this file
+  method: compression method name of the first member
+  original_name: the file name the first member's header records
+  payload_bytes: uncompressed bytes the blocks add up to
+  version: lzop version that wrote it, as major.minor
+
+src/containers/sparse/SparseReader.cpp:
+  block_size: bytes per block, from the sparse header
+  output_size: bytes the expanded image comes to (total_blocks x block_size)
+  total_blocks: blocks the header says the expanded image has
+  total_chunks: chunks the header says the sparse image has
+
+src/containers/stream/StreamReader.cpp:
+  payload_bytes: bytes the stream decoded to
+  stream_bytes: bytes of the input the decoder consumed
+
+src/containers/tar/TarReader.cpp:
+  entries: members emitted
+  variant: which tar the archive is (ustar, gnu, pax, v7)
+
+src/containers/ubi/UbiReader.cpp:
+  bad_pebs: PEBs with an unreadable erase-counter header, skipped by the rebuild (absent when none)
+  data_offset: where a PEB's logical erase block data starts, in bytes
+  erased_pebs: PEBs that were never written
+  image_seq: image sequence number, the same in every PEB of one image
+  leb_size: usable bytes per logical erase block (peb_size - data_offset)
+  peb_size: physical erase block size, derived from the distance between EC headers
+  pebs: physical erase blocks walked
+  unmapped_pebs: PEBs with an EC header but no volume-identifier header, i.e. free
+  vid_hdr_offset: where a PEB's volume-identifier header sits, in bytes
+  volume_table: id:name:type:lebs;... for every user volume, in id order
+  volumes: user volumes rebuilt, the internal layout volume excluded
+
+src/containers/uimage/UImageReader.cpp:
+  data_size: ih_size, the payload length the header declares
+  image_name: ih_name, the image name the header records
+  type: ih_type as a name (kernel, ramdisk, multi, script, filesystem, flat_dt, ...)
+
+src/containers/zip/ZipReader.cpp:
+  declared_entries: entries the end-of-central-directory record claims
+  entries: entries the central directory actually yielded
+  zip64: "true" when the archive uses the zip64 records
+
 src/discovery/Recurse.cpp:
   backup_header: "ok or crc-mismatch: state of the GPT backup header folded into this primary table node"
   backup_lba: LBA of the folded GPT backup header (my_lba of the backup)
@@ -102,6 +165,22 @@ src/discovery/validators/lzma.cpp:
   lp: literal position bits, unpacked from the properties byte
   pb: position bits, unpacked from the properties byte
   uncompressed_size: size the stream declares, or "unknown" when the encoder did not know it
+
+src/discovery/validators/lzop.cpp:
+  blocks: blocks the walk covered across every member
+  extent: "unknown" when the block headers could not be followed to a member's end, so the finding claims no bytes
+  flags: header flags as hex; the low bits pick the checksums, the top byte is the writing OS
+  header_checksum: "ok" or "mismatch" for the checksum the header carries over itself
+  level: compression level the header records
+  lib_version: LZO library version that wrote it, as hex
+  members: lzop members laid end to end in this file
+  method: compression method name (lzo1x-1, lzo1x-1-15, lzo1x-999, zlib)
+  mode: the original file's mode as hex, when recorded
+  mtime: the original file's mtime (Unix seconds), when recorded
+  original_name: the file name the header records, made list-safe
+  payload_bytes: uncompressed bytes the blocks add up to
+  stored_blocks: blocks lzop wrote verbatim because compressing them did not help
+  version: lzop version that wrote it, as hex
 
 src/discovery/validators/tar.cpp:
   data_bytes: total bytes of member data the archive holds

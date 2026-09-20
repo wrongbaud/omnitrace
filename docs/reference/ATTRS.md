@@ -16,7 +16,120 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-526 keys across 36 source files.
+583 keys across 47 source files.
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/androidboot/AndroidBootReader.cpp` (3 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `board_name` | `src/containers/androidboot/AndroidBootReader.cpp:135` | the board name the boot header records, sanitised |
+| `header_version` | `src/containers/androidboot/AndroidBootReader.cpp:133` | Android boot image header version (0-4) |
+| `page_size` | `src/containers/androidboot/AndroidBootReader.cpp:134` | page size the header declares, which every section is aligned to |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/cpio/CpioReader.cpp` (2 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `entries` | `src/containers/cpio/CpioReader.cpp:186` | members emitted, the trailer excluded |
+| `variant` | `src/containers/cpio/CpioReader.cpp:185` | which cpio the archive is (newc, crc, odc, bin) |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/fit/FitReader.cpp` (5 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `default_configuration` | `src/containers/fit/FitReader.cpp:174` | /configurations/default, when the tree names one |
+| `description` | `src/containers/fit/FitReader.cpp:171` | the root description property |
+| `image_count` | `src/containers/fit/FitReader.cpp:178` | subnodes of /images |
+| `totalsize` | `src/containers/fit/FitReader.cpp:168` | the FDT header's totalsize; external payloads may extend past it |
+| `version` | `src/containers/fit/FitReader.cpp:167` | FDT format version |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/lzop/LzopReader.cpp` (8 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `bad_checksums` | `src/containers/lzop/LzopReader.cpp:104` | blocks whose data did not match the checksum lzop stored (absent when none) |
+| `blocks` | `src/containers/lzop/LzopReader.cpp:101` | blocks across every member |
+| `level` | `src/containers/lzop/LzopReader.cpp:99` | compression level the first member's header records |
+| `members` | `src/containers/lzop/LzopReader.cpp:100` | lzop members laid end to end in this file |
+| `method` | `src/containers/lzop/LzopReader.cpp:98` | compression method name of the first member |
+| `original_name` | `src/containers/lzop/LzopReader.cpp:103` | the file name the first member's header records |
+| `payload_bytes` | `src/containers/lzop/LzopReader.cpp:102` | uncompressed bytes the blocks add up to |
+| `version` | `src/containers/lzop/LzopReader.cpp:96` | lzop version that wrote it, as major.minor |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/sparse/SparseReader.cpp` (4 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `block_size` | `src/containers/sparse/SparseReader.cpp:78` | bytes per block, from the sparse header |
+| `output_size` | `src/containers/sparse/SparseReader.cpp:81` | bytes the expanded image comes to (total_blocks x block_size) |
+| `total_blocks` | `src/containers/sparse/SparseReader.cpp:79` | blocks the header says the expanded image has |
+| `total_chunks` | `src/containers/sparse/SparseReader.cpp:80` | chunks the header says the sparse image has |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/stream/StreamReader.cpp` (2 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `payload_bytes` | `src/containers/stream/StreamReader.cpp:75` | bytes the stream decoded to |
+| `stream_bytes` | `src/containers/stream/StreamReader.cpp:74` | bytes of the input the decoder consumed |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/tar/TarReader.cpp` (2 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `entries` | `src/containers/tar/TarReader.cpp:175` | members emitted |
+| `variant` | `src/containers/tar/TarReader.cpp:174` | which tar the archive is (ustar, gnu, pax, v7) |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/ubi/UbiReader.cpp` (11 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `bad_pebs` | `src/containers/ubi/UbiReader.cpp:287` | PEBs with an unreadable erase-counter header, skipped by the rebuild (absent when none) |
+| `data_offset` | `src/containers/ubi/UbiReader.cpp:282` | where a PEB's logical erase block data starts, in bytes |
+| `erased_pebs` | `src/containers/ubi/UbiReader.cpp:285` | PEBs that were never written |
+| `image_seq` | `src/containers/ubi/UbiReader.cpp:283` | image sequence number, the same in every PEB of one image |
+| `leb_size` | `src/containers/ubi/UbiReader.cpp:279` | usable bytes per logical erase block (peb_size - data_offset) |
+| `peb_size` | `src/containers/ubi/UbiReader.cpp:278` | physical erase block size, derived from the distance between EC headers |
+| `pebs` | `src/containers/ubi/UbiReader.cpp:284` | physical erase blocks walked |
+| `unmapped_pebs` | `src/containers/ubi/UbiReader.cpp:286` | PEBs with an EC header but no volume-identifier header, i.e. free |
+| `vid_hdr_offset` | `src/containers/ubi/UbiReader.cpp:281` | where a PEB's volume-identifier header sits, in bytes |
+| `volume_table` | `src/containers/ubi/UbiReader.cpp:301` | id:name:type:lebs;... for every user volume, in id order |
+| `volumes` | `src/containers/ubi/UbiReader.cpp:300` | user volumes rebuilt, the internal layout volume excluded |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/uimage/UImageReader.cpp` (3 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `data_size` | `src/containers/uimage/UImageReader.cpp:100` | ih_size, the payload length the header declares |
+| `image_name` | `src/containers/uimage/UImageReader.cpp:101` | ih_name, the image name the header records |
+| `type` | `src/containers/uimage/UImageReader.cpp:99` | ih_type as a name (kernel, ramdisk, multi, script, filesystem, flat_dt, ...) |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/zip/ZipReader.cpp` (3 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `declared_entries` | `src/containers/zip/ZipReader.cpp:259` | entries the end-of-central-directory record claims |
+| `entries` | `src/containers/zip/ZipReader.cpp:258` | entries the central directory actually yielded |
+| `zip64` | `src/containers/zip/ZipReader.cpp:260` | "true" when the archive uses the zip64 records |
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -332,6 +445,27 @@ Source: `src/discovery/validators/lzma.cpp` (5 keys)
 | `lp` | `src/discovery/validators/lzma.cpp:77` | literal position bits, unpacked from the properties byte |
 | `pb` | `src/discovery/validators/lzma.cpp:78` | position bits, unpacked from the properties byte |
 | `uncompressed_size` | `src/discovery/validators/lzma.cpp:80` | size the stream declares, or "unknown" when the encoder did not know it |
+
+## validator `lzop`
+
+Source: `src/discovery/validators/lzop.cpp` (14 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `blocks` | `src/discovery/validators/lzop.cpp:91` | blocks the walk covered across every member |
+| `extent` | `src/discovery/validators/lzop.cpp:97` | "unknown" when the block headers could not be followed to a member's end, so the finding claims no bytes |
+| `flags` | `src/discovery/validators/lzop.cpp:39` | header flags as hex; the low bits pick the checksums, the top byte is the writing OS |
+| `header_checksum` | `src/discovery/validators/lzop.cpp:43` | "ok" or "mismatch" for the checksum the header carries over itself |
+| `level` | `src/discovery/validators/lzop.cpp:38` | compression level the header records |
+| `lib_version` | `src/discovery/validators/lzop.cpp:36` | LZO library version that wrote it, as hex |
+| `members` | `src/discovery/validators/lzop.cpp:90` | lzop members laid end to end in this file |
+| `method` | `src/discovery/validators/lzop.cpp:37` | compression method name (lzo1x-1, lzo1x-1-15, lzo1x-999, zlib) |
+| `mode` | `src/discovery/validators/lzop.cpp:41` | the original file's mode as hex, when recorded |
+| `mtime` | `src/discovery/validators/lzop.cpp:42` | the original file's mtime (Unix seconds), when recorded |
+| `original_name` | `src/discovery/validators/lzop.cpp:40` | the file name the header records, made list-safe |
+| `payload_bytes` | `src/discovery/validators/lzop.cpp:93` | uncompressed bytes the blocks add up to |
+| `stored_blocks` | `src/discovery/validators/lzop.cpp:92` | blocks lzop wrote verbatim because compressing them did not help |
+| `version` | `src/discovery/validators/lzop.cpp:35` | lzop version that wrote it, as hex |
 
 ## validator `mbr`
 

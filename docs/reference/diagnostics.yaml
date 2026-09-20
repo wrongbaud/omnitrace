@@ -577,6 +577,30 @@ lz4-truncated-header:
   meaning: fewer than 6 bytes for the frame descriptor
   action: magic-tier hit at the end of the data
 
+lzop-bad-block:
+  meaning: a block's header is malformed, its bytes could not be read, or its LZO1X data did not decode; the payload ends there
+  action: the stream is damaged or truncated; what decoded before the block is still emitted and the entry is marked truncated
+
+lzop-block-walk-failed:
+  meaning: the block headers could not be followed to the end of a member, so the stream's extent is unknown
+  action: the file is truncated or the header lied; the finding carries extent unknown and no reader is handed it
+
+lzop-checksum-mismatch:
+  meaning: a block does not match the checksum lzop stored for it
+  action: the decoded bytes are emitted anyway because they are what is on the medium, but treat the entry's contents as unverified
+
+lzop-header-checksum-mismatch:
+  meaning: an lzop member header does not match its own checksum
+  action: the nine-byte magic still makes this a stream, but nothing in the header can be trusted, so it is not sized
+
+lzop-limit-blocks:
+  meaning: the walk stopped at its block or member cap
+  action: informational; the stream may be longer than the finding claims
+
+lzop-unsupported-method:
+  meaning: the member names a compression method this build does not decode (lzop can be built against zlib)
+  action: no payload is emitted for it; decompress with the lzop the image came from
+
 manifest-parent-missing:
   meaning: a node names a parent that is not in the graph
   action: contributor bug in whatever produced the node; the node is kept
