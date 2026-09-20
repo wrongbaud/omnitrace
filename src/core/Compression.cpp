@@ -58,6 +58,9 @@ namespace {
 // Error codes. Tests and diagnostics key on these strings.
 constexpr const char* kCap = "decompress-cap";
 constexpr const char* kCorrupt = "decompress-corrupt";
+// The compressed data decoded to its end and then disagreed with the check
+// the stream carries over it. The payload is left in `out`: see the header.
+constexpr const char* kChecksum = "decompress-checksum-mismatch";
 constexpr const char* kTruncated = "decompress-truncated";
 constexpr const char* kEmpty = "decompress-empty-input";
 constexpr const char* kInit = "decompress-init-failed";
@@ -163,6 +166,7 @@ Status inflate_zlib(std::span<const std::uint8_t> in, std::vector<std::uint8_t>*
     if (inflateInit2(&zs, window_bits) != Z_OK) return Status::fail(kInit);
     Appender ap = out != nullptr ? Appender(*out, max_out) : Appender(max_out);
     std::size_t ip = 0;
+    std::size_t member_start = 0;  // where the member being decoded began
     Status result = Status::success();
     const bool allow_members = window_bits > 15;  // gzip or auto-detect modes
     for (;;) {
@@ -182,7 +186,10 @@ Status inflate_zlib(std::span<const std::uint8_t> in, std::vector<std::uint8_t>*
         }
         if (rc == Z_STREAM_END) {
             // Concatenated gzip members are one logical stream (RFC 1952 §2.2).
-            if (allow_members && is_gzip_header(in, ip) && inflateReset(&zs) == Z_OK) continue;
+            if (allow_members && is_gzip_header(in, ip) && inflateReset(&zs) == Z_OK) {
+                member_start = ip;
+                continue;
+            }
             break;
         }
         if (rc == Z_OK) continue;
@@ -198,7 +205,24 @@ Status inflate_zlib(std::span<const std::uint8_t> in, std::vector<std::uint8_t>*
             result = Status::fail(kInit);
             break;
         }
-        result = Status::fail(kCorrupt);
+        // zlib reports a failed gzip CRC-32/ISIZE or zlib Adler-32 as a plain
+        // Z_DATA_ERROR and names it only in `msg`. The distinction is worth
+        // recovering: the deflate data itself decoded, so everything already
+        // in `out` is the whole payload, just not the payload that was
+        // compressed. A `msg` this does not recognise falls through to
+        // kCorrupt, which is the safe answer.
+        const char* msg = zs.msg != nullptr ? zs.msg : "";
+        const bool bad_crc = std::strcmp(msg, "incorrect data check") == 0;
+        const bool bad_len = std::strcmp(msg, "incorrect length check") == 0;
+        if (bad_crc && is_gzip_header(in, member_start) && in.size() - ip >= 4) {
+            // zlib stops on the CRC-32 and never reads the ISIZE behind it, so
+            // `ip` would be four bytes short of the member's real end and the
+            // caller would leave a phantom four-byte gap in the image. The
+            // gzip trailer is fixed at CRC-32 then ISIZE (RFC 1952 2.3.1), so
+            // those four bytes belong to the member whatever they hold.
+            ip += 4;
+        }
+        result = Status::fail(bad_crc || bad_len ? kChecksum : kCorrupt);
         break;
     }
     inflateEnd(&zs);
@@ -382,7 +406,20 @@ Status inflate_lz4_frame(std::span<const std::uint8_t> in, std::vector<std::uint
             const std::size_t hint =
                 LZ4F_decompress(dctx, ap.scratch(), &dst_size, in.data() + ip, &src_size, nullptr);
             if (LZ4F_isError(hint)) {
-                result = Status::fail(kCorrupt);
+                // LZ4F_getErrorCode is static-linking-only; the error *name*
+                // is public and is the enumerator's own spelling.
+                //
+                // On a content-checksum failure the last block's bytes are in
+                // the scratch buffer but `dst_size` was never set to their
+                // count -- LZ4F returns the error before the assignment at the
+                // end of LZ4F_decompress -- so they cannot be committed and
+                // the payload is short by up to one window. It is already
+                // reported as damaged; zstd does the same and the zlib-backed
+                // codecs, which commit before they check, do not.
+                const char* name = LZ4F_getErrorName(hint);
+                const bool check_failed = std::strcmp(name, "ERROR_contentChecksum_invalid") == 0 ||
+                                          std::strcmp(name, "ERROR_blockChecksum_invalid") == 0;
+                result = Status::fail(check_failed ? kChecksum : kCorrupt);
                 break;
             }
             ip += src_size;
@@ -508,11 +545,16 @@ Status inflate_zstd(std::span<const std::uint8_t> in, std::vector<std::uint8_t>*
         ZSTD_outBuffer zout{ap.scratch(), ap.window(), 0};
         const std::size_t rc = ZSTD_decompressStream(ds, &zout, &zin);
         if (ZSTD_isError(rc)) {
+            // As in the lz4 path: a failed content checksum leaves the last
+            // flush's bytes in the scratch buffer with `zout.pos` still 0, so
+            // the payload is short by up to one window.
             const ZSTD_ErrorCode ec = ZSTD_getErrorCode(rc);
-            result = Status::fail(ec == ZSTD_error_frameParameter_windowTooLarge ||
-                                          ec == ZSTD_error_memory_allocation
-                                      ? kMemlimit
-                                      : kCorrupt);
+            const char* code =
+                ec == ZSTD_error_frameParameter_windowTooLarge || ec == ZSTD_error_memory_allocation
+                    ? kMemlimit
+                : ec == ZSTD_error_checksum_wrong ? kChecksum
+                                                  : kCorrupt;
+            result = Status::fail(code);
             break;
         }
         if (!ap.commit(zout.pos)) {
@@ -642,6 +684,63 @@ Status stream_length(Codec c, std::span<const std::uint8_t> in, std::uint64_t ma
         default:
             return Status::fail(kUnsupported);
     }
+}
+
+std::string stream_check(Codec c, std::span<const std::uint8_t> in) {
+    switch (c) {
+        case Codec::Gzip:
+            // The 8-byte trailer is a CRC-32 over the payload then its length;
+            // both are mandatory (RFC 1952 section 2.3.1).
+            return "crc32";
+        case Codec::Zlib:
+            // Auto-detecting: a gzip wrapper when its magic is there, else the
+            // zlib one, whose 4-byte trailer is an Adler-32 (RFC 1950).
+            return is_gzip_header(in, 0) ? "crc32" : "adler32";
+        case Codec::Bzip2:
+            // Every block carries a CRC-32 and the stream a combined one.
+            return "crc32";
+        case Codec::Xz: {
+            // Stream header: six magic bytes, then two flag bytes whose low
+            // nibble picks the check (xz file format 2.1.1.2).
+            if (!is_xz_header(in, 0) || in.size() < 8) return "";
+            switch (in[7] & 0x0Fu) {
+                case 0x00:
+                    return "none";  // xz --check=none
+                case 0x01:
+                    return "crc32";
+                case 0x04:
+                    return "crc64";  // the default
+                case 0x0A:
+                    return "sha256";
+                default:
+                    return "";  // a reserved id this build cannot name
+            }
+        }
+        case Codec::Lzma:
+        case Codec::Deflate:
+            // Neither records anything over its payload.
+            return "none";
+        case Codec::Lz4:
+            // Frame descriptor: FLG is the byte after the magic. Bit 2 is an
+            // xxHash32 over the whole content, bit 4 one per block; either
+            // means the decoder checks what it produced.
+            if (!starts_with_le32(in, 0, kLz4FrameMagic) || in.size() < 5) return "";
+            return (in[4] & 0x14u) != 0 ? "xxh32" : "none";
+        case Codec::Lz4Legacy:
+            return "none";
+        case Codec::Zstd:
+            // Frame header descriptor, bit 2: the low 32 bits of an XXH64
+            // over the content.
+            if (!starts_with_le32(in, 0, kZstdMagic) || in.size() < 5) return "";
+            return (in[4] & 0x04u) != 0 ? "xxh64" : "none";
+        case Codec::Lzo1x:
+        case Codec::Rtime:
+        case Codec::None:
+            // Bare blocks: whatever checks them lives in the format that
+            // stores them, not in the bytes handed here.
+            break;
+    }
+    return "";
 }
 
 Status decompress_stream(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,

@@ -7,8 +7,16 @@
 /// `decompress-cap`, `decompress-corrupt`, `decompress-truncated`,
 /// `decompress-empty-input`, `decompress-init-failed`, `decompress-memlimit`,
 /// `decompress-unsupported`, `decompress-size-mismatch`,
-/// `decompress-trailing-input`; nothing throws. Thread-safety: pure functions
-/// with no shared state.
+/// `decompress-trailing-input`, `decompress-checksum-mismatch`; nothing
+/// throws. Thread-safety: pure functions with no shared state.
+///
+/// `decompress-checksum-mismatch` is the one failure that still leaves a
+/// usable result: the compressed data decoded to its natural end and then
+/// disagreed with the checksum the producer recorded in the stream's own
+/// header, so `out` holds the complete payload and the mismatch is itself
+/// evidence of damage. Only gzip, zlib, lz4 and zstd can tell the two apart;
+/// xz, lzma and bzip2 report their libraries' undifferentiated data error
+/// either way, so a bad check there surfaces as `decompress-corrupt`.
 #pragma once
 #include <cstdint>
 #include <span>
@@ -62,6 +70,19 @@ Status decompress(Codec c, std::span<const std::uint8_t> in, std::vector<std::ui
 /// available bound for a truncated or corrupt stream.
 Status decompress_stream(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
                          std::uint64_t max_out, std::uint64_t& consumed);
+
+/// The integrity check the stream at the start of `in` declares in its own
+/// header: `crc32`, `adler32`, `crc64`, `sha256`, `xxh32` or `xxh64`; `none`
+/// when the stream carries no check over its payload; and the empty string
+/// when the codec is a bare block, or the header is too short or names a
+/// check this build cannot. Reads the header only -- it does not decode, so
+/// it is free to call before one.
+///
+/// This is what lets a reader say *which* guarantee a payload came with. The
+/// libraries all verify their own check while decoding; the format knowledge
+/// of where that check is recorded, and whether the producer wrote one at
+/// all, lives here.
+std::string stream_check(Codec c, std::span<const std::uint8_t> in);
 
 // How long the stream at the start of `in` is, without keeping its output.
 /// Run the decoder to the end of the stream and report only its measurements:

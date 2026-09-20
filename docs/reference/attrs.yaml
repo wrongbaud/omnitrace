@@ -50,6 +50,7 @@ src/containers/sparse/SparseReader.cpp:
   total_chunks: chunks the header says the sparse image has
 
 src/containers/stream/StreamReader.cpp:
+  checksum_kind: the check the stream records over its own payload (crc32, adler32, crc64, sha256, xxh32, xxh64 or none)
   payload_bytes: bytes the stream decoded to
   stream_bytes: bytes of the input the decoder consumed
 
@@ -120,6 +121,11 @@ src/discovery/Recurse.cpp:
   word_swap: "swap16 or swap32 on the Image node when the dump was byte-reversed per word"
   word_swap_confidence: detector score (0-100) behind word_swap
   written: "false on a regular-file node that was not written to disk (extraction on, but the Sink skipped it)"
+
+src/discovery/validators/common.h:
+  checksum: mismatch when the payload decoded to its end and then disagreed with the check the stream records over it
+  extent: unknown when the stream could not be decoded to an end; the finding claims no bytes and no reader is asked to open it
+  payload_bytes: bytes the stream decodes to, measured without keeping them
 
 src/discovery/validators/android_boot.cpp:
   bootconfig_size: vendor boot v4 bootconfig section size

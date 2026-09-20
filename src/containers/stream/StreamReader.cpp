@@ -40,6 +40,7 @@ constexpr const char* kPayloadName = "payload";
 constexpr const char* kCodeDecompressFailed = "container-decompress-failed";
 constexpr const char* kCodeLimitFileBytes = "container-limit-file-bytes";
 constexpr const char* kCodeSinkError = "container-sink-error";
+constexpr const char* kCodeChecksumMismatch = "container-checksum-mismatch";
 
 }  // namespace
 
@@ -60,6 +61,7 @@ Status StreamReader::open(const Span& span) {
     consumed_ = 0;
     produced_ = 0;
     truncated_ = false;
+    check_kind_.clear();
     return Status::success();
 }
 
@@ -74,6 +76,7 @@ ContainerInfo StreamReader::info() const {
         i.attrs["stream_bytes"] = std::to_string(consumed_);
         i.attrs["payload_bytes"] = std::to_string(produced_);
     }
+    if (!check_kind_.empty()) i.attrs["checksum_kind"] = check_kind_;
     return i;
 }
 
@@ -94,6 +97,10 @@ Status StreamReader::walk(Sink& sink, const WalkOptions& opts, WalkResult& out) 
         mapped = std::span<const std::uint8_t>(copied->data(), copied->size());
     }
 
+    // What the stream promises about its own payload. Read from the header
+    // before the decode, because a failed decode may not reach the trailer.
+    check_kind_ = compress::stream_check(codec_, *mapped);
+
     std::vector<std::uint8_t> payload;
     std::uint64_t consumed = 0;
     const Status st =
@@ -101,21 +108,34 @@ Status StreamReader::walk(Sink& sink, const WalkOptions& opts, WalkResult& out) 
     consumed_ = consumed;
     produced_ = payload.size();
 
+    bool mismatch = false;
     if (!st) {
         // A capped stream is a truncated payload, not a failed walk: what was
-        // decoded before the cap is real evidence and is still emitted. Every
-        // other decode error means there is no payload to emit.
-        if (st.error != "decompress-cap") {
-            out.diagnostics.push_back({Severity::Error, kCodeDecompressFailed,
-                                       format_ + " stream did not decode (" + st.error +
-                                           "); no payload emitted"});
+        // decoded before the cap is real evidence and is still emitted. So is
+        // a payload that decoded whole and then disagreed with its own
+        // checksum -- those bytes are all there, they are just not the bytes
+        // that were compressed, and dropping them would hide the damage.
+        // Every other decode error means there is no payload to emit.
+        if (st.error == "decompress-checksum-mismatch") {
+            mismatch = true;
+            const std::string kind = check_kind_.empty() ? "checksum" : check_kind_;
+            out.diagnostics.push_back(
+                {Severity::Error, kCodeChecksumMismatch,
+                 "the " + format_ + " payload does not match the " + kind +
+                     " the stream records over it; emitted anyway, treat it as damaged"});
+        } else if (st.error != "decompress-cap") {
+            out.diagnostics.push_back(
+                {Severity::Error, kCodeDecompressFailed,
+                 format_ + " stream did not decode (" + st.error + "); no payload emitted"});
             return Status::fail(st.error);
+        } else {
+            truncated_ = true;
+            out.truncated = true;
+            out.diagnostics.push_back({Severity::Warning, kCodeLimitFileBytes,
+                                       "the " + format_ + " payload exceeds max_file_bytes (" +
+                                           std::to_string(payload_cap(opts)) +
+                                           "); data cut there"});
         }
-        truncated_ = true;
-        out.truncated = true;
-        out.diagnostics.push_back({Severity::Warning, kCodeLimitFileBytes,
-                                   "the " + format_ + " payload exceeds max_file_bytes (" +
-                                       std::to_string(payload_cap(opts)) + "); data cut there"});
     }
 
     FileMeta meta;
@@ -139,6 +159,15 @@ Status StreamReader::walk(Sink& sink, const WalkOptions& opts, WalkResult& out) 
         return Status::success();  // nothing recovered, but the walk itself held
     }
     if (truncated_) r.truncated = true;
+    // What the payload is worth: the decoders verify the stream's own check
+    // as they go, so a decode that reached the end is a check that passed.
+    // A format that records none -- raw deflate, LZMA-alone, `xz --check=none`
+    // -- gets "none", the same third answer LzopReader gives for `lzop -F`.
+    // A payload cut short by the cap was never checked against anything.
+    r.meta.extra["checksum"] = mismatch                                         ? "mismatch"
+                               : truncated_                                     ? "unchecked"
+                               : (check_kind_.empty() || check_kind_ == "none") ? "none"
+                                                                                : "ok";
 
     ++out.entries;
     ++out.files;

@@ -201,8 +201,10 @@ signature.
 | `lz4-bad-frame-descriptor` | warning | `FLG` / `BD` invalid; magic tier |
 | `zstd-truncated-header` | warning | fewer than 5 bytes; magic tier |
 | `zstd-bad-frame-header` | warning | reserved bits set; magic tier |
-| `compressed-stream-unmeasured` | info | the decoder could not follow the stream to an end, so the finding has no extent (gzip and xz only) |
+| `compressed-stream-unmeasured` | info | the decoder could not follow the stream to an end, so the finding has no extent |
+| `compressed-stream-checksum-mismatch` | warning | the stream decoded to its end and then disagreed with its own checksum; it is still sized and read |
 | `container-decompress-failed` | error | the reader could not decode the stream; no payload emitted |
+| `container-checksum-mismatch` | error | the payload does not match the checksum the stream records over it; it is emitted anyway |
 | `container-limit-file-bytes` | warning | the payload exceeds `--max-file-bytes` and was cut there |
 | `container-sink-error` | warning | the Sink refused the payload |
 
@@ -222,8 +224,68 @@ The payload lands in `containers/<node-id>/files/payload` and is re-scanned
 like any extracted file, so a `.tar.gz` holding a filesystem is walked to the
 end: gzip container -> payload -> the filesystem inside it.
 
+## Checksums
+
+Every one of these formats records something over its own payload, and each
+library verifies it while decoding. What was missing was a way to *say* so, so
+the entry now carries a `checksum` extra and the node a `checksum_kind` attr:
+
+| format | what is recorded | `checksum_kind` |
+|---|---|---|
+| gzip | CRC-32 and ISIZE in the 8-byte trailer (RFC 1952 §2.3.1) | `crc32` |
+| zlib | Adler-32 in the 4-byte trailer (RFC 1950) | `adler32` |
+| deflate (raw) | nothing | `none` |
+| bzip2 | a CRC-32 per block and a combined one per stream | `crc32` |
+| xz | the check id in stream-flags byte 2 | `none`, `crc32`, `crc64`, `sha256` |
+| lzma (alone) | nothing | `none` |
+| lz4 | xxHash32 over the content, per block or both (`FLG` bits 2 and 4) | `xxh32` or `none` |
+| zstd | the low 32 bits of an XXH64 over the content (`FHD` bit 2) | `xxh64` or `none` |
+
+`compress::stream_check` reads that from the header alone; the verdict on the
+entry comes from the decode:
+
+* `ok` — the decoder reached the stream's end, which means the check passed.
+* `none` — the stream records nothing to check against (`xz --check=none`,
+  raw deflate, LZMA-alone). The same third answer `LzopReader` gives `lzop -F`.
+* `unchecked` — the payload was cut at `--max-file-bytes`, so the trailer was
+  never reached.
+* `mismatch` — the compressed data decoded to its natural end and then
+  disagreed with what the producer recorded.
+
+A mismatch is the one decode failure that still yields evidence. The bytes are
+all there; they are simply not the bytes that were compressed, and dropping
+them would hide the damage. So the validator still sizes the stream
+(`compressed-stream-checksum-mismatch`, `checksum=mismatch` on the finding) and
+the reader still emits the payload (`container-checksum-mismatch`). Leaving the
+extent unknown instead would bury a damaged stream under an "unidentified"
+region, which is the opposite of what an examiner wants.
+
+Two limits are worth knowing:
+
+* Only gzip, zlib, lz4 and zstd can report a mismatch. liblzma and libbz2
+  return one undifferentiated data error for a bad check and for corrupt data
+  alike, so a bad xz check surfaces as `decompress-corrupt` and no payload.
+* On an lz4 or zstd mismatch the payload may be short by up to one 64 KiB
+  output window. Both libraries write the last block into the caller's buffer
+  and then return the checksum error *before* recording how much they wrote,
+  so those bytes cannot be committed. The zlib-backed codecs commit before
+  they check and are byte-complete; gzip's extent is exact too, because
+  `inflate_zlib` adds back the four ISIZE bytes zlib stops short of reading.
+
 ## Verified on
 
+* `corpus/router-wrt-example`: the gzip member at `0x60bc71` fails its own CRC-32.
+  `gzip -t` agrees ("invalid compressed data--crc error"). It used to be an
+  unmeasured magic with a false-positive gzip magic inside its range; it is
+  now `consistent`, 1010712 bytes, `checksum=mismatch`, and its 1024784-byte
+  payload -- a GNU tar -- is recovered and flagged. The image went from 19
+  findings to 18.
+* Eleven hand-built streams (`gzip`, `xz --check=crc64`, `xz --check=none`,
+  `zstd` with and without `--check`, `lz4` with and without `--no-frame-crc`,
+  `bzip2`) round-trip to 200000 bytes with the expected `checksum` and
+  `checksum_kind`; flipping one byte of each recorded check turns exactly
+  those four formats that can tell into `mismatch`, and `gzip -t`, `zstd -t`
+  and `lz4 -t` each confirm the corruption is in the check and not the data.
 * `tests/fixtures/out/nested.tar.gz`: one `gzip` finding at `0x0`, now
   `consistent` with the full 319376-byte extent and
   `payload_bytes=327680`; the payload is the tar, and the SquashFS inside it
@@ -242,21 +304,16 @@ end: gzip container -> payload -> the filesystem inside it.
 
 ## Not yet supported
 
-* `verified` is unreachable for every stream format: none of gzip's CRC32,
-  xz's check value, lz4's content checksum or zstd's is compared against the
-  decoded payload.
+* The `verified` tier is still unreachable. A passing checksum now raises the
+  reader's confidence in the payload, but the validator scores the header
+  before any decode and nothing promotes a finding on the strength of a
+  successful walk.
 * A raw lz4 block (no frame magic) and the legacy `02 21 4c 18` format have no
   signature: neither has a header to recognise.
-* The lzop file format (`89 4c 5a 4f 00 0d 0a 1a 0a`) has no signature. It
-  needs no new dependency — the in-tree LZO1X decoder already decompresses
-  its blocks for SquashFS and JFFS2 — but it is a multi-block container rather
-  than a single-payload stream, so it belongs with the archive readers.
 * Only two LZMA properties bytes have signatures; a stream written with other
   `lc`/`lp`/`pb` settings is not found.
 * The payload is held in memory in one piece, so a payload larger than
   `--max-file-bytes` is cut rather than streamed.
-* No signatures for LZMA-alone (`5d 00 00`), bzip2 (`BZh`) or LZO streams;
-  a `.lzma` kernel is reported only through its uImage wrapper.
 * gzip multi-member files are reported once per member magic.
 
 ## References

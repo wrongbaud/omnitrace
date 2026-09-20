@@ -23,6 +23,12 @@ namespace omnitrace::container {
 /// `walk()`, capped by `WalkOptions::limits.max_file_bytes`. `info().size` is
 /// 0 until `walk()` has run, because the extent is a property of the decode.
 /// Subclassed once per concrete format to fix the codec and the magic.
+///
+/// Every one of these formats records something over its own payload, and the
+/// decoders verify it as they go, so the entry carries a `checksum` extra
+/// (`ok`, `mismatch`, `none` or `unchecked`) the way `LzopReader`'s does. A
+/// payload that decoded whole and then failed that check is still emitted --
+/// the bytes are all there, and the mismatch is the evidence.
 class StreamReader : public ContainerReader {
    public:
     /// `format` is the format id, `codec` the decoder, `magic` the bytes
@@ -45,9 +51,10 @@ class StreamReader : public ContainerReader {
 
    private:
     Span span_;
-    std::uint64_t consumed_ = 0;   // input bytes the stream used (0 before walk)
-    std::uint64_t produced_ = 0;   // payload bytes
-    bool truncated_ = false;       // a limit or a short stream cut the payload
+    std::uint64_t consumed_ = 0;  // input bytes the stream used (0 before walk)
+    std::uint64_t produced_ = 0;  // payload bytes
+    bool truncated_ = false;      // a limit or a short stream cut the payload
+    std::string check_kind_;      // the check the header declares (compress::stream_check)
 };
 
 }  // namespace omnitrace::container

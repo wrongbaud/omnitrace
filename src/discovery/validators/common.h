@@ -193,12 +193,27 @@ inline std::uint64_t compressed_stream_length(Finding& f, const Span& span, std:
 
     std::uint64_t consumed = 0, produced = 0;
     const Status st = ::omnitrace::compress::stream_length(codec, in, cap, consumed, produced);
-    if (!st) {
+    // A payload that decoded to its natural end and only then disagreed with
+    // the check the stream records over it is still a *measured* stream: the
+    // decoder walked every compressed byte, so `consumed` is exact and the
+    // region is real. Leaving the extent unknown there would hide a damaged
+    // stream behind an "unidentified" region, which is the opposite of what
+    // an examiner wants. Only a decode that never reached an end is unmeasured.
+    const bool bad_check = !st && st.error == "decompress-checksum-mismatch";
+    if (!st && !bad_check) {
         diag(f, Severity::Info, "compressed-stream-unmeasured",
              "the " + f.format + " stream does not decode to an end (" + st.error +
                  "); its extent is unknown and it claims no bytes");
         f.attrs["extent"] = "unknown";
         return 0;
+    }
+    if (bad_check) {
+        std::string kind = ::omnitrace::compress::stream_check(codec, in);
+        if (kind.empty()) kind = "check";
+        f.attrs["checksum"] = "mismatch";
+        diag(f, Severity::Warning, "compressed-stream-checksum-mismatch",
+             "the " + f.format + " payload does not match the " + kind +
+                 " the stream records over it; it is sized and read, but what it holds is damaged");
     }
     f.attrs["payload_bytes"] = dec(produced);
     return consumed;

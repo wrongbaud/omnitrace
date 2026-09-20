@@ -36,6 +36,17 @@ container format with a signature has a reader now, so the `unsupported`
 Coverage row and its `analyze-no-reader` diagnostic are for a format that is
 identified but has none -- which today means none of them.
 
+Every stream format says what its payload is worth. `compress::stream_check`
+reads the check a gzip, zlib, bzip2, xz, lz4 or zstd stream records over
+itself, and because each library verifies that check while decoding, the
+`StreamReader` entry carries `checksum` = `ok`, `mismatch`, `none` or
+`unchecked` the way `LzopReader`'s does. A stream that decoded whole and then
+failed its own check is still sized, read and emitted, flagged
+`compressed-stream-checksum-mismatch` and `container-checksum-mismatch`:
+the router-wrt image has one, a damaged 1 MB gzip holding a tar that was previously
+reported only as an unmeasured magic. `docs/formats/compressed-streams.md`
+has the per-format table and the two limits.
+
 Word-swapped dumps are detected by `detect_word_swap` (`src/core/Swap.cpp:334`)
 and analysed through a `SwappedSource` view; the Image node gets
 `image-word-swapped`.
@@ -50,15 +61,16 @@ Items 1-4 of the original list are done: the ext4, JFFS2, QNX6 and QNX IFS
 readers, and both halves of the container work (readers plus the payload
 recursion). See the section above.
 
-1. **Verify a stream against its own checksum.** gzip's CRC32, xz's check and
-   lz4's and zstd's content checksums are all decoded and none is compared
-   against the payload, so a `StreamReader` entry cannot say whether what it
-   produced is what was compressed. `LzopReader` now does exactly that and is
-   the shape to copy (`checksum` on the entry: `ok`, `mismatch` or `none`);
-   the decode already happens, only the comparison is missing.
-2. **Write the corrected view of a word-swapped image** into the case directory
+1. **Write the corrected view of a word-swapped image** into the case directory
    (today only the detection is recorded; `src/discovery/Recurse.cpp`
    `ImageViewHook` is the extension point).
+2. **Walk an archive that has no end marker but real members.** A damaged
+   `tar` reports `tar-no-end-marker`, keeps `extent: unknown` and is therefore
+   never handed to its reader, so the members it *did* parse are lost. The
+   Router-wrt image has one inside a CRC-failed gzip: two members, 998331 bytes,
+   none extracted. The `extent: unknown` rule is right in general; the
+   question is whether a reader that counted members should be allowed to
+   emit them over the bytes it accounted for.
 3. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
    `omnitrace report`. `DEVELOPMENT_PLAN.md` §5.4 to §7.
 4. **Phase 4**: web UI, only after the CLI and library are released (decision
@@ -72,8 +84,6 @@ Each of these is a single pull request with a clear test. The definition of done
 |---|---|---|
 | Add a vendor partition-table validator (Broadcom TRX, IP camera, another vendor) | copy the shape of `src/discovery/validators/mbr.cpp`, add a `[[signature]]` with `category = "partition-table"` to `signatures/core.toml`, an anchor line in `src/discovery/validators/builtin.cpp`; `src/discovery/Recurse.cpp:617` (`analyze_span`) turns any partition-table finding into nodes | a synthetic header in `tests/unit/discovery/partition_test.cpp` yields table plus entry nodes; a truncated header is rejected or downgraded with a diagnostic |
 | Add a magic-only signature for a format you meet (EROFS, F2FS, BTRFS, ...) | `signatures/core.toml`; the schema is in `docs/formats/signatures.md` | `scan --json` reports it at tier `magic` on a hand-made buffer in `tests/unit/discovery/toml_test.cpp` or `scan_test.cpp` |
-| Give gzip a size: walk the deflate stream with zlib and report the end | `src/discovery/validators/gzip.cpp` (returns size 0 today); `src/core/Compression.cpp` has the inflate helpers | tier rises to `consistent` on `tests/fixtures/out/nested.tar.gz` and a truncated stream reports `gzip-truncated` |
-| Give zip a size from the end-of-central-directory record | new `src/discovery/validators/zip.cpp`; register the name in the `zip` signature in `signatures/core.toml` | a zip built in the test is sized; a zip with a bad central-directory offset is downgraded |
 | Add a fixture (cramfs via `mkcramfs`, romfs via `genromfs`, ext2) | `tests/fixtures/generate.py` (`build_ext4` at line 850 is the template for a debugfs-driven image, `build_squashfs` at 370 for a mkfs-driven one), the tool into `tests/fixtures/Dockerfile` | `scripts/fixtures.sh check` still passes and the new `expected.yaml` lists the tree; the validator test picks it up through `fixture_path` in `tests/unit/discovery/helpers.h:91` |
 | Add a parity tool (for example `sasquatch` or `jefferson` standalone) | `tests/parity/run.py`: `Runner` (line 216) gets `run_<name>`, a `parse_<name>` beside `parse_unblob` (433), the name in `ALL_TOOLS` (54), aliases in `FORMAT_ALIASES` (66) | a test in `tests/parity/test_run.py` built from a hand-written raw report passes |
 | Improve a diagnostic message | `analyze-no-reader` at `src/discovery/Recurse.cpp:461` and `:843` could name the format and the roadmap entry; `region-unidentified` at `:570` could say whether the region is uniform fill | the message is a full sentence a non-developer can act on; the code is unchanged; `tests/unit/discovery/recurse_test.cpp` asserts on the code, not the text |

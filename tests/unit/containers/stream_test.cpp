@@ -142,6 +142,8 @@ TEST(StreamContainer, PayloadOverTheCapIsCutAndMarked) {
     for (const Diagnostic& d : r.diagnostics)
         saw = saw || d.code == "container-limit-file-bytes";
     EXPECT_TRUE(saw);
+    // The trailer was never reached, so there is nothing to claim about it.
+    EXPECT_EQ(r.entries_out[0].meta.extra.at("checksum"), "unchecked");
 }
 
 TEST(StreamContainer, CorruptStreamFailsWithADiagnosticAndNoPayload) {
@@ -216,4 +218,48 @@ TEST(StreamContainer, TruncatedStreamIsRefusedNotAllocated) {
     fs::WalkResult r;
     EXPECT_FALSE(reader->walk(sink, fs::WalkOptions{}, r));
     EXPECT_TRUE(r.entries_out.empty());
+}
+
+// A stream that decoded whole and then failed its own checksum is the one
+// failure that still yields evidence: the payload is complete, and it is
+// emitted with the mismatch recorded on the entry rather than thrown away.
+TEST(StreamContainer, GzipWithABadCrcStillEmitsThePayloadAndSaysSo) {
+    const Bytes raw = text(std::string(9000, 'z') + "end");
+    Bytes img = gzip_of(raw);
+    img[img.size() - 8] ^= 0xFF;  // the CRC-32, not the deflate data
+
+    std::shared_ptr<const Source> keep;
+    auto reader = make("gzip");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    ListingSink sink(true, Limits{});
+    fs::WalkResult r;
+    ASSERT_TRUE(reader->walk(sink, fs::WalkOptions{}, r));
+
+    ASSERT_EQ(r.entries_out.size(), 1u);
+    EXPECT_EQ(r.entries_out[0].meta.size, raw.size());  // every byte recovered
+    EXPECT_EQ(r.entries_out[0].meta.extra.at("checksum"), "mismatch");
+    bool saw = false;
+    for (const Diagnostic& d : r.diagnostics)
+        saw = saw || (d.code == "container-checksum-mismatch" && d.severity == Severity::Error);
+    EXPECT_TRUE(saw);
+
+    const ContainerInfo info = reader->info();
+    EXPECT_EQ(info.attrs.at("checksum_kind"), "crc32");
+    // zlib stops on the CRC and never reads the ISIZE behind it; the reader
+    // must still claim the whole member or the image keeps a four-byte hole.
+    EXPECT_EQ(info.size, img.size());
+}
+
+// The good case says so too, so "checksum" is a verdict and not just an alarm.
+TEST(StreamContainer, AnIntactStreamRecordsThatItsCheckPassed) {
+    const Bytes img = gzip_of(text(std::string(4096, 'c')));
+    std::shared_ptr<const Source> keep;
+    auto reader = make("gzip");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    ListingSink sink(true, Limits{});
+    fs::WalkResult r;
+    ASSERT_TRUE(reader->walk(sink, fs::WalkOptions{}, r));
+    ASSERT_EQ(r.entries_out.size(), 1u);
+    EXPECT_EQ(r.entries_out[0].meta.extra.at("checksum"), "ok");
+    EXPECT_EQ(reader->info().attrs.at("checksum_kind"), "crc32");
 }

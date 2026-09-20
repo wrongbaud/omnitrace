@@ -97,6 +97,10 @@ carve-write-failed:
   meaning: writing the carved file failed; the partial file was removed
   action: check free space and permissions, then re-run
 
+compressed-stream-checksum-mismatch:
+  meaning: the stream decoded to its natural end and then disagreed with the checksum recorded in its own header; it is still sized and read
+  action: treat the payload as damaged evidence, not as a faithful copy; the compressed bytes themselves are intact enough to decode, so the corruption is in the data or in the recorded check
+
 compressed-stream-unmeasured:
   meaning: the decoder could not follow a gzip or xz stream to its end, so the finding has no extent and claims no bytes
   action: informational; the stream is damaged, truncated or a bomb (it is abandoned at max_ratio/max_payload from the signature)
@@ -108,6 +112,10 @@ container-bad-header:
 container-bad-magic:
   meaning: the container reader was opened on bytes that do not start with its magic
   action: contributor error or a stale signature; the node keeps the validator's finding
+
+container-checksum-mismatch:
+  meaning: the payload does not match the checksum the stream records over it; it is emitted anyway because the bytes are all there and the mismatch is itself evidence
+  action: treat the payload as damaged; for lz4 and zstd it may also be short by up to 64 KiB, because neither library reports what it wrote on the call that failed the check
 
 container-decompress-failed:
   meaning: a compressed container did not decode, so no payload was emitted

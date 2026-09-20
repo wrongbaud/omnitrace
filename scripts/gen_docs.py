@@ -786,6 +786,9 @@ def attrs_sections() -> dict[str, dict[str, object]]:
     candidates = sorted(VALIDATOR_DIR.glob("*.cpp")) + sorted((ROOT / "src" / "filesystems").rglob("*.cpp"))
     candidates += sorted((ROOT / "src" / "containers").rglob("*.cpp"))
     candidates += [ROOT / "src" / "discovery" / "Recurse.cpp"]
+    # common.h is a header, not a validator, but compressed_stream_length sets
+    # keys on real findings for every stream format that calls it.
+    candidates += [VALIDATOR_DIR / "common.h"]
     for path in candidates:
         text = strip_comments(read(path))
         keys: dict[str, int] = {}
@@ -804,6 +807,8 @@ def attrs_sections() -> dict[str, dict[str, object]]:
         file = rel(path)
         if file in by_file:
             title = "validator " + ", ".join(f"`{v}`" for v in sorted(by_file[file]))
+        elif file.endswith("validators/common.h"):
+            title = "shared validator helper (`compressed_stream_length`)"
         elif "filesystems" in file:
             title = "filesystem reader (`FilesystemInfo::attrs`)"
         else:

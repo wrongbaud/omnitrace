@@ -259,6 +259,19 @@ Bytes lz4_legacy_encode(const Bytes& in) {
     return out;
 }
 
+// zstd with the content checksum turned on; ZSTD_compress leaves it off.
+Bytes zstd_encode_checked(const Bytes& in) {
+    ZSTD_CCtx* c = ZSTD_createCCtx();
+    EXPECT_NE(c, nullptr);
+    EXPECT_FALSE(ZSTD_isError(ZSTD_CCtx_setParameter(c, ZSTD_c_checksumFlag, 1)));
+    Bytes out(ZSTD_compressBound(in.size()));
+    const std::size_t n = ZSTD_compress2(c, out.data(), out.size(), in.data(), in.size());
+    EXPECT_FALSE(ZSTD_isError(n));
+    out.resize(n);
+    ZSTD_freeCCtx(c);
+    return out;
+}
+
 Bytes zstd_encode(const Bytes& in) {
     Bytes out(ZSTD_compressBound(in.size()));
     const std::size_t n = ZSTD_compress(out.data(), out.size(), in.data(), in.size(), 3);
@@ -896,6 +909,116 @@ TEST(Rtime, HostileStreams) {
     }
     EXPECT_EQ(decompress(Codec::Rtime, bomb, out, 1 << 20).error, "decompress-cap");
     EXPECT_LE(out.capacity(), 1u << 20);
+}
+
+// ---------------------------------------------------------------- checksums
+
+// What a stream promises about its own payload, read from its header alone.
+TEST(Compression, StreamCheckNamesWhatTheHeaderDeclares) {
+    const Bytes plain = sample_text(1u << 16);
+
+    EXPECT_EQ(stream_check(Codec::Gzip, zlib_encode(plain, 15 + 16)), "crc32");
+    // Auto-detect follows the wrapper actually present.
+    EXPECT_EQ(stream_check(Codec::Zlib, zlib_encode(plain, 15 + 16)), "crc32");
+    EXPECT_EQ(stream_check(Codec::Zlib, zlib_encode(plain, 15)), "adler32");
+    // Raw deflate and LZMA-alone record nothing at all.
+    EXPECT_EQ(stream_check(Codec::Deflate, zlib_encode(plain, -15)), "none");
+    EXPECT_EQ(stream_check(Codec::Lzma, lzma_alone_encode(plain)), "none");
+    // bzip2 always carries CRC-32s, so the answer needs no input.
+    EXPECT_EQ(stream_check(Codec::Bzip2, {}), "crc32");
+    EXPECT_EQ(stream_check(Codec::Xz, xz_encode(plain)), "crc32");  // xz_encode picks CRC32
+    EXPECT_EQ(stream_check(Codec::Lz4, lz4_frame_encode(plain)), "xxh32");
+    // ZSTD_compress leaves the content checksum off by default.
+    EXPECT_EQ(stream_check(Codec::Zstd, zstd_encode(plain)), "none");
+    EXPECT_EQ(stream_check(Codec::Zstd, zstd_encode_checked(plain)), "xxh64");
+    // Bare blocks: whatever checks them is not in these bytes.
+    EXPECT_EQ(stream_check(Codec::Lzo1x, {}), "");
+    EXPECT_EQ(stream_check(Codec::Rtime, {}), "");
+    // A header too short to read is not an invitation to guess.
+    EXPECT_EQ(stream_check(Codec::Xz, Bytes{0xFD, '7', 'z'}), "");
+    EXPECT_EQ(stream_check(Codec::Zstd, Bytes{0x28, 0xB5}), "");
+}
+
+// xz names four checks in one nibble of its header; none of them is decoded.
+TEST(Compression, StreamCheckReadsEveryXzCheckId) {
+    Bytes xz = xz_encode(sample_text(4096));
+    const auto with_id = [&](std::uint8_t id) {
+        Bytes v = xz;
+        v[7] = static_cast<std::uint8_t>((v[7] & 0xF0u) | id);
+        return stream_check(Codec::Xz, v);
+    };
+    EXPECT_EQ(with_id(0x00), "none");
+    EXPECT_EQ(with_id(0x01), "crc32");
+    EXPECT_EQ(with_id(0x04), "crc64");
+    EXPECT_EQ(with_id(0x0A), "sha256");
+    EXPECT_EQ(with_id(0x07), "");  // reserved
+}
+
+// The payload decoded to its end and only the recorded check disagreed. That
+// is not the same failure as corrupt data, and the difference is worth having:
+// every byte is recovered and the caller keeps them.
+TEST(Compression, ACheckThatFailsIsNotTheSameAsCorruptData) {
+    const Bytes plain = sample_text(200000);
+
+    {  // gzip: the 8-byte trailer is CRC-32 then ISIZE.
+        Bytes gz = zlib_encode(plain, 15 + 16);
+        const std::size_t whole = gz.size();
+        gz[gz.size() - 8] ^= 0xFF;
+        Bytes out;
+        std::uint64_t consumed = 0;
+        const Status st = decompress_stream(Codec::Gzip, gz, out, 1u << 22, consumed);
+        EXPECT_FALSE(st);
+        EXPECT_EQ(st.error, "decompress-checksum-mismatch");
+        EXPECT_EQ(out, plain);       // nothing is thrown away
+        EXPECT_EQ(consumed, whole);  // and the member's extent is still exact
+    }
+    {  // zlib: a 4-byte Adler-32 trailer.
+        Bytes z = zlib_encode(plain, 15);
+        z.back() ^= 0xFF;
+        Bytes out;
+        std::uint64_t consumed = 0;
+        EXPECT_EQ(decompress_stream(Codec::Zlib, z, out, 1u << 22, consumed).error,
+                  "decompress-checksum-mismatch");
+        EXPECT_EQ(out, plain);
+    }
+    {  // zstd: the content checksum is the frame's last four bytes.
+        Bytes z = zstd_encode_checked(plain);
+        z.back() ^= 0xFF;
+        Bytes out;
+        std::uint64_t consumed = 0;
+        EXPECT_EQ(decompress_stream(Codec::Zstd, z, out, 1u << 22, consumed).error,
+                  "decompress-checksum-mismatch");
+        // Short by at most one output window: neither zstd nor lz4 reports
+        // what it wrote on the call that failed the check.
+        EXPECT_GE(out.size(), plain.size() - (64u << 10));
+        EXPECT_TRUE(std::equal(out.begin(), out.end(), plain.begin()));
+    }
+    {  // lz4 frame: likewise an xxHash32 at the end.
+        Bytes l = lz4_frame_encode(plain);
+        l.back() ^= 0xFF;
+        Bytes out;
+        std::uint64_t consumed = 0;
+        EXPECT_EQ(decompress_stream(Codec::Lz4, l, out, 1u << 22, consumed).error,
+                  "decompress-checksum-mismatch");
+        EXPECT_GE(out.size(), plain.size() - (64u << 10));
+        EXPECT_TRUE(std::equal(out.begin(), out.end(), plain.begin()));
+    }
+    {  // Wrecked deflate data is still plain corruption, not a check failure.
+        Bytes gz = zlib_encode(plain, 15 + 16);
+        std::fill(gz.begin() + 100, gz.end() - 8, 0x5A);
+        Bytes out;
+        std::uint64_t consumed = 0;
+        EXPECT_EQ(decompress_stream(Codec::Gzip, gz, out, 1u << 22, consumed).error,
+                  "decompress-corrupt");
+    }
+    {  // liblzma does not separate the two, and the code says so.
+        Bytes x = xz_encode(plain);
+        x[x.size() - 20] ^= 0xFF;
+        Bytes out;
+        std::uint64_t consumed = 0;
+        EXPECT_EQ(decompress_stream(Codec::Xz, x, out, 1u << 22, consumed).error,
+                  "decompress-corrupt");
+    }
 }
 
 }  // namespace
