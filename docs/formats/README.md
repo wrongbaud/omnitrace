@@ -38,9 +38,11 @@ readers produce, which is handled before any signature runs.
 | [elf.md](elf.md) | `elf` | `elf` (consistent) | n.a. | arch / type in attrs |
 | [luks.md](luks.md) | `luks` | `luks` (consistent) | n.a. | header fields only |
 | [verity.md](verity.md) | `dm-verity` | `verity` (consistent) | n.a. | hash-tree extent only |
+| [qnx6.md](qnx6.md) | `qnx6` | `qnx6` (verified) | `Qnx6Reader` | yes: files, metadata, snapshot history |
+| [qnx-ifs.md](qnx-ifs.md) | `qnx-ifs` | `qnx-ifs` (verified) | `QnxIfsReader` | yes: files, metadata; zlib/lzo/ucl/lz4 blocks decompressed |
 
-Plain magics without a validator (`tar`, `zip`, `7z`, `cpio`, `qnx6`,
-`qnx-ifs`, PEM / OpenSSH / PGP key blocks) are listed in
+Plain magics without a validator (`tar`, `zip`, `7z`, `cpio`,
+PEM / OpenSSH / PGP key blocks) are listed in
 [`signatures.md`](signatures.md); they stay at the `magic` tier with an
 unknown size. `yaffs2` has no signature yet.
 

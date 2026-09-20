@@ -1693,7 +1693,7 @@ void corpus_vs_debugfs(const Corpus& c) {
     // Modes and mtimes of every regular file (before the chmod that lets diff
     // read mode-0 files); uid/gid/size against debugfs stat for a sample.
     int sampled = 0;
-    int split_names = 0;  // names with a backslash: split into directories by the Sink
+    int split_names = 0;  // regular files present in our tree but absent from the reference
     for (const EntryResult& e : res.entries_out) {
         if (e.meta.kind != EntryKind::Regular) continue;
         if (std::find(refused.begin(), refused.end(), e.meta.path) != refused.end()) continue;
@@ -1724,36 +1724,17 @@ void corpus_vs_debugfs(const Corpus& c) {
     // debugfs creates fifos and sockets; DiskSink records them without creating them.
     run("find " + sq(ref.string()) + " \\( -type p -o -type s \\) -delete");
     run("chmod -R u+rX " + sq(ours.string()) + " " + sq(ref.string()));
-    // A name with a backslash (systemd's "Data\x2dmnt.mount") is split at the
-    // backslash by every Sink (portable paths), and refused names are absent
-    // from our tree, so those lines differ by design.
+    // On POSIX every name the filesystem holds is written verbatim (a
+    // backslash, a Windows device name such as "Con"), so the trees must be
+    // identical; nothing is refused or split.
+    EXPECT_TRUE(refused.empty()) << c.name << ": " << refused.size() << " refused names";
     const std::string diff = capture("diff -r --no-dereference -q " + sq(ours.string()) + " " +
                                      sq(ref.string()) + " 2>&1");
     std::istringstream lines(diff);
     std::string line;
-    while (std::getline(lines, line)) {
-        bool allowed = line.find('\\') != std::string::npos;
-        for (const std::string& r : refused)
-            allowed = allowed || line.find(r.substr(r.rfind('/') + 1)) != std::string::npos;
-        // "Only in <ours>/<dir>: <name>" where ref/<dir> holds "<name>\..." is
-        // the split half of a backslash name.
-        const std::string only = "Only in " + ours.string() + "/";
-        if (!allowed && line.rfind(only, 0) == 0) {
-            const auto colon = line.find(": ");
-            if (colon != std::string::npos) {
-                const std::string dir = line.substr(only.size(), colon - only.size());
-                const std::string name = line.substr(colon + 2) + "\\";
-                std::error_code ec;
-                for (const auto& ent : stdfs::directory_iterator(ref / dir, ec))
-                    allowed = allowed || ent.path().filename().string().rfind(name, 0) == 0;
-            }
-        }
-        EXPECT_TRUE(allowed) << c.name << ": " << line;
-    }
+    while (std::getline(lines, line)) EXPECT_TRUE(false) << c.name << ": " << line;
     EXPECT_GT(sampled, 0);
-    const std::string backslash_names =
-        capture("find " + sq(ref.string()) + " -type f -name '*\\\\*' | wc -l");
-    EXPECT_EQ(split_names, std::stoi(backslash_names)) << c.name;
+    EXPECT_EQ(split_names, 0) << c.name;
 }
 
 TEST(ExtCorpus, EmmcRootfsMatchesDebugfs) {

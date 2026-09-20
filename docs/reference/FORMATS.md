@@ -25,9 +25,9 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `ext2` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2345`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
 | `ext3` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2346`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
 | `ext4` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2347`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
-| `jffs2` | filesystem | validated to verified (`jffs2`) | yes | yes (`src/filesystems/jffs2/Jffs2Reader.cpp:1622`) | yes | mtd (comment) | [jffs2.md](../formats/jffs2.md) | one finding per partition: nodes coalesced across gaps up to `max_gap`; obsolete nodes CRC-checked; signatures: `jffs2-le`, `jffs2-be` |
-| `qnx-ifs` | filesystem | magic-only | no | no | no (no reader) | - | [signatures.md](../formats/signatures.md) (plain magic) | signatures: `qnx-ifs` |
-| `qnx6` | filesystem | magic-only | no | no | no (no reader) | `qnx6` | [signatures.md](../formats/signatures.md) (plain magic) | magic at 0x2000 with `alignment = 4096`; no validator yet; signatures: `qnx6-le`, `qnx6-be` |
+| `jffs2` | filesystem | validated to verified (`jffs2`) | yes | yes (`src/filesystems/jffs2/Jffs2Reader.cpp:1816`) | yes | mtd (comment) | [jffs2.md](../formats/jffs2.md) | one finding per partition: nodes coalesced across gaps up to `max_gap`; obsolete nodes CRC-checked; signatures: `jffs2-le`, `jffs2-be` |
+| `qnx-ifs` | filesystem | validated to verified (`qnx-ifs`) | yes | yes (`src/filesystems/qnxifs/QnxIfsReader.cpp:917`) | no | - | [qnx-ifs.md](../formats/qnx-ifs.md) | compressed images sized by walking the block chain; startup checksum reported but never lowers the tier; signatures: `qnx-ifs` |
+| `qnx6` | filesystem | validated to verified (`qnx6`) | yes | yes (`src/filesystems/qnx6/Qnx6Reader.cpp:1229`) | yes | `qnx6` | [qnx6.md](../formats/qnx6.md) | size covers both superblocks; second-superblock hits with a corrupt primary are placed at the filesystem start; signatures: `qnx6-le`, `qnx6-be` |
 | `romfs` | filesystem | validated to verified (`romfs`) | yes | no | no (no reader) | `romfs` | [romfs.md](../formats/romfs.md) | signatures: `romfs` |
 | `squashfs` | filesystem | validated to consistent (`squashfs`) | yes | yes (`src/filesystems/squashfs/SquashfsReader.cpp:1375`) | no | `squashfs` | [squashfs.md](../formats/squashfs.md) | signatures: `squashfs-le`, `squashfs-be`, `squashfs-vendor-shsq`, `squashfs-vendor-qshs` |
 | `ubifs` | filesystem | validated to verified (`ubifs`) | yes | no | no (no reader) | mtd (comment) | [ubifs.md](../formats/ubifs.md) | aligned hits only (`min_io_size` or 512); inside UBI the size is not meaningful; signatures: `ubifs` |
@@ -59,5 +59,5 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 ## Counts
 
 - 50 signatures over 35 format ids
-- 21 validators, 5 filesystem reader(s), 0 container reader(s)
+- 23 validators, 7 filesystem reader(s), 0 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

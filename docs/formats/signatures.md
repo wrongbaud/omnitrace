@@ -150,12 +150,12 @@ the object file (see `validators/anchors.h`).
 | ubifs | ubifs | verified (superblock node CRC) | `leb_size` x `leb_cnt`; aligned hits only ([ubifs.md](ubifs.md)) |
 | elf | elf | consistent | max extent of program/section headers and segments; unaligned hits must reach consistent ([elf.md](elf.md)) |
 
+| qnx6 | qnx6-le, qnx6-be | verified (superblock CRC-32) | `data_start + num_blocks x blocksize` plus the trailing superblock; `alignment = 4096` ([qnx6.md](qnx6.md)) |
+| qnx-ifs | qnx-ifs | verified (image / compressed-area checksum) | stored size, or the walked compressed block chain ([qnx-ifs.md](qnx-ifs.md)) |
+
 Plain magics (no validator) in `core.toml`: cpio (newc/crc/odc), tar (ustar at
-257), zip, 7z, QNX6 (superblock magic `0x68191122` at 0x2000 into the
-partition, both orders, `alignment = 4096` so copies inside other data are
-ignored), QNX IFS startup header, PEM certificate / key / CRL labels,
-OpenSSH and PGP keys. yaffs2 is deliberately absent until OOB-aware
-validation exists.
+257), zip, 7z, PEM certificate / key / CRL labels, OpenSSH and PGP keys.
+yaffs2 is deliberately absent until OOB-aware validation exists.
 
 `crypto.toml` holds the LUKS and dm-verity signatures. The FDT magic
 `0xd00dfeed` is claimed by two signatures: `fit-dtb` (validator `dtb`,

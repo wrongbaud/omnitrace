@@ -26,6 +26,8 @@ OMNITRACE_DECLARE_ANCHOR(cramfs)
 OMNITRACE_DECLARE_ANCHOR(android_boot)
 OMNITRACE_DECLARE_ANCHOR(ubifs)
 OMNITRACE_DECLARE_ANCHOR(elf)
+OMNITRACE_DECLARE_ANCHOR(qnx6)
+OMNITRACE_DECLARE_ANCHOR(qnx_ifs)
 
 void link_builtin_validators() {
     // Calling each (empty) anchor is enough to make the linker keep its object
@@ -50,6 +52,8 @@ void link_builtin_validators() {
     OMNITRACE_TOUCH_ANCHOR(android_boot)
     OMNITRACE_TOUCH_ANCHOR(ubifs)
     OMNITRACE_TOUCH_ANCHOR(elf)
+    OMNITRACE_TOUCH_ANCHOR(qnx6)
+    OMNITRACE_TOUCH_ANCHOR(qnx_ifs)
 }
 
 }  // namespace omnitrace::discovery::detail

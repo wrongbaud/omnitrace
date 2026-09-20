@@ -198,14 +198,18 @@ no inode node is usable), `mode` (permission bits), `uid`, `gid`, `size`
 (`isize`; 0 for directories and devices; target length for symlinks),
 `atime`, `mtime`, `ctime` (seconds; JFFS2 has no sub-second or creation
 times), `inode`, `nlink`, `link_target`, `rdev_major`/`rdev_minor`,
-`version` (the inode-node version of the state), `deleted`, `superseded`, and
-`extra`: `compression` (ids of the nodes that contribute bytes, e.g.
-`zlib,lzma`), `nodes` (inode nodes in the state), `crc` = `bad`, `obsolete` =
-`true`, `flags` (inode flags when non-zero), `xattrs` (comma-joined names:
-`user.comment,security.selinux`, `#<xid>` when the xattr node is missing),
-`dirent_version` (name-only entries), `record` = `unlink`, `parent_inode`
-(unlink records), `orphan` = `true`, `newer_than_live` = `true`,
-`versions_dropped`.
+`version` (the path-scoped version of the state, see "Version numbers"
+below; **not** the raw node version), `deleted`, `superseded`, and `extra`:
+`jffs2_version` (the raw JFFS2 version of the newest node in the state, or
+of the dirent for an unlink record), `inode_history` (comma-joined inode
+numbers of every inode that ever held the path, present only when there
+were two or more), `compression` (ids of the nodes that contribute bytes,
+e.g. `zlib,lzma`), `nodes` (inode nodes in the state), `crc` = `bad`,
+`obsolete` = `true`, `flags` (inode flags when non-zero), `xattrs`
+(comma-joined names: `user.comment,security.selinux`, `#<xid>` when the
+xattr node is missing), `dirent_version` (name-only entries), `record` =
+`unlink`, `parent_inode` (unlink records), `orphan` = `true`,
+`newer_than_live` = `true`, `versions_dropped`.
 
 `FilesystemInfo`: `endian`, `size` (end of the last node rounded up to the
 erase size), `block_size` (erase size), `compression` (codecs seen), and the
@@ -226,7 +230,8 @@ write (the kernel and mkfs.jffs2 split a single write into page-sized
 nodes). Every other node (an overwrite, a truncation, a metadata-only node,
 a later append) starts a new version. The state after each write, except
 the one the live tree shows, is emitted as an entry with the live path,
-`superseded = true`, `version` = the version of the last node in that state,
+`superseded = true`, `version` = its path-scoped version (below),
+`extra["jffs2_version"]` = the raw version of the last node in that state,
 metadata from that node, and content reconstructed from the nodes up to it.
 A rewrite with identical bytes is still a version (the write happened).
 Versions built on a CRC-failed or obsolete node are emitted with
@@ -245,6 +250,39 @@ v5 (chmod, dsize 0):
 | `etc/config/network` v3, superseded | 3 | 5000 bytes (v2 + v3 are one write) |
 | `etc/config/network` v4, superseded | 4 | 300 bytes, mode before the chmod |
 | `etc/config/network` (live) | 5 | 300 bytes, mode after the chmod |
+
+**Version numbers.** The JFFS2 node version is a per-inode counter, so two
+inodes that held the same path over time (a file deleted and recreated, a
+rename over an existing target; `network.lua` on the router corpus was inode
+429 and then inode 549, each with versions 1..7) both produce v1, v2, ... and
+`.omnitrace-versions/<path>/v<n>` would collide. `FileMeta::version` is
+therefore **path-scoped**: for each path the reader collects every state of
+every inode that ever held it (live state included) and every unlink record
+at it, orders them, and numbers them in one sequence, so `(path, version)`
+is unique across the whole walk and `DiskSink` never needs a `~1` suffix.
+
+* Order: holders by the version of the dirent that bound each of them to
+  the name when those dirents share a parent directory (the parent's dirent
+  counter is the clock of that name, so an older inode renamed over a
+  younger one at this path comes last), otherwise by inode number (JFFS2
+  allocates inode numbers monotonically, so the earlier holder has the lower
+  number); then each holder's states in node order, and an unlink record
+  right after the states of the inode it unlinked (after every holder when
+  that inode is unknown or lives under another path).
+* Numbering: a state keeps its raw JFFS2 version unless an earlier state of
+  the path already used that number or a higher one, in which case it takes
+  the next free number. A path held by one inode therefore keeps the numbers
+  `jffs2dump` shows (the common case, and what the fixtures record); a second
+  holder's versions continue after the first holder's last number.
+* The live entry carries the same path-scoped number with and without
+  `--history`, so the live tree is byte-identical in both modes; the raw
+  number is always in `extra["jffs2_version"]`, and `extra["inode_history"]`
+  lists the holders when there were several.
+
+`network.lua` on the router corpus: inode 429 (deleted) v1..v7 keep 1..7,
+its final state being the deleted entry; inode 549 v1..v7 become 8..14, of
+which 14 is the live file and 8..13 are superseded; every entry carries
+`inode_history: 429,549`.
 
 **Deleted inodes.** Every inode that has nodes but no live dirent is emitted
 with `deleted = true`: its newest state with `version` = newest node version,
@@ -274,14 +312,16 @@ same path as the live file.
 
 `WalkResult.superseded` counts entries with `superseded`, `deleted` counts
 entries with `deleted`; an earlier version of a deleted inode counts in both.
-The live part of a history walk is byte-identical to a plain walk.
+The live part of a history walk is byte-identical to a plain walk. History
+entries are emitted after the live tree, grouped by path (bytewise order)
+and by version within a path.
 
 ### Limits
 
 | Limits field | effect |
 |---|---|
-| `max_nodes_per_fs` | nodes scanned (`jffs2-limit-nodes`); also derives the versions cap |
-| `max_nodes_per_fs / 78125` (64 by default) | versions kept per inode with history; the newest are kept, `jffs2-limit-versions`, `extra["versions_dropped"]` |
+| `max_nodes_per_fs` | nodes scanned (`jffs2-limit-nodes`) |
+| `max_versions_per_entry` | history versions kept per path (every holder's states and unlink records together, the live state excluded); the newest are kept, `jffs2-limit-versions`, `extra["versions_dropped"]` on the newest kept entry |
 | `max_files` | entries emitted (`jffs2-limit-files`) |
 | `max_file_bytes` | bytes streamed per entry and the largest `dsize` decoded (`jffs2-limit-file-bytes`) |
 | `max_decompress_ratio` | `dsize / csize` a data node may claim (`jffs2-limit-decompress-ratio`) |
@@ -305,7 +345,7 @@ The live part of a history walk is byte-identical to a plain walk.
 | `jffs2-bad-entry-name` | warning | unsafe name; entry skipped |
 | `jffs2-orphan-inode` | info | inodes never named; under `lost+found/#<ino>` |
 | `jffs2-limit-nodes` / `-files` / `-file-bytes` / `-decompress-ratio` | warning | a `Limits` guard tripped; `truncated` set |
-| `jffs2-limit-versions` | warning | the per-inode history cap dropped the oldest versions; the newest are kept and the entry carries `versions_dropped`; the walk is not `truncated` (the live tree is complete) |
+| `jffs2-limit-versions` | warning | the per-path history cap (`max_versions_per_entry`) dropped the oldest versions; the newest are kept and the newest kept entry carries `versions_dropped`; the walk is not `truncated` (the live tree is complete) |
 | `jffs2-sink-error` | warning | the Sink refused an entry; skipped |
 
 `open()` fails with `jffs2-no-nodes` when no CRC-valid header exists.
@@ -330,8 +370,10 @@ The live part of a history walk is byte-identical to a plain walk.
 * Summary nodes are counted, not parsed.
 * NAND images need the OOB stripped first (ECC and cleanmarkers live there).
 * mtime of directories is captured but not applied by `DiskSink`.
-* Two deleted inodes that resolve to the same path and version collide in
-  `.omnitrace-versions`; the Sink suffixes the second (`sink-duplicate-path`).
+* Holders whose binding dirents sit under different parent inodes (a
+  directory deleted and recreated with the same name) are ordered by inode
+  number, which is allocation order, not necessarily the order in which they
+  held the path (`inode_history` and `jffs2_version` show the raw facts).
 
 ## References
 

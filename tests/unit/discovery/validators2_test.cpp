@@ -1046,7 +1046,8 @@ TEST(Signatures2, NewSignaturesAndAlignments) {
     ASSERT_NE(by_name.count("qnx6-le"), 0u);
     EXPECT_EQ(by_name["qnx6-le"]->alignment, 4096u);
     EXPECT_EQ(by_name["qnx6-be"]->alignment, 4096u);
-    EXPECT_TRUE(by_name["qnx6-le"]->validator.empty());
+    EXPECT_EQ(by_name["qnx6-le"]->validator, "qnx6");
+    EXPECT_EQ(by_name["qnx-ifs"]->validator, "qnx-ifs");
     for (const char* n : {"dtb", "fit", "verity", "luks", "romfs", "cramfs", "android-boot",
                           "ubifs", "elf", "jffs2"})
         EXPECT_NE(ValidatorRegistry::instance().find(n), nullptr) << n;

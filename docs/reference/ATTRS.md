@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-349 keys across 24 source files.
+460 keys across 28 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -313,6 +313,68 @@ Source: `src/discovery/validators/mbr.cpp` (8 keys)
 | `protective` | `src/discovery/validators/mbr.cpp:185` | true when an entry has type 0xEE |
 | `table` | `src/discovery/validators/mbr.cpp:178` | mbr-primary |
 
+## validator `qnx6`
+
+Source: `src/discovery/validators/qnx6.cpp` (20 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `atime` | `src/discovery/validators/qnx6.cpp:299` | current superblock atime (Unix seconds) |
+| `blocks_per_group` | `src/discovery/validators/qnx6.cpp:305` | allocgroup field of the current superblock |
+| `blocksize` | `src/discovery/validators/qnx6.cpp:222` | block size in bytes |
+| `ctime` | `src/discovery/validators/qnx6.cpp:298` | current superblock ctime (Unix seconds) |
+| `current_superblock` | `src/discovery/validators/qnx6.cpp:295` | which superblock is the current snapshot (primary or secondary) |
+| `data_start` | `src/discovery/validators/qnx6.cpp:225` | offset of data block 0 (0x3000 rounded up to a block) as hex |
+| `endian` | `src/discovery/validators/qnx6.cpp:226` | byte order of the on-disk structures |
+| `flags` | `src/discovery/validators/qnx6.cpp:300` | superblock flags as hex |
+| `free_blocks` | `src/discovery/validators/qnx6.cpp:304` | free data blocks per the current superblock |
+| `free_inodes` | `src/discovery/validators/qnx6.cpp:303` | free inode records per the current superblock |
+| `inode_table_size` | `src/discovery/validators/qnx6.cpp:307` | bytes of the inode table (128 per record) |
+| `longfile_size` | `src/discovery/validators/qnx6.cpp:308` | bytes of the long file name table (one name per block) |
+| `num_blocks` | `src/discovery/validators/qnx6.cpp:223` | data blocks |
+| `num_inodes` | `src/discovery/validators/qnx6.cpp:224` | inode records |
+| `root_levels` | `src/discovery/validators/qnx6.cpp:306` | levels of indirection of the inode table |
+| `second_serial` | `src/discovery/validators/qnx6.cpp:281` | serial of the other superblock |
+| `second_superblock_offset` | `src/discovery/validators/qnx6.cpp:278` | offset of the second superblock relative to the filesystem start as hex, or none |
+| `serial` | `src/discovery/validators/qnx6.cpp:297` | serial of the current superblock (higher wins) |
+| `version` | `src/discovery/validators/qnx6.cpp:301` | superblock version1.version2 |
+| `volume_id` | `src/discovery/validators/qnx6.cpp:302` | 16-byte volume id as hex |
+
+## validator `qnx-ifs`
+
+Source: `src/discovery/validators/qnx_ifs.cpp` (28 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `blocks` | `src/discovery/validators/qnx_ifs.cpp:340` | compressed blocks in the chain after the startup code (lzo/ucl/lz4) |
+| `boot_ino` | `src/discovery/validators/qnx_ifs.cpp:218` | inodes of the bootstrap executables (boot_ino[], flag bits stripped, comma-joined) |
+| `compressed` | `src/discovery/validators/qnx_ifs.cpp:150` | none, zlib, lzo, ucl, lz4 or unknown(n): the compression code in flags1 |
+| `compressed_bytes` | `src/discovery/validators/qnx_ifs.cpp:341` | bytes of compressed payload inside the blocks (lengths excluded) |
+| `dir_offset` | `src/discovery/validators/qnx_ifs.cpp:212` | image header dir_offset (first directory entry) |
+| `entries` | `src/discovery/validators/qnx_ifs.cpp:263` | directory entries counted (root included), bounded by max_dir_entries |
+| `files` | `src/discovery/validators/qnx_ifs.cpp:264` | regular-file entries among them |
+| `flags1` | `src/discovery/validators/qnx_ifs.cpp:135` | startup header flags1 (hex) |
+| `flags2` | `src/discovery/validators/qnx_ifs.cpp:136` | startup header flags2 (hex) |
+| `hdr_dir_size` | `src/discovery/validators/qnx_ifs.cpp:211` | image header hdr_dir_size (end of the directory) |
+| `image_checksum` | `src/discovery/validators/qnx_ifs.cpp:273` | ok or mismatch: u32 sum of the image filesystem |
+| `image_flags` | `src/discovery/validators/qnx_ifs.cpp:209` | image header flags (hex) |
+| `image_paddr` | `src/discovery/validators/qnx_ifs.cpp:139` | startup header image_paddr (hex) |
+| `image_size` | `src/discovery/validators/qnx_ifs.cpp:210` | image header image_size (uncompressed images) |
+| `imagefs_size` | `src/discovery/validators/qnx_ifs.cpp:144` | startup header imagefs_size (uncompressed image filesystem size) |
+| `machine` | `src/discovery/validators/qnx_ifs.cpp:147` | ELF machine name (aarch64, arm, x86_64, ...) or unknown(0x..) |
+| `mountpoint` | `src/discovery/validators/qnx_ifs.cpp:223` | default mountpoint from the image header |
+| `paddr_bias` | `src/discovery/validators/qnx_ifs.cpp:138` | startup header paddr_bias (hex) |
+| `preboot_size` | `src/discovery/validators/qnx_ifs.cpp:145` | startup header preboot_size, when non-zero |
+| `ram_paddr` | `src/discovery/validators/qnx_ifs.cpp:140` | startup header ram_paddr (hex) |
+| `ram_size` | `src/discovery/validators/qnx_ifs.cpp:141` | startup header ram_size |
+| `script` | `src/discovery/validators/qnx_ifs.cpp:219` | true when script_ino names a boot script |
+| `startup_checksum` | `src/discovery/validators/qnx_ifs.cpp:182` | ok or mismatch: u32 sum of the startup header and code |
+| `startup_size` | `src/discovery/validators/qnx_ifs.cpp:142` | startup header startup_size (header, startup code, trailer) |
+| `startup_vaddr` | `src/discovery/validators/qnx_ifs.cpp:137` | startup header startup_vaddr (hex) |
+| `stored_checksum` | `src/discovery/validators/qnx_ifs.cpp:366` | ok, mismatch or unverified: u32 sum of the compressed area |
+| `stored_size` | `src/discovery/validators/qnx_ifs.cpp:143` | startup header stored_size (the whole image as stored) |
+| `version` | `src/discovery/validators/qnx_ifs.cpp:134` | startup header version (1) |
+
 ## validator `romfs`
 
 Source: `src/discovery/validators/romfs.cpp` (3 keys)
@@ -485,27 +547,104 @@ Source: `src/filesystems/jffs2/Jffs2Reader.cpp` (21 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `cleanmarkers` | `src/filesystems/jffs2/Jffs2Reader.cpp:1567` | cleanmarker nodes seen (one per erased block on NOR) |
-| `compressors` | `src/filesystems/jffs2/Jffs2Reader.cpp:1580` | comma-joined compression ids seen on CRC-valid inode nodes (none, zero, rtime, zlib, lzo, lzma, ...) |
-| `crc_failures` | `src/filesystems/jffs2/Jffs2Reader.cpp:1574` | nodes that failed node_crc, data_crc or name_crc |
-| `dirent_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1566` | dirent nodes seen (all versions, including obsolete and unlink records) |
-| `endian` | `src/filesystems/jffs2/Jffs2Reader.cpp:1562` | little or big, from the first CRC-valid node header |
-| `erase_size` | `src/filesystems/jffs2/Jffs2Reader.cpp:1576` | erase-block size inferred from cleanmarker spacing, or unknown |
-| `first_node` | `src/filesystems/jffs2/Jffs2Reader.cpp:1563` | offset (hex) of the first CRC-valid node inside the span |
-| `inode_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1565` | inode nodes seen (all versions) |
-| `inodes_deleted` | `src/filesystems/jffs2/Jffs2Reader.cpp:1583` | inodes with nodes but no live directory entry (recoverable with --history) |
-| `inodes_live` | `src/filesystems/jffs2/Jffs2Reader.cpp:1582` | inodes reachable through live directory entries (the root counts when it has a node) |
-| `inodes_multi_version` | `src/filesystems/jffs2/Jffs2Reader.cpp:1584` | inodes with more than one distinct inode-node version |
-| `nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1564` | nodes scanned (header CRC valid) |
-| `obsolete_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1573` | nodes obsoleted in place (ACCURATE bit cleared); history only |
-| `padding_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1568` | padding nodes seen |
-| `scan_capped` | `src/filesystems/jffs2/Jffs2Reader.cpp:1585` | true when max_nodes_per_fs stopped the scan (jffs2-limit-nodes) |
-| `summary_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1569` | summary nodes seen (counted, not parsed) |
-| `unknown_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1572` | nodes of a type this reader does not decode |
-| `unlink_dirents` | `src/filesystems/jffs2/Jffs2Reader.cpp:1575` | dirents with ino 0, i.e. explicit unlink or rename-away records |
-| `xattr_count` | `src/filesystems/jffs2/Jffs2Reader.cpp:1581` | xref nodes seen (inode-to-xattr links, including retired ones) |
-| `xattr_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1570` | xattr nodes seen |
-| `xref_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1571` | xref nodes seen |
+| `cleanmarkers` | `src/filesystems/jffs2/Jffs2Reader.cpp:1753` | cleanmarker nodes seen (one per erased block on NOR) |
+| `compressors` | `src/filesystems/jffs2/Jffs2Reader.cpp:1766` | comma-joined compression ids seen on CRC-valid inode nodes (none, zero, rtime, zlib, lzo, lzma, ...) |
+| `crc_failures` | `src/filesystems/jffs2/Jffs2Reader.cpp:1760` | nodes that failed node_crc, data_crc or name_crc |
+| `dirent_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1752` | dirent nodes seen (all versions, including obsolete and unlink records) |
+| `endian` | `src/filesystems/jffs2/Jffs2Reader.cpp:1748` | little or big, from the first CRC-valid node header |
+| `erase_size` | `src/filesystems/jffs2/Jffs2Reader.cpp:1762` | erase-block size inferred from cleanmarker spacing, or unknown |
+| `first_node` | `src/filesystems/jffs2/Jffs2Reader.cpp:1749` | offset (hex) of the first CRC-valid node inside the span |
+| `inode_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1751` | inode nodes seen (all versions) |
+| `inodes_deleted` | `src/filesystems/jffs2/Jffs2Reader.cpp:1769` | inodes with nodes but no live directory entry (recoverable with --history) |
+| `inodes_live` | `src/filesystems/jffs2/Jffs2Reader.cpp:1768` | inodes reachable through live directory entries (the root counts when it has a node) |
+| `inodes_multi_version` | `src/filesystems/jffs2/Jffs2Reader.cpp:1770` | inodes with more than one distinct inode-node version |
+| `nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1750` | nodes scanned (header CRC valid) |
+| `obsolete_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1759` | nodes obsoleted in place (ACCURATE bit cleared); history only |
+| `padding_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1754` | padding nodes seen |
+| `scan_capped` | `src/filesystems/jffs2/Jffs2Reader.cpp:1771` | true when max_nodes_per_fs stopped the scan (jffs2-limit-nodes) |
+| `summary_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1755` | summary nodes seen (counted, not parsed) |
+| `unknown_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1758` | nodes of a type this reader does not decode |
+| `unlink_dirents` | `src/filesystems/jffs2/Jffs2Reader.cpp:1761` | dirents with ino 0, i.e. explicit unlink or rename-away records |
+| `xattr_count` | `src/filesystems/jffs2/Jffs2Reader.cpp:1767` | xref nodes seen (inode-to-xattr links, including retired ones) |
+| `xattr_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1756` | xattr nodes seen |
+| `xref_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1757` | xref nodes seen |
+
+## filesystem reader (`FilesystemInfo::attrs`)
+
+Source: `src/filesystems/qnx6/Qnx6Reader.cpp` (24 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `atime` | `src/filesystems/qnx6/Qnx6Reader.cpp:1167` | current superblock atime (Unix seconds) |
+| `blocks_per_group` | `src/filesystems/qnx6/Qnx6Reader.cpp:1172` | allocgroup field of the current superblock |
+| `blocksize` | `src/filesystems/qnx6/Qnx6Reader.cpp:1160` | block size in bytes |
+| `ctime` | `src/filesystems/qnx6/Qnx6Reader.cpp:1166` | current superblock ctime (Unix seconds) |
+| `current_superblock` | `src/filesystems/qnx6/Qnx6Reader.cpp:1178` | which superblock is the current snapshot (primary or secondary) |
+| `data_start` | `src/filesystems/qnx6/Qnx6Reader.cpp:1171` | offset of data block 0 as hex |
+| `endian` | `src/filesystems/qnx6/Qnx6Reader.cpp:1159` | byte order of the on-disk structures |
+| `flags` | `src/filesystems/qnx6/Qnx6Reader.cpp:1168` | superblock flags as hex |
+| `free_blocks` | `src/filesystems/qnx6/Qnx6Reader.cpp:1164` | free data blocks per the current superblock |
+| `free_inodes` | `src/filesystems/qnx6/Qnx6Reader.cpp:1163` | free inode records per the current superblock |
+| `inode_table_size` | `src/filesystems/qnx6/Qnx6Reader.cpp:1174` | bytes of the inode table |
+| `longfile_count` | `src/filesystems/qnx6/Qnx6Reader.cpp:1177` | long file names in use (non-empty records) |
+| `longfile_size` | `src/filesystems/qnx6/Qnx6Reader.cpp:1175` | bytes of the long file name table |
+| `longfile_slots` | `src/filesystems/qnx6/Qnx6Reader.cpp:1176` | records the long file name table can hold (size / blocksize) |
+| `num_blocks` | `src/filesystems/qnx6/Qnx6Reader.cpp:1161` | data blocks |
+| `num_inodes` | `src/filesystems/qnx6/Qnx6Reader.cpp:1162` | inode records |
+| `root_levels` | `src/filesystems/qnx6/Qnx6Reader.cpp:1173` | levels of indirection of the inode table |
+| `second_serial` | `src/filesystems/qnx6/Qnx6Reader.cpp:1182` | serial of the other superblock |
+| `second_superblock_offset` | `src/filesystems/qnx6/Qnx6Reader.cpp:1181` | offset of the second superblock as hex, or none |
+| `serial` | `src/filesystems/qnx6/Qnx6Reader.cpp:1165` | serial of the current superblock |
+| `superblock_crc` | `src/filesystems/qnx6/Qnx6Reader.cpp:1179` | ok or bad for the current superblock's checksum |
+| `truncated` | `src/filesystems/qnx6/Qnx6Reader.cpp:1189` | true when the claimed extent runs past the span |
+| `version` | `src/filesystems/qnx6/Qnx6Reader.cpp:1169` | superblock version1.version2 |
+| `volume_id` | `src/filesystems/qnx6/Qnx6Reader.cpp:1170` | 16-byte volume id as hex |
+
+## filesystem reader (`FilesystemInfo::attrs`)
+
+Source: `src/filesystems/qnxifs/QnxIfsReader.cpp` (39 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `blocks` | `src/filesystems/qnxifs/QnxIfsReader.cpp:858` | compressed blocks in the chain (or 1 for zlib) |
+| `boot_ino` | `src/filesystems/qnxifs/QnxIfsReader.cpp:872` | inodes of the bootstrap executables (flag bits stripped, comma-joined) |
+| `chain_paddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:874` | image header chain_paddr, when non-zero (next image) |
+| `compressed` | `src/filesystems/qnxifs/QnxIfsReader.cpp:856` | none, zlib, lzo, ucl or lz4 |
+| `compressed_bytes` | `src/filesystems/qnxifs/QnxIfsReader.cpp:859` | bytes of compressed payload |
+| `decompress_capped` | `src/filesystems/qnxifs/QnxIfsReader.cpp:861` | true when a Limits cap stopped decompression (qnx-ifs-decompress-cap) |
+| `decompress_failed` | `src/filesystems/qnxifs/QnxIfsReader.cpp:862` | true when a block did not decode (qnx-ifs-decompress-failed) |
+| `decompressed_bytes` | `src/filesystems/qnxifs/QnxIfsReader.cpp:860` | bytes of image filesystem decoded |
+| `devices` | `src/filesystems/qnxifs/QnxIfsReader.cpp:881` | device, fifo, socket and named-special entries |
+| `dir_offset` | `src/filesystems/qnxifs/QnxIfsReader.cpp:867` | image header dir_offset |
+| `dirs` | `src/filesystems/qnxifs/QnxIfsReader.cpp:879` | directory entries (root excluded) |
+| `endian` | `src/filesystems/qnxifs/QnxIfsReader.cpp:840` | little or big, from the image header flags |
+| `entries` | `src/filesystems/qnxifs/QnxIfsReader.cpp:877` | directory entries with a non-zero inode (root excluded) |
+| `files` | `src/filesystems/qnxifs/QnxIfsReader.cpp:878` | regular-file entries |
+| `flags1` | `src/filesystems/qnxifs/QnxIfsReader.cpp:844` | startup header flags1 (hex) |
+| `flags2` | `src/filesystems/qnxifs/QnxIfsReader.cpp:845` | startup header flags2 (hex) |
+| `hdr_dir_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:866` | image header hdr_dir_size |
+| `image_checksum` | `src/filesystems/qnxifs/QnxIfsReader.cpp:868` | ok or mismatch: u32 sum of the image filesystem |
+| `image_flags` | `src/filesystems/qnxifs/QnxIfsReader.cpp:864` | image header flags (hex) |
+| `image_paddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:848` | startup header image_paddr (hex) |
+| `image_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:865` | image header image_size |
+| `imagefs_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:853` | startup header imagefs_size |
+| `machine` | `src/filesystems/qnxifs/QnxIfsReader.cpp:843` | ELF machine name or unknown(0x..) |
+| `mountflags` | `src/filesystems/qnxifs/QnxIfsReader.cpp:875` | image header mountflags (hex) |
+| `mountpoint` | `src/filesystems/qnxifs/QnxIfsReader.cpp:876` | default mountpoint, when set |
+| `paddr_bias` | `src/filesystems/qnxifs/QnxIfsReader.cpp:847` | startup header paddr_bias (hex) |
+| `preboot_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:854` | startup header preboot_size, when non-zero |
+| `ram_paddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:849` | startup header ram_paddr (hex) |
+| `ram_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:850` | startup header ram_size |
+| `root_mode` | `src/filesystems/qnxifs/QnxIfsReader.cpp:884` | permission bits of the root directory entry (hex) |
+| `root_mtime` | `src/filesystems/qnxifs/QnxIfsReader.cpp:885` | mtime of the root directory entry |
+| `script_ino` | `src/filesystems/qnxifs/QnxIfsReader.cpp:873` | inode of the boot script, when set |
+| `skipped_entries` | `src/filesystems/qnxifs/QnxIfsReader.cpp:882` | entries with inode 0 (qnx-ifs-entry-skipped), when any |
+| `startup_checksum` | `src/filesystems/qnxifs/QnxIfsReader.cpp:855` | ok or mismatch: u32 sum of the startup region |
+| `startup_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:851` | startup header startup_size |
+| `startup_vaddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:846` | startup header startup_vaddr (hex) |
+| `stored_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:852` | startup header stored_size |
+| `symlinks` | `src/filesystems/qnxifs/QnxIfsReader.cpp:880` | symlink entries |
+| `version` | `src/filesystems/qnxifs/QnxIfsReader.cpp:841` | startup header version |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 

@@ -24,6 +24,7 @@ DIR/
     ├── listing.md            # same, as a table
     └── files/                # the extracted tree (unless --no-extract)
         └── .omnitrace-versions/   # superseded / deleted versions when --history recovered any
+            └── <path>/v<version>  # one file per recovered state (see "Versions")
 ```
 
 `--layout flat` writes the Phase 0 subset only: `manifest.yaml`, `summary.md`,
@@ -168,6 +169,54 @@ run-level diagnostics), the nested partition table, a **Partitions carved**
 table (`File`, `Offset`, `Size`, `Kind` as `kind/format`, `SHA-256`, `Node`,
 `Note` with `skipped: ...` for anything held back), and the coverage table.
 All of it is rendered from `INFO.yaml`; nothing is hand-edited.
+
+## filesystems/<node-id>/files
+
+The extracted tree is a faithful copy of what the filesystem shows: every
+live entry lands at its own path under `files/`, directories with owner
+`rwx` kept so extraction can continue beneath them, symlink targets stored
+verbatim and never resolved, permission bits applied without
+setuid/setgid/sticky, devices, fifos and sockets recorded in `listing.yaml`
+but not created (`sink-special-skipped`). Two entries that resolve to the
+same host name (a duplicate directory entry, a name that escapes to an
+existing one) are both kept: the second is written as `name~1`, `name~2`,
+... with `sink-duplicate-path` on it and its `host_path` in the listing.
+
+### Versions
+
+With `--history`, every superseded or deleted state a reader recovers lands
+under `files/.omnitrace-versions/<path>/v<version>`, `<path>` being the
+entry's logical path and `<version>` its `version` field, so the live tree
+above stays a faithful copy of the current filesystem and the history is a
+parallel tree an examiner can diff against it. A deleted directory's
+children keep their full path (`.omnitrace-versions/etc/old/v1`,
+`.omnitrace-versions/etc/old/conf/v1`).
+
+`version` is unique per path within one filesystem: a reader whose native
+counter is per inode (JFFS2) renumbers so that two inodes that held the
+same path over time never produce the same `v<n>` (the rule is in
+[formats/jffs2.md](formats/jffs2.md) "Version numbers"; the raw counter is
+kept in `extra`). `Limits::max_versions_per_entry` (64) caps the states kept
+per path; the newest are kept and a `<fmt>-limit-versions` diagnostic plus
+`extra.versions_dropped` say how many were left out.
+
+### Host file-name escaping
+
+A file name is evidence. No name is ever refused for being awkward on the
+examiner's machine; only a path that escapes the tree is refused
+(`sink-unsafe-path`: empty, absolute, a `..` component, a NUL byte).
+`listing.yaml` always carries the exact path the filesystem recorded.
+
+| host | what is written |
+|---|---|
+| POSIX (Linux, macOS) | every name verbatim. `/` is the only separator a reader produces; a backslash (`lib/systemd/system/Data-mnt\x2dc.mount`), a colon, a Windows device name (`etc/conf/DMTree/Root/SyncML/Con`), a trailing space or dot are ordinary bytes and land as one entry under exactly that name. |
+| Windows | each component that Win32 cannot store is rewritten: `\ : * ? " < > \|` and control bytes become `%XX` (`Data-mnt%5Cx2dc.mount`, `c%3A`), a reserved device stem (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, any case, with or without extension) gets `~res` after the stem (`Con` -> `Con~res`, `nul.log` -> `nul~res.log`), and a name ending in a space or dot gets `~` (`trailing. ` -> `trailing. ~`). The entry gets `extra.host_name` (the escaped path relative to `files/`) and an Info `sink-name-escaped`; `path` is unchanged. |
+
+The escaping is not reversible from the host name alone (`a%5Cb` may have
+been `a\b` or literally `a%5Cb`); `listing.yaml` is the record. Carved
+partition files and `filesystems/<id>` labels use the stricter
+`safe_filename_component` (every host, `_` replacement) because those names
+are ours, not evidence.
 
 ## Contract for other tools and agents
 

@@ -2,11 +2,18 @@
 //
 // Everything a hostile image can do to an extractor is a path trick: "..",
 // absolute names, a symlink planted early and written through later, two
-// entries with the same name, a device node, a name Windows refuses. The
-// platform-independent half of this file decides *what* to do with an entry
-// (normalize, version, dedupe, hash, count against Limits); the OS layer at
-// the bottom only knows how to open a directory that is really a directory
-// and create a file that did not exist a moment ago.
+// entries with the same name, a device node. The platform-independent half
+// of this file decides *what* to do with an entry (normalize, version,
+// dedupe, hash, count against Limits); the OS layer at the bottom only knows
+// how to open a directory that is really a directory and create a file that
+// did not exist a moment ago.
+//
+// Names are evidence, never a reason to drop an entry. A name the host
+// cannot store verbatim (Windows: a reserved device name, a backslash, a
+// colon, a trailing dot) is escaped on that host only, recorded in
+// extra["host_name"] with a sink-name-escaped note, and FileMeta::path in the
+// listing stays what the filesystem said. On POSIX every byte but '/' and NUL
+// is a legal file-name byte and is written as is.
 #include "omnitrace/core/Sink.h"
 
 #include <algorithm>
@@ -16,6 +23,8 @@
 #include <optional>
 #include <string_view>
 #include <utility>
+
+#include "HostNames.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -45,33 +54,6 @@ namespace {
 
 constexpr char kVersionsDir[] = ".omnitrace-versions";
 
-bool is_sep(char c) {
-    return c == '/' || c == '\\';
-}
-
-bool is_ascii_alpha(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
-
-char ascii_upper(char c) {
-    return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
-}
-
-// CON, PRN, AUX, NUL, COM1-9, LPT1-9: Windows treats these as devices in any
-// directory, with or without an extension ("CON.txt" is still the console).
-bool is_reserved_windows_name(std::string_view comp) {
-    std::string_view stem = comp.substr(0, comp.find('.'));
-    // Windows also ignores trailing spaces when matching device names.
-    while (!stem.empty() && stem.back() == ' ') stem.remove_suffix(1);
-    if (stem.size() < 3 || stem.size() > 4) return false;
-    char u[4] = {0, 0, 0, 0};
-    for (std::size_t i = 0; i < stem.size(); ++i) u[i] = ascii_upper(stem[i]);
-    const std::string_view up(u, stem.size());
-    if (up.size() == 3) return up == "CON" || up == "PRN" || up == "AUX" || up == "NUL";
-    const bool digit = up[3] >= '1' && up[3] <= '9';
-    return digit && (up.substr(0, 3) == "COM" || up.substr(0, 3) == "LPT");
-}
-
 bool reject(std::string* why, const char* reason) {
     if (why) *why = reason;
     return false;
@@ -94,13 +76,17 @@ std::vector<std::string> split_components(const std::string& path) {
 
 }  // namespace
 
+// Readers always produce POSIX-style paths, so '/' is the only separator: a
+// backslash is an ordinary file-name byte (systemd's "Data-mnt\x2dc.mount"),
+// and so are ':' and a Windows device name. What the host cannot store is the
+// host layer's problem (windows_host_component), never a reason to refuse.
+// Refused: NUL (no OS accepts it in a name), empty, a leading '/' (absolute)
+// and any ".." component (the tree boundary).
 bool normalize_entry_path(const std::string& in, std::string& out, std::string* why) {
     out.clear();
     if (in.find('\0') != std::string::npos) return reject(why, "path contains a NUL byte");
     if (in.empty()) return reject(why, "empty path");
-    if (is_sep(in[0])) return reject(why, "absolute path (leading separator or UNC prefix)");
-    if (in.size() >= 2 && is_ascii_alpha(in[0]) && in[1] == ':')
-        return reject(why, "Windows drive prefix");
+    if (in[0] == '/') return reject(why, "absolute path (leading '/')");
 
     std::vector<std::string> comps;
     std::string cur;
@@ -115,7 +101,7 @@ bool normalize_entry_path(const std::string& in, std::string& out, std::string* 
         return true;
     };
     for (const char c : in) {
-        if (is_sep(c)) {
+        if (c == '/') {
             if (!flush()) return reject(why, "parent-directory reference (\"..\")");
         } else {
             cur.push_back(c);
@@ -123,12 +109,6 @@ bool normalize_entry_path(const std::string& in, std::string& out, std::string* 
     }
     if (!flush()) return reject(why, "parent-directory reference (\"..\")");
     if (comps.empty()) return reject(why, "path has no components");
-
-    for (const std::string& comp : comps) {
-        if (comp.size() >= 2 && is_ascii_alpha(comp[0]) && comp[1] == ':')
-            return reject(why, "Windows drive prefix");
-        if (is_reserved_windows_name(comp)) return reject(why, "reserved Windows device name");
-    }
 
     std::string joined;
     for (std::size_t i = 0; i < comps.size(); ++i) {
@@ -138,6 +118,37 @@ bool normalize_entry_path(const std::string& in, std::string& out, std::string* 
     out = std::move(joined);
     return true;
 }
+
+namespace detail {
+
+std::string windows_host_component(std::string_view comp) {
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(comp.size() + 4);
+    for (const char c : comp) {
+        const auto b = static_cast<unsigned char>(c);
+        const bool illegal = c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' ||
+                             c == '<' || c == '>' || c == '|' || b < 0x20;
+        if (!illegal) {
+            out.push_back(c);
+            continue;
+        }
+        out.push_back('%');
+        out.push_back(kHex[b >> 4]);
+        out.push_back(kHex[b & 0x0Fu]);
+    }
+    // A device name is matched on the stem, so the marker goes after the stem
+    // ("CON.txt~res" would still be the console; "CON~res.txt" is a file).
+    if (is_windows_reserved_name(out)) {
+        const std::size_t dot = out.find('.');
+        out.insert(dot == std::string::npos ? out.size() : dot, "~res");
+    }
+    // Win32 strips trailing dots and spaces, so "a." and "a" would collide.
+    if (!out.empty() && (out.back() == '.' || out.back() == ' ')) out.push_back('~');
+    return out;
+}
+
+}  // namespace detail
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -169,6 +180,47 @@ bool is_historical(const FileMeta& m) {
 std::string placement_path(const FileMeta& m, const std::string& normalized) {
     if (!is_historical(m)) return normalized;
     return std::string(kVersionsDir) + "/" + normalized + "/v" + std::to_string(m.version);
+}
+
+// The components DiskSink actually creates for placement path `rel`. On POSIX
+// they are the components themselves. On Windows each one goes through
+// windows_host_component; when any changed, `host_rel` differs from `rel`,
+// `extra["host_name"]` records it and an Info diagnostic says so. The logical
+// path (FileMeta::path) is never touched.
+struct HostPlacement {
+    std::vector<std::string> comps;
+    std::string host_rel;
+};
+
+HostPlacement host_placement(const std::string& rel, std::map<std::string, std::string>& extra,
+                             std::vector<Diagnostic>& diags) {
+    HostPlacement hp;
+    hp.comps = split_components(rel);
+    hp.host_rel = rel;
+#ifdef _WIN32
+    bool changed = false;
+    for (std::string& c : hp.comps) {
+        std::string h = detail::windows_host_component(c);
+        if (h != c) changed = true;
+        c = std::move(h);
+    }
+    if (changed) {
+        std::string joined;
+        for (std::size_t i = 0; i < hp.comps.size(); ++i) {
+            if (i) joined.push_back('/');
+            joined += hp.comps[i];
+        }
+        hp.host_rel = joined;
+        extra["host_name"] = hp.host_rel;
+        diags.push_back({Severity::Info, "sink-name-escaped",
+                         "'" + rel + "' is not a valid Windows file name; written as '" +
+                             hp.host_rel + "' (listing path unchanged)"});
+    }
+#else
+    (void)extra;
+    (void)diags;
+#endif
+    return hp;
 }
 
 // Limit checks shared by both sinks. `chunk` is trimmed to what the limits
@@ -717,23 +769,23 @@ Status DiskSink::begin_file(const FileMeta& meta) {
     }
 
     const std::string rel = placement_path(meta, norm);
-    const std::vector<std::string> comps = split_components(rel);
+    const HostPlacement hp = host_placement(rel, cur.meta.extra, cur.diagnostics);
     DirRef parent;
     std::string leaf;
-    if (Status s = open_parent(im.root, comps, parent, leaf); !s) {
+    if (Status s = open_parent(im.root, hp.comps, parent, leaf); !s) {
         im.cur.reset();
         return s;
     }
 
     std::string used;
     Status s = im.create_unique(
-        rel, leaf,
+        hp.host_rel, leaf,
         [&](const std::string& name, std::string& detail) {
             return create_new_file(parent, name, cur.file, detail);
         },
         used, cur.diagnostics);
     if (s) {
-        cur.rel = rel.substr(0, rel.size() - leaf.size()) + used;
+        cur.rel = hp.host_rel.substr(0, hp.host_rel.size() - leaf.size()) + used;
         if (im.opts.preserve_mode) apply_mode(cur.file, parent, used, meta.mode);
     } else {
         im.cur.reset();
@@ -843,11 +895,11 @@ Status DiskSink::entry(const FileMeta& meta, EntryResult& out) {
     }
 
     const std::string rel = placement_path(meta, norm);
-    const std::vector<std::string> comps = split_components(rel);
+    const HostPlacement hp = host_placement(rel, out.meta.extra, out.diagnostics);
 
     if (meta.kind == EntryKind::Directory) {
         DirRef cur = im.root;
-        for (const std::string& comp : comps) {
+        for (const std::string& comp : hp.comps) {
             DirRef next;
             Status s = enter_subdir(cur, comp, next);
             close_dir(cur, im.root);
@@ -857,19 +909,29 @@ Status DiskSink::entry(const FileMeta& meta, EntryResult& out) {
         if (im.opts.preserve_mode)
             apply_dir_attrs(cur, meta.mode, meta.mtime, meta.mtime_nsec.value_or(0));
         close_dir(cur, im.root);
-        out.host_path = host_path_of(im.root_path, rel);
+        out.host_path = host_path_of(im.root_path, hp.host_rel);
         out.written = true;
         return finish(Status::success());
     }
 
-    // Symlink: the target is stored verbatim and never resolved by us.
+    // Symlink: the target is stored verbatim and never resolved by us. An
+    // empty target, or one holding a NUL byte (a deleted record whose data
+    // block was reused or zeroed), can be created on no host: symlinkat sees
+    // "" and fails with ENOENT. Such an entry is recorded, not written.
+    if (meta.link_target.empty() || meta.link_target.find('\0') != std::string::npos) {
+        out.diagnostics.push_back(
+            {Severity::Warning, "sink-symlink-bad-target",
+             "symlink '" + norm +
+                 "' has an empty target or one with a NUL byte; recorded but not created"});
+        return finish(Status::success());
+    }
     DirRef parent;
     std::string leaf;
-    if (Status s = open_parent(im.root, comps, parent, leaf); !s) return s;
+    if (Status s = open_parent(im.root, hp.comps, parent, leaf); !s) return s;
     bool unsupported = false;
     std::string used;
     Status s = im.create_unique(
-        rel, leaf,
+        hp.host_rel, leaf,
         [&](const std::string& name, std::string& detail) {
             const int rc = create_symlink(parent, name, meta.link_target, detail);
             if (rc == 2) {
@@ -887,8 +949,8 @@ Status DiskSink::entry(const FileMeta& meta, EntryResult& out) {
         } else {
             if (im.opts.preserve_times && meta.mtime)
                 apply_symlink_mtime(parent, used, *meta.mtime, meta.mtime_nsec.value_or(0));
-            out.host_path =
-                host_path_of(im.root_path, rel.substr(0, rel.size() - leaf.size()) + used);
+            out.host_path = host_path_of(
+                im.root_path, hp.host_rel.substr(0, hp.host_rel.size() - leaf.size()) + used);
             out.written = true;
         }
     }

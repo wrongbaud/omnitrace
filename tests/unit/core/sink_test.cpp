@@ -18,6 +18,13 @@
 #include <unistd.h>
 #endif
 
+// Internal helpers from src/core/HostNames.h (not a public header): declared
+// here so the Windows branch of DiskSink's naming is testable on every host.
+namespace omnitrace::detail {
+bool is_windows_reserved_name(std::string_view name);
+std::string windows_host_component(std::string_view comp);
+}  // namespace omnitrace::detail
+
 namespace omnitrace {
 namespace {
 
@@ -101,20 +108,37 @@ TEST(NormalizePath, Accepts) {
     EXPECT_EQ(out, "a");
     EXPECT_TRUE(normalize_entry_path("a/b/", out));
     EXPECT_EQ(out, "a/b");
+    // A backslash is a file-name byte, never a separator: readers produce
+    // POSIX paths (systemd's "Data-mnt\x2dc.mount" is one file).
     EXPECT_TRUE(normalize_entry_path("a\\b\\c", out));
-    EXPECT_EQ(out, "a/b/c");
+    EXPECT_EQ(out, "a\\b\\c");
+    EXPECT_TRUE(normalize_entry_path("lib/systemd/system/Data-mnt\\x2dc.mount", out));
+    EXPECT_EQ(out, "lib/systemd/system/Data-mnt\\x2dc.mount");
+    EXPECT_TRUE(normalize_entry_path("..\\x", out));  // not a ".." component
+    EXPECT_EQ(out, "..\\x");
+    EXPECT_TRUE(normalize_entry_path("\\x", out));
+    EXPECT_EQ(out, "\\x");
+    EXPECT_TRUE(normalize_entry_path("\\\\server\\share", out));
+    EXPECT_EQ(out, "\\\\server\\share");
     EXPECT_TRUE(normalize_entry_path("..a/b..", out));
     EXPECT_EQ(out, "..a/b..");
     EXPECT_TRUE(normalize_entry_path("...", out));
     EXPECT_EQ(out, "...");
-    // Look-alikes of reserved names are fine.
-    EXPECT_TRUE(normalize_entry_path("console", out));
-    EXPECT_TRUE(normalize_entry_path("COM0", out));
-    EXPECT_TRUE(normalize_entry_path("COM10", out));
-    EXPECT_TRUE(normalize_entry_path("nullify.txt", out));
-    EXPECT_TRUE(normalize_entry_path("lpt", out));
-    EXPECT_TRUE(
-        normalize_entry_path("ab:cd", out));  // not a drive prefix: two chars before the colon
+    // Windows reserved device names and drive-like prefixes are legal POSIX
+    // names (etc/conf/DMTree/Root/SyncML/Con on a real rootfs, wine's
+    // dosdevices/c:); the host layer escapes them where needed.
+    const char* legal[] = {"CON",        "con",     "CON.txt", "Con.tar.gz",  "PRN",    "AUX",
+                           "NUL",        "nul.log", "COM1",    "com9.dat",    "LPT1",   "lpt9",
+                           "dir/COM3/x", "NUL ",    "C:x",     "a:b",         "a/C:/x", "c:/x",
+                           "console",    "COM0",    "COM10",   "nullify.txt", "lpt",    "ab:cd",
+                           "trailing. ", "dot."};
+    for (const char* p : legal) {
+        EXPECT_TRUE(normalize_entry_path(p, out)) << p;
+    }
+    EXPECT_TRUE(normalize_entry_path("dir/COM3/x", out));
+    EXPECT_EQ(out, "dir/COM3/x");
+    EXPECT_TRUE(normalize_entry_path("c:/x", out));
+    EXPECT_EQ(out, "c:/x");
     // Non-ASCII bytes pass through untouched.
     EXPECT_TRUE(normalize_entry_path("caf\xc3\xa9/\xe6\x97\xa5", out));
     EXPECT_EQ(out, "caf\xc3\xa9/\xe6\x97\xa5");
@@ -123,38 +147,8 @@ TEST(NormalizePath, Accepts) {
 TEST(NormalizePath, Rejects) {
     std::string out, why;
     const char* bad[] = {
-        "../x",
-        "a/../b",
-        "a/..",
-        "..",
-        "/etc/passwd",
-        "//server/share",
-        "\\\\server\\share",
-        "\\x",
-        "C:\\x",
-        "c:/x",
-        "C:x",
-        "a:b",
-        "a/C:/x",
-        "",
-        ".",
-        "./",
-        "././",
-        "CON",
-        "con",
-        "CON.txt",
-        "Con.tar.gz",
-        "PRN",
-        "AUX",
-        "NUL",
-        "nul.log",
-        "COM1",
-        "com9.dat",
-        "LPT1",
-        "lpt9",
-        "dir/COM3/x",
-        "NUL ",
-        "..\\x",
+        "../x", "a/../b", "a/..", "..",   "/etc/passwd", "//server/share", "/",
+        "",     ".",      "./",   "././", "./..",        "a/./../b",
     };
     for (const char* p : bad) {
         why.clear();
@@ -260,7 +254,7 @@ TEST(DiskSink, RefusesTraversalAndAbsolute) {
         tmp.path().parent_path() / (tmp.path().filename().string() + "-outside");
     fs::create_directories(outside);
     auto sink = open_sink(tmp.path() / "root");
-    const char* bad[] = {"../x", "a/../../x", "/etc/passwd", "C:\\x", "CON", "..\\x"};
+    const char* bad[] = {"../x", "a/../../x", "/etc/passwd", "/", "./.."};
     for (const char* p : bad) {
         const Status s = sink->begin_file(regular(p));
         EXPECT_FALSE(s.ok) << p;
@@ -281,6 +275,58 @@ TEST(DiskSink, RefusesTraversalAndAbsolute) {
     EXPECT_FALSE(fs::exists(tmp.path() / "escaped-dir"));
     EXPECT_EQ(sink->files_emitted(), 0u);
     fs::remove_all(outside);
+}
+
+// The names a real infotainment rootfs had that an earlier DiskSink dropped:
+// a directory named Con, device names, a trailing-space name and a systemd
+// unit with a backslash. POSIX stores all of them verbatim, the listing
+// keeps the exact paths, and nothing is escaped or flagged.
+TEST(DiskSink, PosixWritesReservedAndBackslashNamesVerbatim) {
+    TempDir tmp;
+    auto sink = open_sink(tmp.path());
+    EntryResult r;
+    FileMeta d;
+    d.path = "etc/conf/DMTree/Root/SyncML/Con";
+    d.kind = EntryKind::Directory;
+    ASSERT_TRUE(sink->entry(d, r).ok);
+    EXPECT_TRUE(fs::is_directory(tmp.path() / "etc/conf/DMTree/Root/SyncML/Con"));
+    EXPECT_EQ(r.meta.path, d.path);
+    EXPECT_TRUE(r.diagnostics.empty());
+    EXPECT_EQ(r.meta.extra.count("host_name"), 0u);
+
+    const char* names[] = {"etc/conf/DMTree/Root/SyncML/Con/con.txt",
+                           "NUL",
+                           "dev/COM1",
+                           "trailing. ",
+                           "lib/systemd/system/Data-mnt\\x2dc.mount",
+                           "a\\b",
+                           "wine/dosdevices/c:",
+                           "LPT9.log",
+                           "dot."};
+    std::uint64_t n = 1;
+    for (const char* name : names) {
+        FileMeta m = regular(name);
+        const Status s = sink->file(m, bytes_of("x"), r);
+        ASSERT_TRUE(s.ok) << name << ": " << s.error;
+        EXPECT_TRUE(r.written) << name;
+        EXPECT_EQ(r.meta.path, name);
+        EXPECT_EQ(r.host_path, (tmp.path() / name).string()) << name;
+        EXPECT_EQ(slurp(tmp.path() / name), "x") << name;
+        EXPECT_TRUE(r.diagnostics.empty()) << name;
+        EXPECT_EQ(r.meta.extra.count("host_name"), 0u) << name;
+        EXPECT_EQ(sink->files_emitted(), ++n);
+    }
+    // The backslash name is one file, not a directory plus a file.
+    EXPECT_FALSE(fs::exists(tmp.path() / "lib/systemd/system/Data-mnt"));
+    EXPECT_FALSE(fs::exists(tmp.path() / "a"));
+    EXPECT_TRUE(fs::is_regular_file(tmp.path() / "a\\b"));
+    // Historical versions of such names land under .omnitrace-versions verbatim.
+    FileMeta v = regular("NUL");
+    v.superseded = true;
+    v.version = 2;
+    ASSERT_TRUE(sink->file(v, bytes_of("old"), r).ok);
+    EXPECT_EQ(slurp(tmp.path() / ".omnitrace-versions/NUL/v2"), "old");
+    EXPECT_EQ(r.meta.path, "NUL");
 }
 
 TEST(DiskSink, RefusesWritingThroughPlantedSymlink) {
@@ -565,6 +611,28 @@ TEST(DiskSink, SymlinkTargetVerbatimWithTime) {
     EXPECT_EQ(r.meta.link_target, l.link_target);
 }
 
+TEST(DiskSink, BadSymlinkTargetIsRecordedNotCreated) {
+    TempDir tmp;
+    auto sink = open_sink(tmp.path());
+    // Empty, and NUL-leading (symlinkat would see "" and fail with ENOENT):
+    // the storage corpus holds a deleted record exactly like the second.
+    const std::string targets[] = {std::string(), std::string("\0\0abc", 5)};
+    int i = 0;
+    for (const std::string& t : targets) {
+        FileMeta l;
+        l.path = "lost+found/#4238" + std::to_string(i++);
+        l.kind = EntryKind::Symlink;
+        l.link_target = t;
+        EntryResult r;
+        ASSERT_TRUE(sink->entry(l, r).ok) << t.size();
+        EXPECT_FALSE(r.written);
+        EXPECT_FALSE(fs::exists(tmp.path() / l.path));
+        ASSERT_EQ(r.diagnostics.size(), 1u);
+        EXPECT_EQ(r.diagnostics[0].code, "sink-symlink-bad-target");
+        EXPECT_EQ(r.meta.link_target, t);
+    }
+}
+
 TEST(DiskSink, ProtocolMisuse) {
     TempDir tmp;
     auto sink = open_sink(tmp.path());
@@ -652,6 +720,63 @@ TEST(DiskSink, OutputIsDeterministic) {
 #endif  // !_WIN32
 
 // ---------------------------------------------------------------------------
+// Windows host-name escaping (the branch DiskSink takes under _WIN32)
+// ---------------------------------------------------------------------------
+
+TEST(HostNames, WindowsReservedNames) {
+    const char* reserved[] = {"CON",  "con",  "Con",      "CON.txt", "Con.tar.gz", "PRN",
+                              "AUX",  "NUL",  "nul",      "nul.log", "NUL ",       "NUL  .txt",
+                              "COM1", "com9", "com9.dat", "LPT1",    "lpt9",       "LPT9.log"};
+    for (const char* n : reserved) EXPECT_TRUE(detail::is_windows_reserved_name(n)) << n;
+    const char* plain[] = {"",     "CO",   "CONS",    "console",     "COM0",   "COM10",
+                           "COM",  "LPT",  "lpt0",    "nullify.txt", "config", "aux1",
+                           "prn_", " CON", "CON~res", ".CON",        "x.CON"};
+    for (const char* n : plain) EXPECT_FALSE(detail::is_windows_reserved_name(n)) << n;
+}
+
+TEST(HostNames, WindowsHostComponent) {
+    using detail::windows_host_component;
+    // Untouched: ordinary names, dots inside, spaces inside, non-ASCII, '%'.
+    for (const char* n : {"file.txt", "a b", "a.b.c", ".hidden", "..a", "caf\xc3\xa9", "100%",
+                          "a%5Cb", "CON~res", "console", "COM10"}) {
+        EXPECT_EQ(windows_host_component(n), n) << n;
+    }
+    // Reserved device stems get ~res after the stem, before any extension.
+    EXPECT_EQ(windows_host_component("CON"), "CON~res");
+    EXPECT_EQ(windows_host_component("con"), "con~res");
+    EXPECT_EQ(windows_host_component("Con"), "Con~res");
+    EXPECT_EQ(windows_host_component("con.txt"), "con~res.txt");
+    EXPECT_EQ(windows_host_component("Con.tar.gz"), "Con~res.tar.gz");
+    EXPECT_EQ(windows_host_component("NUL"), "NUL~res");
+    EXPECT_EQ(windows_host_component("COM1"), "COM1~res");
+    EXPECT_EQ(windows_host_component("LPT9.log"), "LPT9~res.log");
+    EXPECT_EQ(windows_host_component("NUL "), "NUL ~res");
+    // Illegal characters become %XX (uppercase hex); '/' never reaches here.
+    EXPECT_EQ(windows_host_component("a\\b"), "a%5Cb");
+    EXPECT_EQ(windows_host_component("Data-mnt\\x2dc.mount"), "Data-mnt%5Cx2dc.mount");
+    EXPECT_EQ(windows_host_component("c:"), "c%3A");
+    EXPECT_EQ(windows_host_component("a*b?c\"d<e>f|g"), "a%2Ab%3Fc%22d%3Ce%3Ef%7Cg");
+    EXPECT_EQ(windows_host_component("tab\there"), "tab%09here");
+    EXPECT_EQ(windows_host_component("\x01\x1f"), "%01%1F");
+    EXPECT_EQ(windows_host_component("\x7f"), "\x7f");  // DEL is legal on NTFS
+    // Trailing dot or space gets a ~ so it does not collide with the bare name.
+    EXPECT_EQ(windows_host_component("trailing. "), "trailing. ~");
+    EXPECT_EQ(windows_host_component("dot."), "dot.~");
+    EXPECT_EQ(windows_host_component("space "), "space ~");
+    EXPECT_EQ(windows_host_component("both.."), "both..~");
+    EXPECT_EQ(windows_host_component("..."), "...~");
+    // Combined: escaping first, then the stem check on the escaped name.
+    EXPECT_EQ(windows_host_component("NUL:x"), "NUL%3Ax");  // stem is "NUL%3Ax", not NUL
+    EXPECT_EQ(windows_host_component("CON."), "CON~res.~");
+    EXPECT_EQ(windows_host_component("con\\x.txt"), "con%5Cx.txt");
+    // Idempotent on its own output.
+    for (const char* n : {"CON", "a\\b", "trailing. ", "con.txt", "NUL:x", "CON."}) {
+        const std::string once = windows_host_component(n);
+        EXPECT_EQ(windows_host_component(once), once) << n;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ListingSink
 // ---------------------------------------------------------------------------
 
@@ -706,13 +831,15 @@ TEST(ListingSink, HashingOff) {
 
 TEST(ListingSink, RefusesUnsafePathsAndEnforcesLimits) {
     Limits lim;
-    lim.max_files = 2;
+    lim.max_files = 3;
     lim.max_file_bytes = 3;
     ListingSink sink(true, lim);
-    EXPECT_EQ(sink.limits().max_files, 2u);
+    EXPECT_EQ(sink.limits().max_files, 3u);
     EntryResult r;
     Status s = sink.begin_file(regular("../x"));
     EXPECT_TRUE(starts_with(s.error, "sink-unsafe-path")) << s.error;
+    ASSERT_TRUE(sink.file(regular("CON"), bytes_of(""), r).ok);  // legal; listing keeps it
+    EXPECT_EQ(r.meta.path, "CON");
     s = sink.file(regular("big"), bytes_of("abcdef"), r);
     EXPECT_TRUE(starts_with(s.error, "sink-limit-file-bytes")) << s.error;
     EXPECT_TRUE(r.truncated);
@@ -725,8 +852,8 @@ TEST(ListingSink, RefusesUnsafePathsAndEnforcesLimits) {
     d.path = "d";
     d.kind = EntryKind::Directory;
     EXPECT_TRUE(starts_with(sink.entry(d, r).error, "sink-limit-files"));
-    EXPECT_EQ(sink.entries().size(), 2u);
-    EXPECT_EQ(sink.files_emitted(), 2u);
+    EXPECT_EQ(sink.entries().size(), 3u);
+    EXPECT_EQ(sink.files_emitted(), 3u);
     EXPECT_EQ(sink.bytes_emitted(), 5u);
     EXPECT_TRUE(starts_with(sink.write(bytes_of("x")).error, "sink-protocol"));
 }

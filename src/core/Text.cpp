@@ -13,6 +13,8 @@
 #include <cstddef>
 #include <string_view>
 
+#include "HostNames.h"
+
 namespace omnitrace {
 
 namespace {
@@ -151,28 +153,28 @@ constexpr bool is_reserved_filename_char(std::uint8_t c) {
            c == '>' || c == '|' || c < 0x20 || c == 0x7F;
 }
 
-// Windows reserved device names, matched case-insensitively on the stem
-// (the part before the first '.'), because "CON.txt" is just as unusable.
-bool is_windows_reserved(std::string_view name) {
-    static constexpr std::string_view kNames[] = {
-        "CON",  "PRN",  "AUX",  "NUL",  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
-        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"};
-    const std::size_t dot = name.find('.');
-    const std::string_view stem = dot == std::string_view::npos ? name : name.substr(0, dot);
-    for (const std::string_view r : kNames) {
-        if (stem.size() != r.size()) continue;
-        bool same = true;
-        for (std::size_t i = 0; i < r.size() && same; ++i) {
-            char c = stem[i];
-            if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
-            same = c == r[i];
-        }
-        if (same) return true;
+}  // namespace
+
+namespace detail {
+
+// Windows treats these as devices in any directory, with or without an
+// extension ("CON.txt" is still the console) and ignoring trailing spaces.
+bool is_windows_reserved_name(std::string_view name) {
+    std::string_view stem = name.substr(0, name.find('.'));
+    while (!stem.empty() && stem.back() == ' ') stem.remove_suffix(1);
+    if (stem.size() < 3 || stem.size() > 4) return false;
+    char u[4] = {0, 0, 0, 0};
+    for (std::size_t i = 0; i < stem.size(); ++i) {
+        const char c = stem[i];
+        u[i] = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
     }
-    return false;
+    const std::string_view up(u, stem.size());
+    if (up.size() == 3) return up == "CON" || up == "PRN" || up == "AUX" || up == "NUL";
+    const bool digit = up[3] >= '1' && up[3] <= '9';
+    return digit && (up.substr(0, 3) == "COM" || up.substr(0, 3) == "LPT");
 }
 
-}  // namespace
+}  // namespace detail
 
 std::string sanitize_utf8(std::string_view in) {
     return sanitize_bytes(reinterpret_cast<const std::uint8_t*>(in.data()), in.size());
@@ -237,7 +239,7 @@ std::string safe_filename_component(std::string_view in, std::size_t max_len) {
     trim_utf8(s, max_len);
     // Trailing dots and spaces are stripped by Win32 and make "a." collide with "a".
     while (!s.empty() && (s.back() == '.' || s.back() == ' ')) s.pop_back();
-    if (is_windows_reserved(s)) {
+    if (detail::is_windows_reserved_name(s)) {
         if (max_len > 0 && s.size() >= max_len) trim_utf8(s, max_len - 1);
         s.push_back('_');
     }

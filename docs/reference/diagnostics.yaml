@@ -418,8 +418,8 @@ jffs2-limit-nodes:
   action: raise max_nodes_per_fs for a partition with millions of nodes
 
 jffs2-limit-versions:
-  meaning: an inode had more history versions than the per-inode cap (max_nodes_per_fs / 78125); the oldest were dropped
-  action: raise max_nodes_per_fs; the newest versions were kept and the entry carries extra versions_dropped; the walk itself is not truncated
+  meaning: a path had more history versions (all inodes that ever held it, unlink records included) than Limits::max_versions_per_entry; the oldest were dropped
+  action: raise max_versions_per_entry; the newest versions were kept and the newest kept entry carries extra versions_dropped; the walk itself is not truncated
 
 jffs2-missing-inode:
   meaning: a live dirent names an inode that has no usable inode node; the entry was emitted from the dirent alone (type, name, mctime)
@@ -557,6 +557,190 @@ partition-truncated:
   meaning: the entry extends past the end of the data; clamped (claimed_size keeps the original)
   action: the dump is short; the partition is partial
 
+qnx-ifs-bad-compressed-block:
+  meaning: the first compressed block of an IFS has a zero length or runs past the data, or a zlib image has no gzip stream at startup_size
+  action: the startup header is real but the payload is not where it says; carve from startup_size and inspect
+
+qnx-ifs-bad-header:
+  meaning: open() found no valid startup header (signature, version 1, header_size 256, sane startup_size)
+  action: the finding was noise or the header is corrupt; nothing was walked
+
+qnx-ifs-bad-image-header:
+  meaning: dir_offset, hdr_dir_size and image_size of the image filesystem header are not nested
+  action: the image header is corrupt; carve the image and inspect the directory by hand
+
+qnx-ifs-bad-startup-size:
+  meaning: startup_size is below 256, unaligned or larger than stored_size
+  action: the header is corrupt or patched; the finding stays at magic tier
+
+qnx-ifs-decompress-cap:
+  meaning: max_file_bytes or max_decompress_ratio stopped the decompression of the image filesystem; the prefix was kept
+  action: raise --max-bytes / max_decompress_ratio if the directory or files are cut
+
+qnx-ifs-decompress-failed:
+  meaning: a compressed block of the image filesystem did not decode; the image is cut there
+  action: the block is corrupt or uses a variant this decoder does not know; compare with dumpifs
+
+qnx-ifs-dirent-corrupt:
+  meaning: a directory entry has a bad size, no NUL-terminated path, an unknown type or a symlink target outside the entry
+  action: entries after a bad size were not read; carve the image and inspect the directory
+
+qnx-ifs-entry-skipped:
+  meaning: a directory entry has inode 0, which mkifs defines as an entry to skip
+  action: informational; the entry is counted in skipped_entries
+
+qnx-ifs-file-out-of-range:
+  meaning: a file's data range lies past the end of the image data; the prefix inside it was recovered
+  action: the entry is truncated; the image is cut (decompression stopped early) or the entry is corrupt
+
+qnx-ifs-image-checksum-bad:
+  meaning: the image filesystem does not sum to zero, or is truncated so the sum cannot be checked
+  action: the image was modified or cut after mkifs; treat the contents as unverified
+
+qnx-ifs-image-truncated:
+  meaning: hdr_dir_size or image_size extends past the available image data, or the compressed block chain has no terminator
+  action: the directory or the data is cut; check whether the partition slice was complete
+
+qnx-ifs-limit-blocks:
+  meaning: more than max_blocks compressed blocks (validator TOML key) or more than max_nodes_per_fs (reader); the chain walk stopped and the decompressed image is cut there
+  action: raise max_blocks on the signature, or max_nodes_per_fs for the reader, for a very large image
+
+qnx-ifs-limit-file-bytes:
+  meaning: max_file_bytes reached while streaming one file; the rest was dropped
+  action: raise --max-bytes for the large file
+
+qnx-ifs-limit-files:
+  meaning: max_files reached; the rest of the directory was not emitted
+  action: raise --max-files
+
+qnx-ifs-limit-nodes:
+  meaning: max_nodes_per_fs directory entries parsed; the rest of the directory was not read
+  action: raise max_nodes_per_fs for an image with millions of entries
+
+qnx-ifs-no-image-header:
+  meaning: no "imagefs" signature at startup_size (after decompression when compressed)
+  action: the payload is not an image filesystem, is compressed with an unknown scheme, or decompression produced nothing
+
+qnx-ifs-not-open:
+  meaning: walk() was called before a successful open() (caller bug)
+  action: contributor error; analyze() never does this
+
+qnx-ifs-sink-error:
+  meaning: the Sink refused an entry (unsafe path, limit, I/O error); the entry was skipped
+  action: see the message for the sink code; a path with .. or a leading slash is evidence of tampering
+
+qnx-ifs-startup-checksum-bad:
+  meaning: the startup header and code do not sum to zero; the message says when the residual is flags2 alone
+  action: expected on shipped images (flags2 or info[] patched after mkifs); a residual that is not flags2 means the startup code was modified
+
+qnx-ifs-stored-checksum-bad:
+  meaning: the compressed area of an IFS does not sum to zero
+  action: the image was modified or cut after mkifs; the reader still decodes what it can
+
+qnx-ifs-stored-size-mismatch:
+  meaning: stored_size disagrees with the structures (startup_size + image_size, or the compressed block chain)
+  action: informational; the structures win
+
+qnx-ifs-truncated:
+  meaning: startup_size, image_size or the compressed block chain extends past the available data
+  action: the slice is incomplete; carve a larger range
+
+qnx-ifs-truncated-header:
+  meaning: fewer than 64 bytes follow the startup magic
+  action: a magic at the very end of the data; nothing to validate
+
+qnx-ifs-unknown-machine:
+  meaning: the startup header machine field is not an ELF machine QNX Neutrino runs on
+  action: a new port or a corrupt field; the attr shows the raw value
+
+qnx-ifs-unsupported-compression:
+  meaning: flags1 selects a compression code other than zlib, lzo, ucl or lz4
+  action: carve the image; the compressed payload needs a decoder this build lacks
+
+qnx6-bad-root-pointer:
+  meaning: a root-node pointer of the superblock (inode table, bitmap or longfile tree) lies beyond num_blocks
+  action: the superblock is damaged or the geometry is wrong; the tier stays structural and the reader will report the tree as corrupt
+
+qnx6-bad-superblock:
+  meaning: a superblock has an impossible block size, zero counts, more than 5 levels of indirection or an inode table too small for the root; it is not used
+  action: if both superblocks are unusable the reader refuses the image; carve it and inspect the superblocks at 0x2000 and after the last data block by hand
+
+qnx6-bad-symlink:
+  meaning: a symlink inode claims a target longer than PATH_MAX (1024); the target was cut there
+  action: hostile or corrupt inode; the entry is marked truncated
+
+qnx6-block-out-of-range:
+  meaning: a block pointer (or an indirect block) of an entry maps outside the data area or could not be read; the range was zero-filled and the entry marked truncated
+  action: corrupt pointer tree or a truncated image; the affected file blocks are listed in the message
+
+qnx6-deleted-blocks-reused:
+  meaning: a deleted inode-table record points at blocks the current bitmap shows allocated again; those blocks were zero-filled rather than reported as the deleted file's content
+  action: the data of that deleted file was overwritten by a newer file; only the metadata is recoverable
+
+qnx6-dir-loop:
+  meaning: a directory entry names one of its own ancestors, or a second name for a directory already walked; not descended
+  action: hostile or corrupt directory; the rest of the tree is intact
+
+qnx6-dirent-corrupt:
+  meaning: a directory entry has an impossible name length (0 or 28..254), a name with a slash or NUL, or names an unused inode; skipped. As an Info count, inode-table records with data that neither snapshot names (emitted under lost+found/#<inode>)
+  action: inspect the directory block by hand if the name matters; lost+found entries need their name recovered from other evidence
+
+qnx6-inode-tree-corrupt:
+  meaning: an inode record, an indirect block of the inode table or a directory block could not be read (past the table, in an unused block or outside the data area); Error when it is the root of a snapshot, Warning for one entry or block
+  action: the snapshot is damaged; compare with the other superblock (the reader already walked it when history is on)
+
+qnx6-limit-file-bytes:
+  meaning: an entry is larger than max_file_bytes; its data was cut there and the entry marked truncated
+  action: raise --max-file-bytes for large files
+
+qnx6-limit-files:
+  meaning: max_files reached; the walk stopped
+  action: raise --max-files and re-run
+
+qnx6-limit-nodes:
+  meaning: max_nodes_per_fs metadata records (directory blocks, directory entries and inode records) were parsed; the walk stopped
+  action: raise max_nodes_per_fs for a filesystem with millions of entries
+
+qnx6-limit-versions:
+  meaning: more history entries for one path than max_versions_per_entry; the extra ones were dropped
+  action: raise max_versions_per_entry; the live tree is complete
+
+qnx6-longfile-checksum:
+  meaning: a long file name's directory-entry checksum does not match the name in the longfile table; the name was used anyway
+  action: informational: an MMI-variant filesystem (which uses another checksum) or a stale entry
+
+qnx6-longfile-corrupt:
+  meaning: a long-name directory entry points past the longfile table, into an unused block, or at a record with length 0 or above 510; the entry was skipped
+  action: corrupt directory or longfile table; the inode number is in the message
+
+qnx6-no-superblock:
+  meaning: neither the superblock at 0x2000 nor one at the end of the span is usable; open() failed
+  action: the span is not a QNX6 filesystem or both superblocks are destroyed; identification only
+
+qnx6-serial-tie:
+  meaning: both superblocks carry the same serial; the primary is the current snapshot and the second holds no distinct history
+  action: informational; a freshly formatted or never-committed filesystem
+
+qnx6-sink-error:
+  meaning: the Sink refused an entry (unsafe path, duplicate or a sink limit); the entry was skipped
+  action: see the sink code in the message
+
+qnx6-superblock-bad-crc:
+  meaning: a superblock's CRC-32 (polynomial 0x04C11DB7, seed 0, over bytes 8..511) does not verify
+  action: the superblock may be stale or damaged; a checksum-valid superblock is preferred over it when both exist, and the tier stays consistent
+
+qnx6-superblock-single:
+  meaning: only one superblock was found (the other is missing, wiped or unusable); only one snapshot is available
+  action: no snapshot history can be recovered; deleted inode-table records are still reported
+
+qnx6-truncated:
+  meaning: num_blocks x blocksize claims more bytes than the span holds; the size was clamped and blocks past the end read as out of range
+  action: a truncated acquisition or a hostile superblock; the tier stays structural
+
+qnx6-unsupported-feature:
+  meaning: the superblock version is not 4.x (Warning), or the iclaim/iextra trees hold data this reader does not decode (Info)
+  action: the layout was verified on version 4.3 automotive images only; compare the walk against qnxmount
+
 region-unidentified:
   meaning: no signature matched in this gap of at least min_region_bytes
   action: check fill (0xff/0x00 is erased or padding); otherwise strings or entropy tools
@@ -609,6 +793,10 @@ sink-limit-files:
   meaning: Limits::max_files entries were already emitted
   action: re-run with a larger --max-files
 
+sink-name-escaped:
+  meaning: on a Windows host the entry's name is not a valid Win32 file name (reserved device name, backslash, colon, trailing dot or space, control byte); it was written under an escaped name recorded in extra host_name
+  action: informational; listing.yaml keeps the exact path from the filesystem and host_name says where the bytes landed (docs/CASE_LAYOUT.md "Host file-name escaping")
+
 sink-not-directory:
   meaning: a path component exists on the host and is not a directory
   action: use an empty case directory
@@ -633,8 +821,12 @@ sink-symlink-unsupported:
   meaning: the host cannot create the symlink; it is recorded only
   action: informational (Windows without privilege); listing.yaml has the target
 
+sink-symlink-bad-target:
+  meaning: the symlink's target is empty or contains a NUL byte, which no host can create; the entry is recorded only
+  action: a deleted or damaged record whose target data is gone or reused; the listing keeps the entry and its raw target
+
 sink-unsafe-path:
-  meaning: the entry path is absolute, contains .. or otherwise escapes the tree; refused
+  meaning: the entry path is empty, absolute (leading /), contains a .. component or a NUL byte; refused (a name the host cannot store is escaped, never refused)
   action: hostile or damaged filesystem; the entry name is in the message
 
 sink-version-skipped:

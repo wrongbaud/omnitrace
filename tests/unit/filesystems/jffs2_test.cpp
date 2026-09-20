@@ -799,10 +799,114 @@ TEST(Jffs2Synth, UnlinkThenRecreateWithNewInode) {
     EXPECT_EQ(d.meta.path, "f");
     EXPECT_EQ(d.meta.inode, 2u);
     EXPECT_EQ(d.meta.version, 1u);
+    EXPECT_EQ(d.meta.extra.at("jffs2_version"), "1");
+    EXPECT_EQ(d.meta.extra.at("inode_history"), "2,3");
     EXPECT_EQ(d.meta.nlink, 0u);
     EXPECT_EQ(d.digests.sha256, sha256_of(bytes_of("first")));
+    // The live inode's state continues the path's sequence: its raw v1 is
+    // taken, so it becomes v2 (path-scoped), with the raw version kept.
+    EXPECT_EQ(w.live.at("f").meta.version, 2u);
+    EXPECT_EQ(w.live.at("f").meta.extra.at("jffs2_version"), "1");
+    EXPECT_EQ(w.live.at("f").meta.extra.at("inode_history"), "2,3");
     EXPECT_EQ(w.info.attrs.at("inodes_live"), "2");  // root and ino 3
     EXPECT_EQ(w.info.attrs.at("inodes_deleted"), "1");
+    // Without history the live tree is byte-identical (same version numbers).
+    const Walked plain = walk_listing(span_of(b.build()));
+    EXPECT_EQ(plain.live.at("f").meta.version, 2u);
+    EXPECT_EQ(plain.live.at("f").meta.extra.at("jffs2_version"), "1");
+    EXPECT_EQ(plain.live.at("f").meta.extra.at("inode_history"), "2,3");
+    EXPECT_TRUE(plain.history.empty());
+}
+
+// Two inodes that each went through several versions at one path (network.lua
+// on the router corpus was inode 429 then 549): every (path, version) tuple
+// is unique, numbering is chronological across holders, and DiskSink writes
+// every version without a single sink-duplicate-path collision.
+TEST(Jffs2History, PathScopedVersionsAcrossInodes) {
+    Builder b;
+    b.dir_node(1, 1);
+    for (std::uint32_t v = 1; v <= 3; ++v)
+        b.file_node(2, v, "old" + std::to_string(v), 4, 0, 0644, 100 + v);
+    b.link(1, 1, 2, "cfg", kDtReg, 100);
+    b.unlink(1, 2, "cfg", kDtReg, 200);
+    for (std::uint32_t v = 1; v <= 3; ++v)
+        b.file_node(3, v, "new" + std::to_string(v), 4, 0, 0644, 300 + v);
+    b.link(1, 3, 3, "cfg", kDtReg, 300);
+    const Walked w = walk_listing(span_of(b.build()), true, history_opts());
+    ASSERT_TRUE(w.status.ok);
+    // Inode 2: raw v1..v3 -> 1..3 (deleted; v3 is its final state). Inode 3:
+    // raw v1..v3 -> 4..6 (v6 live, v4 and v5 superseded).
+    EXPECT_EQ(w.live.at("cfg").meta.inode, 3u);
+    EXPECT_EQ(w.live.at("cfg").meta.version, 6u);
+    EXPECT_EQ(w.live.at("cfg").meta.extra.at("jffs2_version"), "3");
+    EXPECT_EQ(w.result.deleted, 3u);
+    EXPECT_EQ(w.result.superseded, 4u);  // 2 of inode 2 (deleted+superseded), 2 of inode 3
+    std::set<std::pair<std::string, std::uint64_t>> tuples;
+    for (const EntryResult& e : w.history) {
+        EXPECT_TRUE(tuples.insert({e.meta.path, e.meta.version}).second)
+            << e.meta.path << " v" << e.meta.version << " emitted twice";
+        EXPECT_EQ(e.meta.extra.at("inode_history"), "2,3");
+    }
+    for (std::uint64_t v = 1; v <= 3; ++v) {
+        const EntryResult* e = find_version(w, "cfg", v, true);
+        ASSERT_NE(e, nullptr) << v;
+        EXPECT_EQ(e->meta.inode, 2u);
+        EXPECT_EQ(e->meta.extra.at("jffs2_version"), std::to_string(v));
+        EXPECT_EQ(e->meta.superseded, v != 3);
+        EXPECT_EQ(e->digests.sha256, sha256_of(bytes_of("old" + std::to_string(v))));
+    }
+    for (std::uint64_t v = 4; v <= 5; ++v) {
+        const EntryResult* e = find_version(w, "cfg", v, false);
+        ASSERT_NE(e, nullptr) << v;
+        EXPECT_EQ(e->meta.inode, 3u);
+        EXPECT_EQ(e->meta.extra.at("jffs2_version"), std::to_string(v - 3));
+        EXPECT_EQ(e->digests.sha256, sha256_of(bytes_of("new" + std::to_string(v - 3))));
+    }
+    EXPECT_EQ(find_version(w, "cfg", 6, false), nullptr);  // the live state is not history
+    // The unlink record is covered by inode 2's deleted entries (same path).
+    for (const EntryResult& e : w.history) EXPECT_EQ(e.meta.extra.count("record"), 0u);
+
+    // DiskSink: one directory per path, one file per version, no collisions.
+    TempDir tmp;
+    std::unique_ptr<DiskSink> sink;
+    ASSERT_TRUE(DiskSink::open((tmp.path() / "out").string(), {}, sink).ok);
+    Jffs2Reader r;
+    ASSERT_TRUE(r.open(span_of(b.build())).ok);
+    WalkResult out;
+    ASSERT_TRUE(r.walk(*sink, history_opts(), out).ok);
+    for (const EntryResult& e : out.entries_out)
+        EXPECT_FALSE(has_code(e.diagnostics, "sink-duplicate-path")) << e.meta.path;
+    for (int v = 1; v <= 5; ++v)
+        EXPECT_TRUE(stdfs::exists(tmp.path() / "out" / ".omnitrace-versions" / "cfg" /
+                                  ("v" + std::to_string(v))))
+            << v;
+    EXPECT_FALSE(stdfs::exists(tmp.path() / "out" / ".omnitrace-versions" / "cfg" / "v6"));
+    EXPECT_TRUE(stdfs::exists(tmp.path() / "out" / "cfg"));
+}
+
+// A path whose only history is an unlink record after a live inode's states
+// (rename away): the record takes the next number after the inode that
+// held the name, and a bare unlink keeps its dirent version.
+TEST(Jffs2History, UnlinkRecordsJoinThePathSequence) {
+    Builder b;
+    b.dir_node(1, 1);
+    b.file_node(2, 1, "a", 1, 0, 0644, 10);
+    b.file_node(2, 2, "b", 1, 0, 0644, 20);
+    b.link(1, 1, 2, "old", kDtReg, 10);
+    b.link(1, 2, 2, "new", kDtReg, 30);  // rename: old -> new
+    b.unlink(1, 3, "old", kDtReg, 30);
+    const Walked w = walk_listing(span_of(b.build()), true, history_opts());
+    ASSERT_TRUE(w.status.ok);
+    EXPECT_EQ(w.live.at("new").meta.version, 2u);
+    // "old" was never a path of inode 2's states (its live path is "new"), so
+    // the unlink record is alone at "old" and keeps dirent version 3.
+    const EntryResult* u = find_version(w, "old", 3, true);
+    ASSERT_NE(u, nullptr);
+    EXPECT_EQ(u->meta.extra.at("record"), "unlink");
+    EXPECT_EQ(u->meta.extra.at("jffs2_version"), "3");
+    EXPECT_EQ(u->meta.extra.count("inode_history"), 0u);
+    // Superseded v1 of the live file sits at its live path.
+    ASSERT_NE(find_version(w, "new", 1, false), nullptr);
 }
 
 TEST(Jffs2Synth, UnlinkRecordWhenNoInodeNodeRemains) {
@@ -852,10 +956,16 @@ TEST(Jffs2Synth, RenameKeepsInodeLiveAndRecordsOldName) {
     c.unlink(1, 4, "a", kDtReg, 200);
     const Walked w2 = walk_listing(span_of(c.build()), true, history_opts());
     EXPECT_EQ(w2.live.at("b").meta.inode, 2u);
+    // Inode 3 held "b" first (dirent v2), inode 2 arrived by rename (dirent
+    // v3): the path sequence is 3 then 2 even though 2 is the lower number.
     const EntryResult* lost = find_version(w2, "b", 1, true);
     ASSERT_NE(lost, nullptr);
     EXPECT_EQ(lost->meta.inode, 3u);
     EXPECT_EQ(lost->digests.sha256, sha256_of(bytes_of("dst")));
+    EXPECT_EQ(lost->meta.extra.at("inode_history"), "3,2");
+    EXPECT_EQ(w2.live.at("b").meta.version, 2u);
+    EXPECT_EQ(w2.live.at("b").meta.extra.at("jffs2_version"), "1");
+    EXPECT_EQ(w2.live.at("b").meta.extra.at("inode_history"), "3,2");
 }
 
 TEST(Jffs2Synth, DeletedDirectoryChildrenKeepTheirPath) {
@@ -1040,7 +1150,7 @@ TEST(Jffs2History, VersionCapKeepsNewest) {
         b.file_node(2, v, std::string(1, static_cast<char>('a' + v)), 1, 0, 0644, v);
     b.link(1, 1, 2, "f");
     WalkOptions o = history_opts();
-    o.limits.max_nodes_per_fs = 78125 * 2;  // cap = 2 versions per inode
+    o.limits.max_versions_per_entry = 2;
     const Walked w = walk_listing(span_of(b.build()), true, o);
     ASSERT_TRUE(w.status.ok);
     EXPECT_EQ(w.result.superseded, 2u);
@@ -1571,29 +1681,71 @@ TEST(Jffs2Corpus, RouterOverlayLiveAndHistory) {
                                             std::istreambuf_iterator<char>());
     EXPECT_EQ(on_disk, *expect);
 
-    // History walk.
-    ListingSink hsink(true);
+    // History walk through a DiskSink: every (path, version) is unique, so
+    // nothing lands as a "~1" duplicate (680 collisions before path-scoped
+    // versions, network.lua alone being inode 429 then 549).
+    std::unique_ptr<DiskSink> hdisk;
+    ASSERT_TRUE(DiskSink::open((tmp.path() / "hist").string(), {}, hdisk).ok);
     WalkResult hist;
-    ASSERT_TRUE(r.walk(hsink, history_opts(), hist).ok);
+    ASSERT_TRUE(r.walk(*hdisk, history_opts(), hist).ok);
     EXPECT_GE(hist.deleted, 240u);
-    std::set<std::uint64_t> superseded_inodes;
-    std::uint64_t deleted_records = 0, superseded_entries = 0;
+    std::uint64_t duplicate_paths = 0, name_escapes = 0;
+    std::set<std::pair<std::string, std::uint64_t>> tuples;
     for (const EntryResult& e : hist.entries_out) {
-        if (e.meta.superseded) {
-            superseded_inodes.insert(e.meta.inode);
-            superseded_entries++;
+        for (const Diagnostic& d : e.diagnostics) {
+            if (d.code == "sink-duplicate-path") duplicate_paths++;
+            if (d.code == "sink-name-escaped") name_escapes++;
         }
-        if (e.meta.deleted) deleted_records++;
+        if (e.meta.deleted || e.meta.superseded) {
+            EXPECT_TRUE(tuples.insert({e.meta.path, e.meta.version}).second)
+                << e.meta.path << " v" << e.meta.version << " (inode " << e.meta.inode << ")";
+        }
+        // Every entry built from an inode node (or an unlink dirent) shows its raw version.
+        const bool from_node =
+            e.meta.extra.count("record") != 0 ||
+            (e.meta.extra.count("nodes") != 0 && e.meta.extra.at("nodes") != "0");
+        EXPECT_EQ(e.meta.extra.count("jffs2_version"), from_node ? 1u : 0u) << e.meta.path;
     }
-    EXPECT_GE(superseded_inodes.size(), 230u);
-    EXPECT_EQ(deleted_records, hist.deleted);
-    EXPECT_EQ(superseded_entries, hist.superseded);
-    EXPECT_EQ(hist.entries, hist.entries_out.size());
-    // Live part of the history walk is identical to the plain walk.
-    std::uint64_t live_in_hist = 0;
-    for (const EntryResult& e : hist.entries_out)
-        if (!e.meta.deleted && !e.meta.superseded) live_in_hist++;
-    EXPECT_EQ(live_in_hist, live.entries);
+    EXPECT_EQ(duplicate_paths, 0u);
+    EXPECT_EQ(name_escapes, 0u);  // POSIX host: nothing to escape
+    // network.lua: inode 429 (deleted, raw v1..v7 -> 1..7) then inode 549
+    // (raw v1..v7 -> 8..13, 13 being the live file), then the unlink record
+    // that removed the name before its final re-binding (dirent v18).
+    std::vector<std::uint64_t> lua_versions;
+    std::set<std::uint64_t> lua_inodes;
+    std::uint64_t lua_unlinks = 0;
+    std::map<std::uint64_t, std::uint64_t> by_raw_549;  // raw version -> path-scoped version
+    for (const EntryResult& e : hist.entries_out) {
+        if (e.meta.path != "upper/usr/lib/lua/luci/controller/admin/network.lua") continue;
+        EXPECT_EQ(e.meta.extra.at("inode_history"), "429,549") << e.meta.version;
+        if (e.meta.extra.count("record")) {
+            lua_unlinks++;
+            EXPECT_GT(e.meta.version, 13u);
+            continue;
+        }
+        lua_versions.push_back(e.meta.version);
+        lua_inodes.insert(e.meta.inode);
+        const std::uint64_t raw_v = std::stoull(e.meta.extra.at("jffs2_version"));
+        if (e.meta.inode == 429) {
+            EXPECT_EQ(e.meta.version, raw_v);  // first holder keeps its raw numbers
+        } else {
+            by_raw_549[raw_v] = e.meta.version;  // second holder continues after 7
+        }
+    }
+    std::uint64_t expect_v = 8;
+    for (const auto& [rv, v] : by_raw_549) {
+        (void)rv;
+        EXPECT_EQ(v, expect_v++);
+    }
+    EXPECT_EQ(by_raw_549.size(), 6u);  // raw 1,2,4,5,6 superseded + raw 7 live
+    EXPECT_EQ(lua_inodes, (std::set<std::uint64_t>{429, 549}));
+    EXPECT_EQ(lua_unlinks, 1u);
+    EXPECT_EQ(std::set<std::uint64_t>(lua_versions.begin(), lua_versions.end()).size(),
+              lua_versions.size());
+    EXPECT_EQ(lua->second->meta.version, 13u);
+    EXPECT_EQ(lua->second->meta.version,
+              *std::max_element(lua_versions.begin(), lua_versions.end()));
+    EXPECT_EQ(lua->second->meta.extra.at("jffs2_version"), "7");
 }
 
 }  // namespace

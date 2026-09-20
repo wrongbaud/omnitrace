@@ -16,6 +16,10 @@
 //           offset order, one node at a time)
 //           history: every earlier content state of every inode, every inode
 //           without a live name, every explicit unlink record
+//   Version numbers are path-scoped (docs/formats/jffs2.md "Version
+//   numbers"): a dry traversal of the live tree first resolves every path,
+//   then every state of every inode that ever held a path is numbered in one
+//   sequence so (path, version) is unique and DiskSink never collides.
 #include "Jffs2Reader.h"
 
 #include <algorithm>
@@ -91,11 +95,6 @@ constexpr std::uint32_t kLzmaDictSize = 8192;
 // Scan and zero-fill buffer. A performance knob, not an input guard: the walk
 // is correct with any value.
 constexpr std::size_t kChunk = 64 * 1024;
-
-// Versions kept per inode with history on: Limits::max_nodes_per_fs divided
-// by this (64 with the default 5,000,000). There is no dedicated Limits field
-// yet; docs/formats/jffs2.md documents the derivation.
-constexpr std::uint64_t kVersionsDivisor = 78125;
 
 // Diagnostic codes. Tests and downstream agents key on these strings.
 constexpr const char* kCodeNodeCrcMismatch = "jffs2-node-crc-mismatch";
@@ -354,23 +353,49 @@ struct Jffs2Reader::Impl {
     std::map<std::uint32_t, std::vector<std::string>> xattr_names;  // ino -> names
     std::uint64_t live_inode_count = 0, deleted_inode_count = 0, multi_version_count = 0;
 
+    // One state of a path in its version sequence: the state after `count`
+    // nodes of inode `ino`, or an explicit unlink record (`dirent` set).
+    struct VersionPoint {
+        std::uint32_t group = 0;  // holder's rank in the path (unlinks: the unlinked inode's)
+        std::uint32_t ino = 0;    // 0 for an unlink record
+        std::size_t count = 0;
+        std::size_t dirent = 0;
+        bool unlink = false;
+        bool live = false;          // the state the live tree shows
+        bool final = false;         // the newest state of the inode
+        std::uint32_t raw = 0;      // JFFS2 node version (inode node, or dirent for unlinks)
+        std::uint64_t version = 0;  // path-scoped version assigned to the entry
+    };
+    // Everything that ever occupied one path.
+    struct PathSpace {
+        std::vector<std::uint32_t> holders;                          // inodes, ascending
+        std::vector<std::pair<std::size_t, std::uint32_t>> unlinks;  // (dirent, prior inode)
+    };
+
     // Per-walk state.
     struct Walk {
         Sink* sink = nullptr;
         const WalkOptions* opts = nullptr;
         WalkResult* out = nullptr;
         bool stop = false;
-        std::map<std::uint32_t, std::string> live_path;  // first live path in walk order
+        bool dry = false;  // traverse the live tree without emitting (path resolution only)
+        std::map<std::uint32_t, std::string> live_path;    // first live path in walk order
+        std::map<std::uint32_t, std::size_t> live_dirent;  // ino -> dirent that gave live_path
         std::set<std::uint32_t> walked_dirs;
         std::vector<std::uint8_t> zeros;
         std::vector<std::uint8_t> decoded;  // one decoded node
         std::size_t decoded_node = static_cast<std::size_t>(-1);
         std::vector<std::uint8_t> raw;  // compressed bytes when the Source cannot map
-        std::uint64_t versions_capped_inodes = 0;
+        std::uint64_t versions_capped_paths = 0;
         std::uint64_t orphans = 0;
         std::uint64_t unsupported_nodes = 0;
         std::set<std::uint8_t> unsupported_codecs;
         std::map<std::uint32_t, std::string> hist_dir_path;  // memo for hist_path_of_dir
+        // Version namespace (build_version_space).
+        std::map<std::string, PathSpace> spaces;              // path -> what held it
+        std::map<std::uint32_t, std::string> deleted_path;    // deleted ino -> its path
+        std::map<std::uint32_t, std::uint64_t> live_version;  // live ino -> its version
+        std::set<std::uint32_t> orphan_inos;
     };
     const Limits* lim = nullptr;
 
@@ -400,9 +425,15 @@ struct Jffs2Reader::Impl {
     void emit_regular(const FileMeta& meta, const Plan& p, Walk& w);
     bool emit_other(const FileMeta& meta, Walk& w, std::vector<Diagnostic> diags);
     void emit_state(const std::string& path, const std::vector<std::size_t>& chain,
-                    std::size_t count, bool deleted, bool superseded, std::uint32_t nlink, Walk& w,
-                    std::map<std::string, std::string> extra);
+                    const VersionPoint& pt, bool deleted, bool superseded, std::uint32_t nlink,
+                    Walk& w, std::map<std::string, std::string> extra);
     bool check_limits(const std::string& path, Walk& w);
+
+    // version namespace
+    std::vector<std::size_t> version_points(const std::vector<std::size_t>& chain) const;
+    std::vector<VersionPoint> number_path(const PathSpace& space, const Walk& w) const;
+    void build_version_space(Walk& w) const;
+    std::string holders_text(const std::string& path, const Walk& w) const;
 
     // walk phases
     void walk_live(Walk& w);
@@ -1204,16 +1235,18 @@ bool Jffs2Reader::Impl::emit_other(const FileMeta& meta, Walk& w, std::vector<Di
     return true;
 }
 
-// Emit the state after the first `count` nodes of `chain` at `path`.
+// Emit the state `pt` (the first `pt.count` nodes of `chain`) at `path`.
 void Jffs2Reader::Impl::emit_state(const std::string& path, const std::vector<std::size_t>& chain,
-                                   std::size_t count, bool deleted, bool superseded,
+                                   const VersionPoint& pt, bool deleted, bool superseded,
                                    std::uint32_t nlink, Walk& w,
                                    std::map<std::string, std::string> extra) {
     if (!check_limits(path, w)) return;
-    const Plan p = plan_of(chain, count);
+    const Plan p = plan_of(chain, pt.count);
     FileMeta m = make_meta(path, inodes[p.newest], p, nlink);
     m.deleted = deleted;
     m.superseded = superseded;
+    m.extra["jffs2_version"] = dec(m.version);
+    m.version = pt.version;
     for (auto& [k, v] : extra) m.extra[k] = v;
     if (m.kind == EntryKind::Regular) {
         emit_regular(m, p, w);
@@ -1244,7 +1277,8 @@ void Jffs2Reader::Impl::walk_live(Walk& w) {
             stack.pop_back();
             continue;
         }
-        const DirentNode& d = dirents[children->second[top.next++]];
+        const std::size_t dirent_idx = children->second[top.next++];
+        const DirentNode& d = dirents[dirent_idx];
         const std::string parent_path = top.path;
         const std::uint32_t parent_ino = top.ino;
         // `top` may dangle after a push_back below; do not use it past here.
@@ -1257,10 +1291,27 @@ void Jffs2Reader::Impl::walk_live(Walk& w) {
             continue;
         }
         const std::string path = parent_path.empty() ? d.name : parent_path + "/" + d.name;
-        if (!check_limits(path, w)) break;
+        if (!w.dry && !check_limits(path, w)) break;
 
         const std::vector<std::size_t> chain = chain_of(d.ino, false);
         const std::uint32_t nlink = live_nlink.count(d.ino) ? live_nlink.at(d.ino) : 0;
+        if (w.dry) {
+            // Path resolution only: the same traversal decisions as below
+            // (ancestor loops and repeated directories are not descended),
+            // minus the Sink, so live_path is known before anything is emitted.
+            if (!w.live_path.count(d.ino)) {
+                w.live_path[d.ino] = path;
+                w.live_dirent[d.ino] = dirent_idx;
+            }
+            const EntryKind kind =
+                chain.empty() ? kind_from_dtype(d.type) : kind_from_mode(inodes[chain.back()].mode);
+            if (kind != EntryKind::Directory) continue;
+            bool loop = false;
+            for (const Frame& f : stack)
+                if (f.ino == d.ino) loop = true;
+            if (!loop && w.walked_dirs.insert(d.ino).second) stack.push_back({d.ino, path, 0});
+            continue;
+        }
         if (chain.empty()) {
             // Named, but no usable inode node: a mount lists the name and
             // fails to stat it. Keep the name with what the dirent knows.
@@ -1290,6 +1341,11 @@ void Jffs2Reader::Impl::walk_live(Walk& w) {
         const Plan p = plan_of(chain, chain.size());
         FileMeta m = make_meta(path, inodes[p.newest], p, nlink);
         if (!w.live_path.count(d.ino)) w.live_path[d.ino] = path;
+        // Path-scoped version (build_version_space); the raw node version stays visible.
+        m.extra["jffs2_version"] = dec(m.version);
+        if (const auto lv = w.live_version.find(d.ino); lv != w.live_version.end())
+            m.version = lv->second;
+        if (std::string h = holders_text(path, w); !h.empty()) m.extra["inode_history"] = h;
 
         if (m.kind == EntryKind::Regular) {
             emit_regular(m, p, w);
@@ -1380,94 +1436,155 @@ std::string Jffs2Reader::Impl::hist_path_of(std::uint32_t ino, Walk& w, bool& or
     return parent.empty() ? d.name : parent + "/" + d.name;
 }
 
-void Jffs2Reader::Impl::walk_history(Walk& w) {
-    const Limits& L = w.opts->limits;
-    const std::uint64_t max_versions =
-        std::max<std::uint64_t>(1, L.max_nodes_per_fs / kVersionsDivisor);
+// Version points of one inode: counts of nodes after which a state is worth
+// an entry. Consecutive data nodes that form one write (each starts where the
+// previous one ended, carries the same mtime and ctime, and does not shrink
+// isize) are one version: the kernel and mkfs.jffs2 split a single write into
+// page-sized nodes. Every other node (an overwrite, a truncation, a
+// metadata-only node, a later append) starts a new version.
+std::vector<std::size_t> Jffs2Reader::Impl::version_points(
+    const std::vector<std::size_t>& chain) const {
+    std::vector<std::size_t> points;
+    std::uint64_t extent = 0;
+    const InodeNode* prev = nullptr;
+    for (std::size_t k = 0; k < chain.size(); ++k) {
+        const InodeNode& n = inodes[chain[k]];
+        const bool same_write = prev != nullptr && n.dsize != 0 && prev->dsize != 0 &&
+                                n.offset == extent && n.mtime == prev->mtime &&
+                                n.ctime == prev->ctime && n.isize >= prev->isize;
+        if (same_write && !points.empty()) points.pop_back();
+        points.push_back(k + 1);
+        if (n.dsize != 0)
+            extent = std::max(extent, static_cast<std::uint64_t>(n.offset) + n.dsize);
+        else if (n.isize < extent)
+            extent = n.isize;
+        prev = &n;
+    }
+    return points;
+}
 
-    std::map<std::uint32_t, std::string> deleted_path;  // ino -> path used for its records
+// The version sequence of one path. Holders are ordered by the dirent that
+// bound each of them to the name when those dirents share a parent (the
+// parent's dirent counter is the clock of that name: an older inode renamed
+// over a younger one at this path comes last), else by inode number (JFFS2
+// allocates inode numbers monotonically, so the earlier holder has the lower
+// number). Then each holder's states in node order with the live state
+// included, and an unlink record right after the states of the inode it
+// unlinked (after every holder when that inode is unknown or held another
+// path). Each point keeps its raw JFFS2 version unless an earlier point of
+// the path already used that number or a higher one, in which case it takes
+// the next free number: a path held by one inode keeps the numbers
+// jffs2dump shows, and a second holder's versions continue after the first.
+std::vector<Jffs2Reader::Impl::VersionPoint> Jffs2Reader::Impl::number_path(const PathSpace& space,
+                                                                            const Walk& w) const {
+    std::vector<std::uint32_t> holders = space.holders;
+    {
+        std::vector<std::size_t> bound;  // binding dirent per holder
+        bool same_parent = !holders.empty();
+        for (const std::uint32_t ino : holders) {
+            std::size_t idx = static_cast<std::size_t>(-1);
+            if (const auto ld = w.live_dirent.find(ino); ld != w.live_dirent.end())
+                idx = ld->second;
+            else if (const auto hd = last_dirent_of.find(ino); hd != last_dirent_of.end())
+                idx = hd->second;
+            if (idx == static_cast<std::size_t>(-1) ||
+                (!bound.empty() && dirents[idx].pino != dirents[bound.front()].pino))
+                same_parent = false;
+            bound.push_back(idx);
+        }
+        if (same_parent && holders.size() > 1) {
+            std::vector<std::size_t> order(holders.size());
+            std::iota(order.begin(), order.end(), 0);
+            std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+                const DirentNode& da = dirents[bound[a]];
+                const DirentNode& db = dirents[bound[b]];
+                if (da.version != db.version) return da.version < db.version;
+                return da.off < db.off;
+            });
+            std::vector<std::uint32_t> sorted;
+            for (const std::size_t i : order) sorted.push_back(holders[i]);
+            holders.swap(sorted);
+        }
+    }
+    std::map<std::uint32_t, std::uint32_t> rank;  // holder -> position in the sequence
+    for (std::size_t i = 0; i < holders.size(); ++i)
+        rank[holders[i]] = static_cast<std::uint32_t>(i);
 
-    for (const auto& [ino, range] : ino_range) {
-        if (w.stop) break;
-        if (ino == kRootIno) continue;
+    std::vector<VersionPoint> pts;
+    for (const std::uint32_t ino : holders) {
         const std::vector<std::size_t> chain = chain_of(ino, true);
         if (chain.empty()) continue;
+        std::vector<std::size_t> points = version_points(chain);
+        std::size_t live_count = 0;
+        if (w.live_path.count(ino)) {
+            for (std::size_t k = 0; k < chain.size(); ++k)
+                if (inodes[chain[k]].usable()) live_count = k + 1;
+            // The live state is a point of its own even when it sits inside a
+            // write run whose later nodes failed their CRC.
+            if (live_count != 0 &&
+                std::find(points.begin(), points.end(), live_count) == points.end()) {
+                points.insert(std::lower_bound(points.begin(), points.end(), live_count),
+                              live_count);
+            }
+        }
+        for (const std::size_t count : points) {
+            VersionPoint pt;
+            pt.group = rank.at(ino);
+            pt.ino = ino;
+            pt.count = count;
+            pt.live = count == live_count;
+            pt.final = count == chain.size();
+            pt.raw = inodes[chain[count - 1]].version;
+            pts.push_back(pt);
+        }
+    }
+    for (const auto& [idx, prior] : space.unlinks) {
+        VersionPoint pt;
+        const auto held_here = prior != 0 ? rank.find(prior) : rank.end();
+        pt.group = held_here != rank.end() ? held_here->second : 0xFFFFFFFFu;
+        pt.unlink = true;
+        pt.dirent = idx;
+        pt.raw = dirents[idx].version;
+        pts.push_back(pt);
+    }
+    std::stable_sort(pts.begin(), pts.end(), [](const VersionPoint& a, const VersionPoint& b) {
+        if (a.group != b.group) return a.group < b.group;
+        if (a.unlink != b.unlink) return !a.unlink;  // an inode's states, then its unlink
+        if (a.unlink) return a.raw != b.raw ? a.raw < b.raw : a.dirent < b.dirent;
+        return a.count < b.count;
+    });
+    std::uint64_t prev = 0;
+    for (VersionPoint& pt : pts) {
+        pt.version = std::max<std::uint64_t>(pt.raw, prev + 1);
+        prev = pt.version;
+    }
+    return pts;
+}
+
+// Resolve the path of every inode with nodes (live: from the dry traversal;
+// otherwise from dirent history) and every explicit unlink record, group
+// them by path, and fix the version each live state will carry.
+void Jffs2Reader::Impl::build_version_space(Walk& w) const {
+    w.spaces.clear();
+    w.deleted_path.clear();
+    w.live_version.clear();
+    w.orphan_inos.clear();
+    for (const auto& [ino, range] : ino_range) {
+        (void)range;
+        if (ino == kRootIno) continue;
+        if (chain_of(ino, true).empty()) continue;
         const bool live = w.live_path.count(ino) != 0;
         bool orphan = false;
         const std::string path = live ? w.live_path.at(ino) : hist_path_of(ino, w, orphan);
-        if (orphan) w.orphans++;
-
-        // Version points. Consecutive data nodes that form one write (each
-        // starts where the previous one ended, carries the same mtime and
-        // ctime, and does not shrink isize) are one version: the kernel and
-        // mkfs.jffs2 split a single write into page-sized nodes. Every other
-        // node (an overwrite, a truncation, a metadata-only node, a later
-        // append) starts a new version. A point is the count of nodes in the
-        // state.
-        std::vector<std::size_t> points;
-        {
-            std::uint64_t extent = 0;
-            const InodeNode* prev = nullptr;
-            for (std::size_t k = 0; k < chain.size(); ++k) {
-                const InodeNode& n = inodes[chain[k]];
-                const bool same_write = prev != nullptr && n.dsize != 0 && prev->dsize != 0 &&
-                                        n.offset == extent && n.mtime == prev->mtime &&
-                                        n.ctime == prev->ctime && n.isize >= prev->isize;
-                if (same_write && !points.empty()) points.pop_back();
-                points.push_back(k + 1);
-                if (n.dsize != 0)
-                    extent = std::max(extent, static_cast<std::uint64_t>(n.offset) + n.dsize);
-                else if (n.isize < extent)
-                    extent = n.isize;
-                prev = &n;
-            }
-        }
-        // The state the live tree shows (through the newest usable node) is
-        // not history; drop it. For a deleted inode the final state is the
-        // deletion record.
-        if (live) {
-            std::size_t live_count = 0;
-            for (std::size_t k = 0; k < chain.size(); ++k)
-                if (inodes[chain[k]].usable()) live_count = k + 1;
-            points.erase(std::remove(points.begin(), points.end(), live_count), points.end());
-        }
-        std::map<std::string, std::string> capnote;
-        if (points.size() > max_versions) {
-            const std::uint64_t dropped = points.size() - max_versions;
-            points.erase(points.begin(), points.begin() + static_cast<std::ptrdiff_t>(dropped));
-            w.versions_capped_inodes++;
-            capnote["versions_dropped"] = dec(dropped);
-            // History-only cap: the live tree and the newest versions are
-            // complete, so the walk is not truncated. The Warning and the
-            // entry's versions_dropped say what was left out.
-        }
-        for (std::size_t i = 0; i < points.size() && !w.stop; ++i) {
-            const std::size_t count = points[i];
-            const bool final_state = count == chain.size();
-            std::map<std::string, std::string> extra;
-            if (i == points.size() - 1) extra = capnote;
-            if (orphan) extra["orphan"] = "true";
-            if (!live) {
-                emit_state(path, chain, count, /*deleted=*/true, /*superseded=*/!final_state, 0, w,
-                           extra);
-            } else {
-                if (final_state) extra["newer_than_live"] = "true";
-                emit_state(path, chain, count, /*deleted=*/false, /*superseded=*/true,
-                           live_nlink.count(ino) ? live_nlink.at(ino) : 0, w, extra);
-            }
-        }
-        if (!live) deleted_path[ino] = path;
+        if (orphan) w.orphan_inos.insert(ino);
+        w.spaces[path].holders.push_back(ino);  // ino_range is ascending
+        if (!live) w.deleted_path[ino] = path;
     }
-
-    // Explicit unlink records (dirent with ino 0): emitted unless the inode
-    // the name pointed at is already emitted as deleted under this very path.
-    struct Unlink {
-        std::string path;
-        std::uint32_t version;
-        std::size_t idx;
-    };
-    std::vector<Unlink> unlinks;
+    // Explicit unlink records (dirent with ino 0): kept unless the inode the
+    // name pointed at is emitted as deleted under this very path, so a
+    // deleted file appears once, with content.
     for (const auto& [key, hist] : dirent_history) {
+        (void)key;
         for (std::size_t i = 0; i < hist.size(); ++i) {
             const DirentNode& d = dirents[hist[i]];
             if (d.ino != 0) continue;
@@ -1481,42 +1598,111 @@ void Jffs2Reader::Impl::walk_history(Walk& w) {
             const std::string parent = hist_path_of_dir(d.pino, w);
             const std::string path = parent.empty() ? d.name : parent + "/" + d.name;
             if (prior_ino != 0) {
-                const auto dp = deleted_path.find(prior_ino);
-                if (dp != deleted_path.end() && dp->second == path) continue;
+                const auto dp = w.deleted_path.find(prior_ino);
+                if (dp != w.deleted_path.end() && dp->second == path) continue;
             }
-            unlinks.push_back({path, d.version, hist[i]});
+            w.spaces[path].unlinks.emplace_back(hist[i], prior_ino);
         }
     }
-    std::sort(unlinks.begin(), unlinks.end(), [](const Unlink& a, const Unlink& b) {
-        if (a.path != b.path) return a.path < b.path;
-        return a.version < b.version;
-    });
-    for (const Unlink& u : unlinks) {
+    for (const auto& [path, space] : w.spaces) {
+        (void)path;
+        for (const VersionPoint& pt : number_path(space, w))
+            if (pt.live) w.live_version[pt.ino] = pt.version;
+    }
+}
+
+// "429,549" when more than one inode ever held `path`, in sequence order;
+// empty otherwise.
+std::string Jffs2Reader::Impl::holders_text(const std::string& path, const Walk& w) const {
+    const auto it = w.spaces.find(path);
+    if (it == w.spaces.end() || it->second.holders.size() < 2) return {};
+    std::string out;
+    std::uint32_t last = 0;
+    bool any = false;
+    for (const VersionPoint& pt : number_path(it->second, w)) {
+        if (pt.unlink || (any && pt.ino == last)) continue;
+        out += (any ? "," : "") + dec(pt.ino);
+        last = pt.ino;
+        any = true;
+    }
+    return out;
+}
+
+void Jffs2Reader::Impl::walk_history(Walk& w) {
+    const Limits& L = w.opts->limits;
+    const std::uint64_t max_versions = std::max<std::uint64_t>(1, L.max_versions_per_entry);
+
+    for (const auto& [path, space] : w.spaces) {
         if (w.stop) break;
-        if (!check_limits(u.path, w)) break;
-        const DirentNode& d = dirents[u.idx];
-        FileMeta m;
-        m.path = u.path;
-        m.kind = kind_from_dtype(d.type);
-        if (m.kind == EntryKind::Unknown) m.kind = EntryKind::Regular;
-        m.deleted = true;
-        m.version = d.version;
-        m.mtime = static_cast<std::int64_t>(d.mctime);
-        m.extra["record"] = "unlink";
-        m.extra["parent_inode"] = dec(d.pino);
-        if (d.obsolete) m.extra["obsolete"] = "true";
-        if (m.kind == EntryKind::Regular) {
-            emit_regular(m, Plan{}, w);
-        } else {
-            (void)emit_other(m, w, {});
+        std::vector<VersionPoint> points = number_path(space, w);
+        points.erase(std::remove_if(points.begin(), points.end(),
+                                    [](const VersionPoint& pt) { return pt.live; }),
+                     points.end());
+        std::map<std::string, std::string> capnote;
+        if (points.size() > max_versions) {
+            const std::uint64_t dropped = points.size() - max_versions;
+            points.erase(points.begin(), points.begin() + static_cast<std::ptrdiff_t>(dropped));
+            w.versions_capped_paths++;
+            capnote["versions_dropped"] = dec(dropped);
+            // History-only cap: the live tree and the newest versions are
+            // complete, so the walk is not truncated. The Warning and the
+            // entry's versions_dropped say what was left out.
         }
+        const std::string holders = holders_text(path, w);
+        std::map<std::uint32_t, std::vector<std::size_t>> chains;
+        for (std::size_t i = 0; i < points.size() && !w.stop; ++i) {
+            const VersionPoint& pt = points[i];
+            std::map<std::string, std::string> extra;
+            if (i == points.size() - 1) extra = capnote;
+            if (!holders.empty()) extra["inode_history"] = holders;
+            if (pt.unlink) {
+                if (!check_limits(path, w)) break;
+                const DirentNode& d = dirents[pt.dirent];
+                FileMeta m;
+                m.path = path;
+                m.kind = kind_from_dtype(d.type);
+                if (m.kind == EntryKind::Unknown) m.kind = EntryKind::Regular;
+                m.deleted = true;
+                m.version = pt.version;
+                m.mtime = static_cast<std::int64_t>(d.mctime);
+                m.extra["record"] = "unlink";
+                m.extra["parent_inode"] = dec(d.pino);
+                m.extra["jffs2_version"] = dec(d.version);
+                if (d.obsolete) m.extra["obsolete"] = "true";
+                for (auto& [k, v] : extra) m.extra[k] = v;
+                if (m.kind == EntryKind::Regular) {
+                    emit_regular(m, Plan{}, w);
+                } else {
+                    (void)emit_other(m, w, {});
+                }
+                continue;
+            }
+            auto ch = chains.find(pt.ino);
+            if (ch == chains.end()) ch = chains.emplace(pt.ino, chain_of(pt.ino, true)).first;
+            const bool live = w.live_path.count(pt.ino) != 0;
+            if (w.orphan_inos.count(pt.ino)) extra["orphan"] = "true";
+            if (!live) {
+                emit_state(path, ch->second, pt, /*deleted=*/true, /*superseded=*/!pt.final, 0, w,
+                           extra);
+            } else {
+                const std::uint64_t live_v =
+                    w.live_version.count(pt.ino) ? w.live_version.at(pt.ino) : 0;
+                if (pt.version > live_v) extra["newer_than_live"] = "true";
+                emit_state(path, ch->second, pt, /*deleted=*/false, /*superseded=*/true,
+                           live_nlink.count(pt.ino) ? live_nlink.at(pt.ino) : 0, w, extra);
+            }
+        }
+    }
+    for (const std::uint32_t ino : w.orphan_inos) {
+        (void)ino;
+        w.orphans++;
     }
 
-    if (w.versions_capped_inodes != 0)
+    if (w.versions_capped_paths != 0)
         diag(*w.out, Severity::Warning, kCodeLimitVersions,
-             dec(w.versions_capped_inodes) + " inode(s) had older versions dropped (cap " +
-                 dec(max_versions) + " per inode, max_nodes_per_fs / " + dec(kVersionsDivisor) +
-                 "); the newest were kept");
+             dec(w.versions_capped_paths) + " path(s) had older versions dropped (cap " +
+                 dec(max_versions) + " per path, Limits::max_versions_per_entry); the newest " +
+                 "were kept");
     if (w.orphans != 0)
         diag(*w.out, Severity::Info, kCodeOrphanInode,
              dec(w.orphans) +
@@ -1602,6 +1788,14 @@ Status Jffs2Reader::walk(Sink& sink, const WalkOptions& opts, WalkResult& out) {
     w.sink = &sink;
     w.opts = &opts;
     w.out = &out;
+
+    // Resolve every live path without emitting, number every path's states,
+    // then emit. The live tree is byte-identical with and without history.
+    w.dry = true;
+    im.walk_live(w);
+    w.dry = false;
+    w.walked_dirs.clear();
+    im.build_version_space(w);
 
     im.walk_live(w);
     if (opts.history && !w.stop) im.walk_history(w);

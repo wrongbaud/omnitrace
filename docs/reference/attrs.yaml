@@ -238,6 +238,58 @@ src/discovery/validators/mbr.cpp:
   protective: "true when an entry has type 0xEE"
   table: mbr-primary
 
+src/discovery/validators/qnx6.cpp:
+  atime: current superblock atime (Unix seconds)
+  blocks_per_group: allocgroup field of the current superblock
+  blocksize: block size in bytes
+  ctime: current superblock ctime (Unix seconds)
+  current_superblock: which superblock is the current snapshot (primary or secondary)
+  data_start: offset of data block 0 (0x3000 rounded up to a block) as hex
+  endian: byte order of the on-disk structures
+  flags: superblock flags as hex
+  free_blocks: free data blocks per the current superblock
+  free_inodes: free inode records per the current superblock
+  inode_table_size: bytes of the inode table (128 per record)
+  longfile_size: bytes of the long file name table (one name per block)
+  num_blocks: data blocks
+  num_inodes: inode records
+  root_levels: levels of indirection of the inode table
+  second_serial: serial of the other superblock
+  second_superblock_offset: offset of the second superblock relative to the filesystem start as hex, or none
+  serial: serial of the current superblock (higher wins)
+  version: superblock version1.version2
+  volume_id: 16-byte volume id as hex
+
+src/discovery/validators/qnx_ifs.cpp:
+  blocks: compressed blocks in the chain after the startup code (lzo/ucl/lz4)
+  boot_ino: "inodes of the bootstrap executables (boot_ino[], flag bits stripped, comma-joined)"
+  compressed: "none, zlib, lzo, ucl, lz4 or unknown(n): the compression code in flags1"
+  compressed_bytes: bytes of compressed payload inside the blocks (lengths excluded)
+  dir_offset: image header dir_offset (first directory entry)
+  entries: directory entries counted (root included), bounded by max_dir_entries
+  files: regular-file entries among them
+  flags1: startup header flags1 (hex)
+  flags2: startup header flags2 (hex)
+  hdr_dir_size: image header hdr_dir_size (end of the directory)
+  image_checksum: "ok or mismatch: u32 sum of the image filesystem"
+  image_flags: image header flags (hex)
+  image_paddr: startup header image_paddr (hex)
+  image_size: image header image_size (uncompressed images)
+  imagefs_size: startup header imagefs_size (uncompressed image filesystem size)
+  machine: "ELF machine name (aarch64, arm, x86_64, ...) or unknown(0x..)"
+  mountpoint: default mountpoint from the image header
+  paddr_bias: startup header paddr_bias (hex)
+  preboot_size: startup header preboot_size, when non-zero
+  ram_paddr: startup header ram_paddr (hex)
+  ram_size: startup header ram_size
+  script: "true when script_ino names a boot script"
+  startup_checksum: "ok or mismatch: u32 sum of the startup header and code"
+  startup_size: startup header startup_size (header, startup code, trailer)
+  startup_vaddr: startup header startup_vaddr (hex)
+  stored_checksum: "ok, mismatch or unverified: u32 sum of the compressed area"
+  stored_size: startup header stored_size (the whole image as stored)
+  version: startup header version (1)
+
 src/discovery/validators/romfs.cpp:
   checksum: "ok or mismatch: header checksum over the first 512 bytes"
   full_size: full_size field in bytes
@@ -381,6 +433,73 @@ src/filesystems/jffs2/Jffs2Reader.cpp:
   xattr_count: xref nodes seen (inode-to-xattr links, including retired ones)
   xattr_nodes: xattr nodes seen
   xref_nodes: xref nodes seen
+
+src/filesystems/qnx6/Qnx6Reader.cpp:
+  atime: current superblock atime (Unix seconds)
+  blocks_per_group: allocgroup field of the current superblock
+  blocksize: block size in bytes
+  ctime: current superblock ctime (Unix seconds)
+  current_superblock: which superblock is the current snapshot (primary or secondary)
+  data_start: offset of data block 0 as hex
+  endian: byte order of the on-disk structures
+  flags: superblock flags as hex
+  free_blocks: free data blocks per the current superblock
+  free_inodes: free inode records per the current superblock
+  inode_table_size: bytes of the inode table
+  longfile_count: long file names in use (non-empty records)
+  longfile_size: bytes of the long file name table
+  longfile_slots: records the long file name table can hold (size / blocksize)
+  num_blocks: data blocks
+  num_inodes: inode records
+  root_levels: levels of indirection of the inode table
+  second_serial: serial of the other superblock
+  second_superblock_offset: offset of the second superblock as hex, or none
+  serial: serial of the current superblock
+  superblock_crc: ok or bad for the current superblock's checksum
+  truncated: true when the claimed extent runs past the span
+  version: superblock version1.version2
+  volume_id: 16-byte volume id as hex
+
+src/filesystems/qnxifs/QnxIfsReader.cpp:
+  blocks: compressed blocks in the chain (or 1 for zlib)
+  boot_ino: "inodes of the bootstrap executables (flag bits stripped, comma-joined)"
+  chain_paddr: image header chain_paddr, when non-zero (next image)
+  compressed: "none, zlib, lzo, ucl or lz4"
+  compressed_bytes: bytes of compressed payload
+  decompress_capped: "true when a Limits cap stopped decompression (qnx-ifs-decompress-cap)"
+  decompress_failed: "true when a block did not decode (qnx-ifs-decompress-failed)"
+  decompressed_bytes: bytes of image filesystem decoded
+  devices: device, fifo, socket and named-special entries
+  dir_offset: image header dir_offset
+  dirs: directory entries (root excluded)
+  endian: "little or big, from the image header flags"
+  entries: directory entries with a non-zero inode (root excluded)
+  files: regular-file entries
+  flags1: startup header flags1 (hex)
+  flags2: startup header flags2 (hex)
+  hdr_dir_size: image header hdr_dir_size
+  image_checksum: "ok or mismatch: u32 sum of the image filesystem"
+  image_flags: image header flags (hex)
+  image_paddr: startup header image_paddr (hex)
+  image_size: image header image_size
+  imagefs_size: startup header imagefs_size
+  machine: "ELF machine name or unknown(0x..)"
+  mountflags: image header mountflags (hex)
+  mountpoint: default mountpoint, when set
+  paddr_bias: startup header paddr_bias (hex)
+  preboot_size: startup header preboot_size, when non-zero
+  ram_paddr: startup header ram_paddr (hex)
+  ram_size: startup header ram_size
+  root_mode: permission bits of the root directory entry (hex)
+  root_mtime: mtime of the root directory entry
+  script_ino: inode of the boot script, when set
+  skipped_entries: entries with inode 0 (qnx-ifs-entry-skipped), when any
+  startup_checksum: "ok or mismatch: u32 sum of the startup region"
+  startup_size: startup header startup_size
+  startup_vaddr: startup header startup_vaddr (hex)
+  stored_size: startup header stored_size
+  symlinks: symlink entries
+  version: startup header version
 
 src/filesystems/squashfs/SquashfsReader.cpp:
   compression_id: numeric compression id

@@ -134,6 +134,7 @@ hex = "22111968"
 magic_offset = 0x2000
 endian = "little"
 alignment = 4096
+validator = "qnx6"
 description = "QNX6 (Power-Safe) superblock magic 0x68191122; the first superblock sits 0x2000 bytes into the partition, after the boot block"
 references = ["https://elixir.bootlin.com/linux/latest/source/fs/qnx6/qnx6.h", "https://www.qnx.com/developers/docs/7.1/#com.qnx.doc.neutrino.sys_arch/topic/fsys_Power-Safe_filesystem.html"]
 
@@ -145,6 +146,7 @@ hex = "68191122"
 magic_offset = 0x2000
 endian = "big"
 alignment = 4096
+validator = "qnx6"
 description = "QNX6 (Power-Safe) superblock magic 0x68191122, big-endian"
 
 [[signature]]
@@ -152,7 +154,9 @@ name = "qnx-ifs"
 format = "qnx-ifs"
 category = "filesystem"
 hex = "eb7eff00"
+magic_offset = 0
 endian = "little"
+validator = "qnx-ifs"
 description = "QNX IFS startup header (magic 0x00FF7EEB)"
 references = ["https://www.qnx.com/developers/docs/7.1/#com.qnx.doc.neutrino.building/topic/startup_header.html"]
 

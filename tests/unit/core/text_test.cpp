@@ -9,6 +9,11 @@
 #include <string>
 #include <vector>
 
+// Shared with Sink.cpp through src/core/HostNames.h (not a public header).
+namespace omnitrace::detail {
+bool is_windows_reserved_name(std::string_view name);
+}
+
 namespace omnitrace {
 namespace {
 
@@ -184,6 +189,20 @@ TEST(Text, SafeFilenameComponentWindowsReserved) {
     // Appending must not exceed max_len.
     EXPECT_EQ(safe_filename_component("CON", 3), "CO_");
     EXPECT_EQ(safe_filename_component("PRN", 4), "PRN_");
+}
+
+TEST(Text, WindowsReservedNameCheckIsShared) {
+    // safe_filename_component and DiskSink agree on what a device name is.
+    for (const char* n :
+         {"CON", "con", "Con.txt", "NUL", "COM1", "LPT9.log", "nul ", "AUX", "PRN"}) {
+        EXPECT_TRUE(detail::is_windows_reserved_name(n)) << n;
+        EXPECT_NE(safe_filename_component(n), n) << n;
+    }
+    for (const char* n : {"COM0", "CONSOLE", "config", "COM10", "lpt", "CON_", "x"}) {
+        EXPECT_FALSE(detail::is_windows_reserved_name(n)) << n;
+        EXPECT_EQ(safe_filename_component(n), n) << n;
+    }
+    EXPECT_FALSE(detail::is_windows_reserved_name(""));
 }
 
 TEST(Text, SafeFilenameComponentTrimsAtUtf8Boundary) {
