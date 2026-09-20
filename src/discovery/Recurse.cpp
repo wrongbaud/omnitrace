@@ -1139,11 +1139,11 @@ void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::s
 
 constexpr std::size_t kCarveChunk = 8u << 20;  // I/O buffer, not a limit
 
-// Stream [node.location] of `whole` to `path`, hashing as it goes. Empty
-// string on success, otherwise the reason (the partial file is removed).
-std::string carve_bytes(const Span& whole, const Node& n, const std::filesystem::path& path,
-                        Digests& digests, bool& short_read) {
-    const Span src = whole.sub(n.location.offset, n.location.length);
+// Stream the whole of `src` to `path`, hashing as it goes. Empty string on
+// success, otherwise the reason (the partial file is removed). Reads in
+// bounded chunks, so writing out a 15 GiB view costs one 8 MiB buffer.
+std::string stream_span_to_file(const Span& src, const std::filesystem::path& path,
+                                Digests& digests, bool& short_read) {
     short_read = false;
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (!f) return "cannot open '" + path.string() + "' for writing";
@@ -1170,6 +1170,78 @@ std::string carve_bytes(const Span& whole, const Node& n, const std::filesystem:
     f.close();
     digests = h.finish();
     return {};
+}
+
+// Stream [node.location] of `whole` to `path`.
+std::string carve_bytes(const Span& whole, const Node& n, const std::filesystem::path& path,
+                        Digests& digests, bool& short_read) {
+    return stream_span_to_file(whole.sub(n.location.offset, n.location.length), path, digests,
+                               short_read);
+}
+
+// The corrected view's file name: the evidence's stem, the transform that was
+// undone, and .bin -- the same "-swap32" tag carved files already carry
+// (carved_file_name below).
+std::string corrected_view_name(const std::string& evidence_path, const std::string& transform) {
+    std::string stem =
+        safe_filename_component(std::filesystem::path(basename_of(evidence_path)).stem().string());
+    if (stem.empty()) stem = "image";
+    return stem + "-" + transform + ".bin";
+}
+
+// Write the view the analysis runs on, when that view is not the evidence.
+//
+// A word-swapped image is analysed through a SwappedSource, so every offset in
+// the manifest, and every byte of every carved file, belongs to a rendering
+// that exists only in memory. Recording that the image was corrected and then
+// writing nothing leaves the examiner unable to act on any of it: they cannot
+// re-run binwalk, loop-mount a partition or hand the image to a vendor tool
+// without reproducing the swap themselves. Returns the case-relative path, or
+// "" when nothing was written.
+std::string write_corrected_view(const AnalyzeOptions& opts, const Span& view,
+                                 const std::string& evidence_path, const std::string& transform,
+                                 Node& n) {
+    if (!opts.write_corrected_view || opts.out_dir.empty()) return {};
+    if (view.size() > opts.max_carve_bytes) {
+        n.attrs["corrected_skipped"] = "max-carve-bytes";
+        n.diagnostics.push_back({Severity::Warning, "image-corrected-view-limit",
+                                 "the " + transform + " view is " + dec(view.size()) +
+                                     " bytes, over --max-carve-bytes (" +
+                                     dec(opts.max_carve_bytes) +
+                                     "); it was not written, so nothing on disk holds the bytes "
+                                     "the offsets in this manifest refer to"});
+        return {};
+    }
+    const std::filesystem::path dir = std::filesystem::path(opts.out_dir) / "flash";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        n.diagnostics.push_back({Severity::Error, "image-corrected-view-failed",
+                                 "cannot create '" + dir.string() + "': " + ec.message()});
+        return {};
+    }
+    const std::string name = corrected_view_name(evidence_path, transform);
+    Digests d;
+    bool short_read = false;
+    const std::string why = stream_span_to_file(view, dir / name, d, short_read);
+    if (!why.empty()) {
+        n.diagnostics.push_back({Severity::Error, "image-corrected-view-failed", why});
+        return {};
+    }
+    const std::string rel = "flash/" + name;
+    n.attrs["corrected_path"] = rel;
+    n.attrs["corrected_sha256"] = d.sha256;
+    if (short_read)
+        n.diagnostics.push_back({Severity::Warning, "image-corrected-view-short",
+                                 "the evidence stopped returning bytes before its size while the " +
+                                     transform + " view was written; " + rel + " is short"});
+    n.diagnostics.push_back(
+        {Severity::Info, "image-corrected-view",
+         "the analysis ran on the " + transform + " view of the image, written to " + rel +
+             " (sha256 " + d.sha256 +
+             "); every offset in this manifest that is relative to the image is an offset into "
+             "that file, not into the evidence"});
+    return rel;
 }
 
 // The GPT label / index name of a partition entry node, or the offset-format
@@ -1520,10 +1592,18 @@ Status analyze(const std::shared_ptr<const Source>& image, const std::string& ev
     // Nodes found there carry "<image-id>|swap32" in location.source; the
     // Image node itself keeps the evidence's own id and records the decision.
     std::shared_ptr<const Source> view = image;
+    // Names the correction when the analysis is not running on the evidence
+    // itself; that is also the condition for writing the view out below.
+    std::string transform;
     if (opts.image_view) {
         if (Node* n = out.find(image_id)) {
             std::shared_ptr<const Source> chosen = opts.image_view(image, *n);
-            if (chosen) view = std::move(chosen);
+            if (chosen && chosen != image) {
+                view = std::move(chosen);
+                // A caller-supplied hook records its own attrs and diagnostics;
+                // all this knows is that the bytes are no longer the evidence's.
+                transform = "corrected";
+            }
         }
     } else if (Node* n = out.find(image_id)) {
         const SwapDetection d = detect_word_swap(Span::whole(image));
@@ -1548,9 +1628,21 @@ Status analyze(const std::shared_ptr<const Source>& image, const std::string& ev
             }
             if (!have_row) out.coverage.push_back({"word-swap", "supported", kind + " applied"});
             view = std::make_shared<SwappedSource>(image, d.kind);
+            transform = kind;
         }
     }
     const Span whole = Span::whole(view);
+
+    // The corrected view is the only copy of the bytes the rest of this
+    // manifest describes, so it is written before anything is found in it.
+    if (!transform.empty()) {
+        if (Node* n = out.find(image_id)) {
+            const std::string rel = write_corrected_view(opts, whole, evidence_path, transform, *n);
+            if (!rel.empty())
+                for (Coverage& row : out.coverage)
+                    if (row.format == "word-swap") row.detail += "; view written to " + rel;
+        }
+    }
 
     Ctx ctx{opts, out, listings, image_id, 0, 0, {}, {}};
     for (std::size_t i = 0; i < out.coverage.size(); ++i)

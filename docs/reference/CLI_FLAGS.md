@@ -15,18 +15,18 @@ extracted from the CLI11 `add_option` / `add_flag` calls in `apps/cli/*.cpp`
 |---|---|---|---|---|---|---|
 | `(global)` | `--version` | flag | print the version (OMNITRACE_VERSION) and exit | - | - | `apps/cli/main.cpp:40` |
 | `(global)` | `-v,--verbose` | flag | Debug logging | - | - | `apps/cli/main.cpp:41` |
-| `analyze` | `image` | positional | Path to image | required, ExistingFile | - | `apps/cli/analyze_commands.cpp:444` |
-| `analyze` | `-o,--out` | option | Case directory (created) | required | - | `apps/cli/analyze_commands.cpp:447` |
-| `analyze` | `--layout` | option | corpus: INFO.yaml/INFO.md, flash/, partitions/ (default); flat: manifest.yaml, summary.md, partitions.md, filesystems/ and containers/ only | IsMember{corpus,flat} | `corpus` | `apps/cli/analyze_commands.cpp:448` |
-| `analyze` | `--carve` | option | What to carve into partitions/: none, table (partition-table entries) or all (entries plus nested finds) | IsMember{none,table,all} | `all` | `apps/cli/analyze_commands.cpp:454` |
-| `analyze` | `--max-carve-bytes` | option | Largest file to carve (bytes; suffixes K/M/G/T are 1024-based); larger partitions are skipped with a coverage row | AsSizeValue | `4294967296` | `apps/cli/analyze_commands.cpp:460` |
-| `analyze` | `--copy-image` | flag | Copy the image into flash/ (verified by hash); by default only flash/SOURCE.yaml refers to it | - | - | `apps/cli/analyze_commands.cpp:466` |
-| `analyze` | `--no-extract` | flag | List filesystems without writing files | - | - | `apps/cli/analyze_commands.cpp:469` |
-| `analyze` | `--history` | flag | Recover superseded and deleted versions when the format keeps them | - | - | `apps/cli/analyze_commands.cpp:470` |
-| `analyze` | `--max-depth` | option | Nested extraction levels | - | `8` | `apps/cli/analyze_commands.cpp:472` |
-| `analyze` | `--max-files` | option | Entries per run | - | `500000` | `apps/cli/analyze_commands.cpp:474` |
-| `analyze` | `--max-bytes` | option | Total bytes written per run | - | `4294967296` | `apps/cli/analyze_commands.cpp:476` |
-| `analyze` | `--max-file-bytes` | option | Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a larger entry is cut there with a <fmt>-limit-file-bytes warning | AsSizeValue | `1073741824` | `apps/cli/analyze_commands.cpp:478` |
+| `analyze` | `image` | positional | Path to image | required, ExistingFile | - | `apps/cli/analyze_commands.cpp:488` |
+| `analyze` | `-o,--out` | option | Case directory (created) | required | - | `apps/cli/analyze_commands.cpp:491` |
+| `analyze` | `--layout` | option | corpus: INFO.yaml/INFO.md, flash/, partitions/ (default); flat: manifest.yaml, summary.md, partitions.md, filesystems/ and containers/ only | IsMember{corpus,flat} | `corpus` | `apps/cli/analyze_commands.cpp:492` |
+| `analyze` | `--carve` | option | What to carve into partitions/: none, table (partition-table entries) or all (entries plus nested finds) | IsMember{none,table,all} | `all` | `apps/cli/analyze_commands.cpp:498` |
+| `analyze` | `--max-carve-bytes` | option | Largest file to carve (bytes; suffixes K/M/G/T are 1024-based); larger partitions are skipped with a coverage row, as is a corrected view of a word-swapped image | AsSizeValue | `4294967296` | `apps/cli/analyze_commands.cpp:504` |
+| `analyze` | `--copy-image` | flag | Copy the image into flash/ (verified by hash); by default only flash/SOURCE.yaml refers to it | - | - | `apps/cli/analyze_commands.cpp:511` |
+| `analyze` | `--no-extract` | flag | List filesystems without writing files | - | - | `apps/cli/analyze_commands.cpp:514` |
+| `analyze` | `--history` | flag | Recover superseded and deleted versions when the format keeps them | - | - | `apps/cli/analyze_commands.cpp:515` |
+| `analyze` | `--max-depth` | option | Nested extraction levels | - | `8` | `apps/cli/analyze_commands.cpp:517` |
+| `analyze` | `--max-files` | option | Entries per run | - | `500000` | `apps/cli/analyze_commands.cpp:519` |
+| `analyze` | `--max-bytes` | option | Total bytes written per run | - | `4294967296` | `apps/cli/analyze_commands.cpp:521` |
+| `analyze` | `--max-file-bytes` | option | Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a larger entry is cut there with a <fmt>-limit-file-bytes warning | AsSizeValue | `1073741824` | `apps/cli/analyze_commands.cpp:523` |
 | `hash` | `file` | positional | Path to image | required | - | `apps/cli/main.cpp:46` |
-| `scan` | `image` | positional | Path to image | required, ExistingFile | - | `apps/cli/analyze_commands.cpp:436` |
-| `scan` | `--json` | flag | Print findings as JSON | - | - | `apps/cli/analyze_commands.cpp:439` |
+| `scan` | `image` | positional | Path to image | required, ExistingFile | - | `apps/cli/analyze_commands.cpp:480` |
+| `scan` | `--json` | flag | Print findings as JSON | - | - | `apps/cli/analyze_commands.cpp:483` |

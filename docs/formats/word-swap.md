@@ -124,7 +124,38 @@ the verdict is Swap16 or Swap32:
   Image node keeps the evidence's own id and hashes;
 - carved files hold the corrected bytes and their names carry the suffix:
   `partitions/p1-swap32.bin`, `partitions/0x00100000-squashfs-swap32.bin`;
-  `mount.sh` lists those names.
+  `mount.sh` lists those names;
+- the corrected view itself is written to `flash/<stem>-swap32.bin` (below).
+
+## The corrected view on disk
+
+The analysis runs on a rendering that exists only in memory, so without a
+file every offset in `INFO.yaml`, and every byte of every carved partition,
+describes bytes that are on no disk anywhere. An examiner who wants to
+re-run binwalk, loop-mount something the carve missed or hand the image to a
+vendor tool would have to reproduce the swap first, correctly, from a
+sentence in a report.
+
+So `analyze()` writes the view it read to `flash/<stem>-<transform>.bin` --
+the same `-swap32` tag the carved files carry -- as soon as the view is
+chosen and before anything is found in it. It is a streaming, hashing copy
+(8 MiB buffer), so a 15 GiB dump costs no more memory than a carve.
+
+| where | what |
+|---|---|
+| `flash/<stem>-swap32.bin` | the corrected image; undoing the swap on it returns the evidence byte for byte |
+| Image node `attrs.corrected_path` | the case-relative path |
+| Image node `attrs.corrected_sha256` | its SHA-256; the node's own `digests` stay the evidence's |
+| `flash/SOURCE.yaml` `corrected:` | `transform`, `path`, `md5`, `sha1`, `sha256` -- recorded apart from the evidence's hashes, because it is a derived artefact and conflating the two would be the worst kind of quiet error |
+| Coverage `word-swap` | `swap32 applied; view written to flash/...` |
+
+It is written only when `AnalyzeOptions::write_corrected_view` is set (the
+CLI sets it for `--layout corpus`, never for `flat`, which has no `flash/`),
+and only when the view is not the evidence itself. A view larger than
+`--max-carve-bytes` is not written: a second copy of a 15 GiB eMMC dump is
+not something to produce unasked. That case is loud rather than silent,
+because the manifest's offsets are then not reproducible from anything on
+disk.
 
 ## Diagnostics
 
@@ -132,6 +163,10 @@ the verdict is Swap16 or Swap32:
 |---|---|---|---|
 | `image-word-swapped` | Warning | Image | the image is analysed through a swap16/swap32 view; message is the detection evidence |
 | `image-word-swap-tail` | Info | Image | image size is not a multiple of the word size; the last 1-3 bytes are passed through unswapped |
+| `image-corrected-view` | Info | Image | the corrected view was written; message names the path and its SHA-256 |
+| `image-corrected-view-limit` | Warning | Image | the view is over `--max-carve-bytes` and was not written |
+| `image-corrected-view-failed` | Error | Image | the directory or the file could not be written |
+| `image-corrected-view-short` | Warning | Image | the evidence stopped returning bytes before its size; the written file is short |
 
 ## Known gaps
 

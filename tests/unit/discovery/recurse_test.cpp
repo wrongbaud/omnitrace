@@ -1786,3 +1786,155 @@ TEST(Analyze, BackupOnlyGptLeavesACoverageRow) {
     EXPECT_FALSE(has_diag(m.nodes()[0].diagnostics, "gpt-primary-missing"));
     EXPECT_TRUE(has_diag(m.nodes()[0].diagnostics, "gpt-backup-mismatch"));
 }
+
+// -------------------------------------------------- the corrected view file
+
+namespace {
+
+// Reverse the bytes of every `w`-byte word, the way a dumper that read the
+// flash 32 bits at a time on the wrong endianness would have stored it.
+Bytes stored_swapped(Bytes b, std::size_t w = 4) {
+    const std::size_t whole = b.size() - b.size() % w;
+    for (std::size_t i = 0; i < whole; i += w)
+        std::reverse(b.begin() + static_cast<std::ptrdiff_t>(i),
+                     b.begin() + static_cast<std::ptrdiff_t>(i + w));
+    return b;
+}
+
+// Enough structure that detect_word_swap can tell the views apart: ARM NOP
+// words, an ELF header and the banners a firmware carries. SquashFS is no
+// use here -- `hsqs` swaps to `sqsh`, which is also a magic, so it scores
+// the same in both views by design (core/Swap.cpp). One is placed anyway,
+// to have a node whose offset must index into the written file.
+constexpr std::uint64_t kSqAt = 0x10000;
+
+Bytes swappable_firmware() {
+    Bytes b(256u << 10, 0xFF);
+    for (std::size_t i = 0; i < 16; ++i) test::put_u32le(b, i * 4, 0xE1A00000u);  // mov r0, r0
+    test::put_bytes(b, 0x1000,
+                    "\x7f"
+                    "ELF");
+    b[0x1004] = 1;
+    b[0x1005] = 1;
+    b[0x1006] = 1;
+    test::put_bytes(b, 0x2000, "U-Boot 2020.10 (Sep 19 2026 - 09:00:00 +0000)");
+    test::put_bytes(b, 0x2100, "Linux version 5.10.0 (gcc version 10.2.0)");
+    test::put_bytes(b, 0x2200, "Copyright (C) 2026 Example Vendor. All Rights Reserved.");
+    const Bytes sq = synthetic_squashfs();
+    std::copy(sq.begin(), sq.end(), b.begin() + static_cast<std::ptrdiff_t>(kSqAt));
+    return b;
+}
+
+Bytes read_file_bytes(const fsys::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return Bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+
+const Node* image_node(const Manifest& m) {
+    for (const Node& n : m.nodes())
+        if (n.kind == NodeKind::Image) return &n;
+    return nullptr;
+}
+
+bool has_code(const Node& n, const std::string& code) {
+    for (const Diagnostic& d : n.diagnostics)
+        if (d.code == code) return true;
+    return false;
+}
+
+}  // namespace
+
+// A word-swapped image is analysed through a SwappedSource, so every offset in
+// the manifest and every carved byte belongs to a rendering that exists only
+// in memory. Writing it out is what makes the rest of the case directory
+// actionable: without it an examiner cannot re-run another tool, mount a
+// partition or hand the image on without reproducing the swap themselves.
+TEST(Analyze, WordSwappedImageWritesTheViewItAnalysed) {
+    const Bytes plain = swappable_firmware();
+    TempDir out("corrected");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.write_corrected_view = true;
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(stored_swapped(plain)), "dump.bin", opts, m, listings));
+
+    const Node* img = image_node(m);
+    ASSERT_NE(img, nullptr);
+    ASSERT_EQ(img->attrs.count("word_swap"), 1u) << "the image was not detected as swapped";
+    EXPECT_EQ(img->attrs.at("word_swap"), "swap32");
+    ASSERT_EQ(img->attrs.count("corrected_path"), 1u);
+    EXPECT_EQ(img->attrs.at("corrected_path"), "flash/dump-swap32.bin");
+    EXPECT_EQ(img->attrs.at("corrected_sha256").size(), 64u);
+    EXPECT_TRUE(has_code(*img, "image-corrected-view"));
+
+    // The file is the analysed view, byte for byte: undoing the swap gets
+    // back exactly the firmware that was swapped in the first place.
+    const Bytes written = read_file_bytes(out.path / "flash" / "dump-swap32.bin");
+    EXPECT_EQ(written, plain);
+
+    // And the manifest's offsets are offsets into it.
+    const Node* sq = node_at(m, NodeKind::Filesystem, kSqAt, "squashfs");
+    ASSERT_NE(sq, nullptr) << "no squashfs node to check the offsets against";
+    ASSERT_GE(written.size(), sq->location.offset + 4);
+    const auto at = written.begin() + static_cast<std::ptrdiff_t>(sq->location.offset);
+    EXPECT_EQ(std::string(at, at + 4), "hsqs");
+}
+
+// Nothing was corrected, so there is nothing to write: the evidence is already
+// the file the offsets refer to.
+TEST(Analyze, NoCorrectedViewWhenTheImageWasNotCorrected) {
+    TempDir out("corrected-none");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.write_corrected_view = true;
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(swappable_firmware()), "dump.bin", opts, m, listings));
+
+    const Node* img = image_node(m);
+    ASSERT_NE(img, nullptr);
+    EXPECT_EQ(img->attrs.count("word_swap"), 0u);
+    EXPECT_EQ(img->attrs.count("corrected_path"), 0u);
+    EXPECT_FALSE(fsys::exists(out.path / "flash"));
+}
+
+// The option is off by default, which is what `--layout flat` relies on.
+TEST(Analyze, CorrectedViewIsNotWrittenUnlessAskedFor) {
+    TempDir out("corrected-off");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(
+        analyze(source_of(stored_swapped(swappable_firmware())), "dump.bin", opts, m, listings));
+
+    const Node* img = image_node(m);
+    ASSERT_NE(img, nullptr);
+    EXPECT_EQ(img->attrs.at("word_swap"), "swap32");  // still detected and recorded
+    EXPECT_EQ(img->attrs.count("corrected_path"), 0u);
+    EXPECT_FALSE(fsys::exists(out.path / "flash"));
+}
+
+// A second copy of a 15 GiB eMMC dump is not something to write without being
+// asked, so the same bound that holds back an oversized carve holds this back
+// -- loudly, because the manifest's offsets then refer to bytes that are on no
+// disk anywhere.
+TEST(Analyze, CorrectedViewOverTheCarveLimitIsSkippedAndSaysSo) {
+    TempDir out("corrected-limit");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.write_corrected_view = true;
+    opts.max_carve_bytes = 1024;
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(
+        analyze(source_of(stored_swapped(swappable_firmware())), "dump.bin", opts, m, listings));
+
+    const Node* img = image_node(m);
+    ASSERT_NE(img, nullptr);
+    EXPECT_EQ(img->attrs.at("corrected_skipped"), "max-carve-bytes");
+    EXPECT_EQ(img->attrs.count("corrected_path"), 0u);
+    EXPECT_TRUE(has_code(*img, "image-corrected-view-limit"));
+    EXPECT_FALSE(fsys::exists(out.path / "flash" / "dump-swap32.bin"));
+}

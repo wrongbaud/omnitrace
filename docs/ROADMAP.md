@@ -49,7 +49,10 @@ has the per-format table and the two limits.
 
 Word-swapped dumps are detected by `detect_word_swap` (`src/core/Swap.cpp:334`)
 and analysed through a `SwappedSource` view; the Image node gets
-`image-word-swapped`.
+`image-word-swapped`, and the view the analysis actually read is written to
+`flash/<stem>-swap32.bin` with its own hashes in `flash/SOURCE.yaml`. Without
+that file every offset in the manifest, and every carved partition, would
+describe bytes that exist on no disk anywhere.
 
 ### Test assets
 
@@ -61,19 +64,16 @@ Items 1-4 of the original list are done: the ext4, JFFS2, QNX6 and QNX IFS
 readers, and both halves of the container work (readers plus the payload
 recursion). See the section above.
 
-1. **Write the corrected view of a word-swapped image** into the case directory
-   (today only the detection is recorded; `src/discovery/Recurse.cpp`
-   `ImageViewHook` is the extension point).
-2. **Walk an archive that has no end marker but real members.** A damaged
+1. **Walk an archive that has no end marker but real members.** A damaged
    `tar` reports `tar-no-end-marker`, keeps `extent: unknown` and is therefore
    never handed to its reader, so the members it *did* parse are lost. The
    Router-wrt image has one inside a CRC-failed gzip: two members, 998331 bytes,
    none extracted. The `extent: unknown` rule is right in general; the
    question is whether a reader that counted members should be allowed to
    emit them over the bytes it accounted for.
-3. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
+2. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
    `omnitrace report`. `DEVELOPMENT_PLAN.md` §5.4 to §7.
-4. **Phase 4**: web UI, only after the CLI and library are released (decision
+3. **Phase 4**: web UI, only after the CLI and library are released (decision
    `core-before-ui`).
 
 ## Good first improvements

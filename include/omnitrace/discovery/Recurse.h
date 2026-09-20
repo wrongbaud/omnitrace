@@ -154,6 +154,15 @@ struct AnalyzeOptions {
     std::uint64_t max_carve_bytes = 4ull
                                     << 30;  ///< Per carved file; larger ones get `carve_skipped`
                                             ///< and a "carve"/"partial" Coverage row.
+    /// Write the view the analysis actually ran on to
+    /// `<out_dir>/flash/<stem>-<transform>.bin` whenever that view is not the
+    /// evidence itself -- today, a word-swapped image. Without it the case
+    /// directory records that the bytes were corrected but holds no file an
+    /// examiner or another tool can work from, and every offset in the
+    /// manifest refers to bytes that exist nowhere on disk. Bounded by
+    /// `max_carve_bytes`; ignored when `out_dir` is empty or the view is the
+    /// evidence.
+    bool write_corrected_view = false;
 };
 
 // One (filesystem node id, entries) pair per walked filesystem, in node order.

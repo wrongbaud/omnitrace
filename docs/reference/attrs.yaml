@@ -82,6 +82,9 @@ src/containers/zip/ZipReader.cpp:
   zip64: "true" when the archive uses the zip64 records
 
 src/discovery/Recurse.cpp:
+  corrected_path: case-relative path of the corrected rendering the analysis ran on (word-swapped images); every offset on this node's descendants is an offset into that file
+  corrected_sha256: sha256 of the file named by corrected_path
+  corrected_skipped: max-carve-bytes when the corrected view was larger than the limit and was not written
   backup_header: "ok or crc-mismatch: state of the GPT backup header folded into this primary table node"
   backup_lba: LBA of the folded GPT backup header (my_lba of the backup)
   backup_offset: image offset (hex) of the folded GPT backup header

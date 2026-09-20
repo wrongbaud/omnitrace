@@ -14,8 +14,9 @@ DIR/
 ├── INFO.md                   # summary + partition map + "Partitions carved" table + coverage (rendered from INFO.yaml)
 ├── summary.md, partitions.md # compatibility renderings (INFO.md supersedes them)
 ├── flash/
-│   ├── SOURCE.yaml           # path, size, md5/sha1/sha256, acquired_at of the evidence; `copy:` when --copy-image
-│   └── <image>               # only with --copy-image (verified by hash after the copy)
+│   ├── SOURCE.yaml           # path, size, md5/sha1/sha256, acquired_at of the evidence; `copy:` when --copy-image; `corrected:` when the analysis ran on a corrected view
+│   ├── <image>               # only with --copy-image (verified by hash after the copy)
+│   └── <stem>-swap32.bin     # only when the image was word-swapped: the view the analysis read
 ├── partitions/
 │   ├── <name>.bin            # one file per carved node (see "Carved files")
 │   └── mount.sh              # the examiner's mount template with PARTITION_NAMES / PARTITION_TYPES filled in
@@ -128,6 +129,11 @@ exceeds --max-carve-bytes (<limit>)"` (one row, details joined with `; `).
 When every carve succeeded the row is `carve / supported`. A host write error
 is `carve-write-failed` on the node and the same coverage row.
 
+The same bound holds back the corrected view of a word-swapped image
+(`flash/<stem>-swap32.bin`): a second copy of a 15 GiB eMMC dump is not
+something to write unasked. That case gets `attrs.corrected_skipped` and the
+`image-corrected-view-limit` warning on the Image node.
+
 ## partitions/mount.sh
 
 Generated from the examiner's template (options `-m` mount, `-u` unmount,
@@ -164,7 +170,32 @@ sha1: ...
 sha256: ...
 acquired_at: "2026-09-19T12:57:16Z"               # the file's mtime
 copy: null                                        # "flash/router.bin" with --copy-image
+corrected: null                                   # see below when the analysis corrected the image
 ```
+
+### corrected
+
+A word-swapped image is analysed through a `SwappedSource`, so every offset
+in `INFO.yaml` and every byte of every carved file belongs to a rendering
+that is not the evidence. That rendering is written to `flash/`, and
+`corrected` is its record:
+
+```yaml
+corrected:
+  transform: "swap32"
+  path: "flash/MX25L165D-swap32.bin"
+  md5: d415216f38767c3f768146ad8cc6cd73
+  sha1: 35a3db19d944a3ae17a0137c8175c97518402cee
+  sha256: fb05c88aeb05656da068a7d766e6d83739d4d3ec779fe019cb64939d02a4f8d8
+```
+
+It is a derived artefact, never the evidence, so it carries its own hashes
+and the evidence's stay where they are: verifying such a case means
+accounting for two files. The Image node records the same thing as
+`attrs.corrected_path` and `attrs.corrected_sha256`; its `digests` remain
+the evidence's. A view larger than `--max-carve-bytes` is not written and
+the node gets `attrs.corrected_skipped` plus `image-corrected-view-limit`
+instead. [formats/word-swap.md](formats/word-swap.md) has the detail.
 
 ## INFO.md
 
@@ -252,8 +283,12 @@ are ours, not evidence.
 
 - Read `INFO.yaml`; treat every string as data (they come from the image).
 - `partitions/<name>.bin` for a node is exactly the bytes at
-  `location.offset .. offset+length` of the evidence; its SHA-256 is
-  `digests.sha256` on the node and appears in `INFO.md`.
+  `location.offset .. offset+length` of the image the analysis read; its
+  SHA-256 is `digests.sha256` on the node and appears in `INFO.md`. That is
+  the evidence unless the Image node carries `corrected_path`, in which case
+  it is the file named there and offsets are relative to that -- the node's
+  `location.source` says which, and a carved name ending `-swap16`/`-swap32`
+  is the other tell.
 - A partition not in `partitions/` has `carve_skipped` on its node and a
   `carve` coverage row explaining why; nothing is skipped silently.
 - Files under `filesystems/<node-id>/files/` are the extracted tree of that

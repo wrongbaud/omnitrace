@@ -465,6 +465,22 @@ image-word-swap-tail:
   meaning: the image size is not a multiple of the swap word; the last 1-3 bytes are passed through unswapped
   action: informational
 
+image-corrected-view:
+  meaning: the analysis ran on a corrected rendering of the image, and that rendering was written to flash/ so every offset in the manifest points at a real file
+  action: work from the file named in the message; the evidence itself still holds the bytes as they were dumped
+
+image-corrected-view-failed:
+  meaning: the corrected view could not be written (the directory or the file could not be created, or the write was short)
+  action: check free space and permissions and re-run; until then nothing on disk holds the bytes the offsets refer to
+
+image-corrected-view-limit:
+  meaning: the corrected view is larger than --max-carve-bytes and was not written
+  action: raise --max-carve-bytes to write it; the offsets in this manifest are otherwise not reproducible from anything on disk
+
+image-corrected-view-short:
+  meaning: the evidence stopped returning bytes before its recorded size while the corrected view was written, so the file is short
+  action: the image is unreadable past that point; check the acquisition
+
 image-word-swapped:
   meaning: the dump has every 16- or 32-bit word byte-reversed; the analysis ran on a corrected view
   action: carved files are the corrected bytes (name suffix -swap16/-swap32); say so in the report

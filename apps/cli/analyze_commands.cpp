@@ -228,8 +228,35 @@ std::string yaml_quote(const std::string& raw) {
     return out + "\"";
 }
 
+// The Image node's record of a corrected view, when analyze() wrote one:
+// {transform, path, sha256}. Empty `path` means there is none.
+struct CorrectedView {
+    std::string transform, path, sha256;
+};
+CorrectedView corrected_view_of(const Manifest& m) {
+    CorrectedView c;
+    for (const Node& n : m.nodes()) {
+        if (n.kind != NodeKind::Image) continue;
+        const auto path = n.attrs.find("corrected_path");
+        if (path == n.attrs.end()) continue;
+        c.path = path->second;
+        const auto sha = n.attrs.find("corrected_sha256");
+        if (sha != n.attrs.end()) c.sha256 = sha->second;
+        const auto swap = n.attrs.find("word_swap");
+        c.transform = swap != n.attrs.end() ? swap->second : "corrected";
+        break;
+    }
+    return c;
+}
+
 // flash/SOURCE.yaml: where the evidence came from and what it hashes to.
-std::string source_yaml(const Evidence& ev, const std::string& copied_to) {
+//
+// `corrected` is the view the analysis actually read. It is a derived file,
+// never the evidence, so it is recorded separately and with its own hashes --
+// an examiner who verifies this case has two artefacts to account for, and
+// conflating them would be the worst kind of quiet error.
+std::string source_yaml(const Evidence& ev, const std::string& copied_to,
+                        const CorrectedView& corrected, const std::filesystem::path& out) {
     std::string y = "schema: omnitrace-source/1\n";
     y += "path: " + yaml_quote(ev.path) + "\n";
     y += "name: " + yaml_quote(std::filesystem::path(ev.path).filename().string()) + "\n";
@@ -239,6 +266,18 @@ std::string source_yaml(const Evidence& ev, const std::string& copied_to) {
     y += "sha256: " + ev.digests.sha256 + "\n";
     y += "acquired_at: " + yaml_quote(ev.acquired_at) + "\n";
     y += "copy: " + (copied_to.empty() ? std::string("null") : yaml_quote(copied_to)) + "\n";
+    if (corrected.path.empty()) {
+        y += "corrected: null\n";
+    } else {
+        Digests d;
+        const Status st = hash_file((out / corrected.path).string(), d);
+        y += "corrected:\n";
+        y += "  transform: " + yaml_quote(corrected.transform) + "\n";
+        y += "  path: " + yaml_quote(corrected.path) + "\n";
+        y += "  md5: " + (st ? d.md5 : std::string()) + "\n";
+        y += "  sha1: " + (st ? d.sha1 : std::string()) + "\n";
+        y += "  sha256: " + (st ? d.sha256 : corrected.sha256) + "\n";
+    }
     return y;
 }
 
@@ -324,6 +363,10 @@ void cmd_analyze(const AnalyzeArgs& a) {
     opts.limits = a.limits;
     opts.carve = corpus ? carve_from(a.carve) : discovery::Carve::None;
     opts.max_carve_bytes = a.max_carve_bytes;
+    // flash/ only exists in the corpus layout, and that is where a corrected
+    // view belongs: it is the image the analysis read, not something carved
+    // out of it.
+    opts.write_corrected_view = corpus;
     opts.open_reader = [](const std::string& format) {
         return fs::FilesystemRegistry::instance().create(format);
     };
@@ -351,7 +394,8 @@ void cmd_analyze(const AnalyzeArgs& a) {
         if (a.copy_image && !m.evidence.empty())
             copied = copy_image_into(flash, a.image, m.evidence.back());
         if (!m.evidence.empty())
-            write_text(flash / "SOURCE.yaml", source_yaml(m.evidence.back(), copied));
+            write_text(flash / "SOURCE.yaml",
+                       source_yaml(m.evidence.back(), copied, corrected_view_of(m), out));
     } else {
         write_text(out / "manifest.yaml", yaml);
     }
@@ -460,7 +504,8 @@ void register_analyze_commands(CLI::App& app) {
     analyze
         ->add_option("--max-carve-bytes", args->max_carve_bytes,
                      "Largest file to carve (bytes; suffixes K/M/G/T are 1024-based); larger "
-                     "partitions are skipped with a coverage row")
+                     "partitions are skipped with a coverage row, as is a corrected view of a "
+                     "word-swapped image")
         ->transform(CLI::AsSizeValue(false))
         ->capture_default_str();
     analyze->add_flag("--copy-image", args->copy_image,
