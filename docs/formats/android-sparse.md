@@ -7,12 +7,16 @@ layout, what the validator walks, which attrs and diagnostics it emits, and
 why the filesystem inside is not analysed yet.
 
 `src/discovery/validators/android_sparse.cpp` (validator `android-sparse`),
-signature `android-sparse` in `signatures/core.toml` (magic `ed 26 ff 3a`,
-little-endian, format `android-sparse`, category `container`). There is no
-container reader: `analyze` makes a `container` node, adds the
-`analyze-no-reader` warning and the coverage row
-`android-sparse / unsupported / "no container reader registered"`, and
-carves the sparse file as is.
+signature `android-sparse` in `signatures/core.toml`, reader
+`src/containers/sparse/SparseReader.{h,cpp}`, tests
+`tests/unit/containers/archive_test.cpp`.
+
+**The magic is `3a ff 26 ed` on disk.** `SPARSE_HEADER_MAGIC` is `0xed26ff3a`
+and the field is `__le32`, so the bytes are the reverse of the constant. The
+signature held the constant instead and therefore never matched a real image;
+both it and the validator's unit test had it reversed the same way, which is
+exactly why the test passed. `img2simg` output is what found it, and the
+reader's test now checks that the reversed bytes are *refused*.
 
 ## On-disk layout
 
@@ -76,18 +80,45 @@ Neither `image_checksum` nor the crc32 chunks are verified.
 | `sparse-chunk-size-mismatch` | warning | `total_sz` disagrees with the type and `chunk_sz`; walk stops |
 | `sparse-block-count-mismatch` | warning | the chunks cover a different number of blocks than `total_blks` |
 
+## What the reader writes
+
+One entry, `image`: the raw filesystem the chunks describe. That is the whole
+point of the format — a `system.img` is a sparse ext4 and is unreadable until
+it is expanded — and the analysis pass re-scans what the reader writes, so the
+filesystem inside is found and walked without any special case.
+
+The output is synthesised rather than copied, so it goes to the Sink in 1 MiB
+pieces and is never held whole; `Limits::max_file_bytes` bounds it, which a
+multi-gigabyte `system.img` meets long before memory does. Each chunk kind
+contributes what it is defined to: a raw chunk its stored bytes, a fill chunk
+its 4-byte value repeated, a don't-care chunk zeros (which is what `simg2img`
+writes, and the output has to be the right length for anything to read it),
+and a CRC32 chunk nothing at all.
+
+When the chunks do not cover the blocks the header claims, the entry is still
+emitted and marked truncated with `sparse-bad-chunk`: a short image is better
+evidence than none.
+
+`ContainerInfo`: `size` (the input the chunks used), and attrs `block_size`,
+`total_blocks`, `total_chunks`, `output_size`.
+
 ## Verified on
 
-* Synthetic images in `tests/unit/discovery/validators_test.cpp` (a valid
-  raw+fill+don't-care list, a truncated list, a bad chunk type). There is no
-  fixture image yet; `tests/fixtures/generate.py` does not produce one.
+* `img2simg` applied to `tests/fixtures/out/ext4.img`: the expanded `image` is
+  byte-identical to `simg2img`'s output, and the ext4 inside it is then walked
+  to its 21 entries.
+* Synthetic images in `tests/unit/discovery/validators_test.cpp` and
+  `tests/unit/containers/archive_test.cpp` (a raw+fill+don't-care list, a
+  truncated list, a bad chunk type, a block count that disagrees with the
+  header). There is no fixture image yet; `tests/fixtures/generate.py` does
+  not produce one.
 
 ## Not yet supported
 
-* No expander: the raw chunks are not concatenated and the fill / don't-care
-  chunks not materialised, so the ext4 or f2fs inside is not found and not
-  walked. Expanding is what makes the format useful; it is the first thing to
-  add (`DEVELOPMENT_PLAN.md` 5.2 lists it under structured headers).
+* The image checksum in the header and any CRC32 chunk are read but not
+  verified against the expanded output.
+* Sparse images are not reassembled across the several files `fastboot`
+  splits a large one into.
 * Because the scanner also runs over the sparse file's bytes, a raw chunk that
   happens to hold a superblock can produce a nested finding at the wrong
   offset and with a wrong extent. Treat any finding nested under an

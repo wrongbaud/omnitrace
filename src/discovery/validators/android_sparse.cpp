@@ -1,6 +1,7 @@
 // android_sparse.cpp — Android sparse image validator.
 //
-// 28-byte little-endian file header: 0 magic ED 26 FF 3A, 4 major u16 (1),
+// 28-byte little-endian file header: 0 magic u32 0xED26FF3A, so the bytes on
+// disk are 3a ff 26 ed; 4 major u16 (1),
 // 6 minor u16 (0), 8 file_hdr_sz u16 (28), 10 chunk_hdr_sz u16 (12),
 // 12 blk_sz u32 (multiple of 4), 16 total_blks, 20 total_chunks, 24 checksum.
 // Chunk header: 0 type u16 (CAC1 raw, CAC2 fill, CAC3 don't-care, CAC4 crc32),

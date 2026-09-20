@@ -33,7 +33,7 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `ubifs` | filesystem | validated to verified (`ubifs`) | yes | no | no (no reader) | mtd (comment) | [ubifs.md](../formats/ubifs.md) | aligned hits only (`min_io_size` or 512); inside UBI the size is not meaningful; signatures: `ubifs` |
 | `7z` | container | magic-only | no | no | n.a. | - | [signatures.md](../formats/signatures.md) (plain magic) | signatures: `7z` |
 | `android-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:197`) | n.a. | - | [android-boot.md](../formats/android-boot.md) | size is the sum of page-aligned sections, header v0-v4; signatures: `android-boot` |
-| `android-sparse` | container | validated to consistent (`android-sparse`) | yes | no | n.a. | - | [android-sparse.md](../formats/android-sparse.md) | size is the chunk walk; no reader expands the image yet; signatures: `android-sparse` |
+| `android-sparse` | container | validated to consistent (`android-sparse`) | yes | yes (`src/containers/sparse/SparseReader.cpp:258`) | n.a. | - | [android-sparse.md](../formats/android-sparse.md) | size is the chunk walk; no reader expands the image yet; signatures: `android-sparse` |
 | `android-vendor-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:198`) | n.a. | - | [android-boot.md](../formats/android-boot.md) | signatures: `android-vendor-boot` |
 | `cpio` | container | validated to consistent (`cpio`) | yes | yes (`src/containers/cpio/CpioReader.cpp:295`) | n.a. | - | [cpio.md](../formats/cpio.md) | signatures: `cpio-newc`, `cpio-crc`, `cpio-odc` |
 | `fit` | container | validated to verified (`fit`) | yes | no | n.a. | - | [fit.md](../formats/fit.md) | signatures: `fit` |
@@ -60,5 +60,5 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 ## Counts
 
 - 52 signatures over 36 format ids
-- 27 validators, 7 filesystem reader(s), 11 container reader(s)
+- 27 validators, 7 filesystem reader(s), 12 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

@@ -766,3 +766,94 @@ TEST(StreamContainer, Lz4AndZstdAreRegisteredAndScreenTheirMagic) {
     EXPECT_FALSE(reader->walk(sink, fs::WalkOptions{}, r));
     EXPECT_TRUE(r.entries_out.empty());
 }
+
+// ----------------------------------------------------------- android sparse
+
+// A sparse image with one chunk of each kind, so the expansion is checked
+// against the exact bytes each is defined to produce.
+Bytes sparse_of(std::uint32_t block, const std::string& raw, std::uint32_t fill_blocks,
+                std::uint32_t fill_value, std::uint32_t hole_blocks) {
+    const std::uint32_t raw_blocks = static_cast<std::uint32_t>(raw.size()) / block;
+    Bytes out(28, 0);
+    put_le32(out, 0, 0xED26FF3AU);  // as the __le32 field holds it
+    auto le16 = [&](std::size_t off, std::uint16_t v) {
+        out[off] = static_cast<std::uint8_t>(v);
+        out[off + 1] = static_cast<std::uint8_t>(v >> 8);
+    };
+    le16(4, 1);
+    le16(6, 0);
+    le16(8, 28);
+    le16(10, 12);
+    put_le32(out, 12, block);
+    put_le32(out, 16, raw_blocks + fill_blocks + hole_blocks);
+    put_le32(out, 20, 3);
+    put_le32(out, 24, 0);
+
+    auto chunk = [&](std::uint16_t type, std::uint32_t blocks, std::uint32_t total) {
+        const std::size_t at = out.size();
+        out.resize(at + 12, 0);
+        out[at] = static_cast<std::uint8_t>(type);
+        out[at + 1] = static_cast<std::uint8_t>(type >> 8);
+        put_le32(out, at + 4, blocks);
+        put_le32(out, at + 8, total);
+    };
+    chunk(0xCAC1, raw_blocks, 12 + static_cast<std::uint32_t>(raw.size()));
+    out.insert(out.end(), raw.begin(), raw.end());
+    chunk(0xCAC2, fill_blocks, 16);
+    const std::size_t fill_at = out.size();
+    out.resize(fill_at + 4, 0);
+    put_le32(out, fill_at, fill_value);
+    chunk(0xCAC3, hole_blocks, 12);
+    return out;
+}
+
+TEST(SparseContainer, ExpandsRawFillAndDontCareChunks) {
+    constexpr std::uint32_t kBlock = 8;
+    const std::string raw(kBlock * 2, 'R');
+    const Bytes img = sparse_of(kBlock, raw, 1, 0xAABBCCDDU, 2);
+
+    std::shared_ptr<const Source> keep;
+    auto reader = make("android-sparse");
+    ASSERT_NE(reader, nullptr);
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    ListingSink sink(true, Limits{});
+    fs::WalkResult r;
+    ASSERT_TRUE(reader->walk(sink, fs::WalkOptions{}, r));
+
+    ASSERT_EQ(r.entries_out.size(), 1u);
+    EXPECT_EQ(r.entries_out[0].meta.path, "image");
+    EXPECT_EQ(r.entries_out[0].meta.size, kBlock * 5u);  // 2 raw + 1 fill + 2 hole
+    EXPECT_FALSE(r.entries_out[0].truncated);
+    EXPECT_EQ(reader->info().attrs.at("output_size"), std::to_string(kBlock * 5));
+    EXPECT_EQ(reader->info().attrs.at("block_size"), std::to_string(kBlock));
+    EXPECT_EQ(reader->info().size, img.size());
+}
+
+TEST(SparseContainer, ChunksThatDoNotCoverTheHeaderAreReported) {
+    constexpr std::uint32_t kBlock = 8;
+    Bytes img = sparse_of(kBlock, std::string(kBlock, 'R'), 1, 0, 1);
+    put_le32(img, 16, 99);  // header claims far more blocks than the chunks carry
+
+    std::shared_ptr<const Source> keep;
+    auto reader = make("android-sparse");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    ListingSink sink(true, Limits{});
+    fs::WalkResult r;
+    ASSERT_TRUE(reader->walk(sink, fs::WalkOptions{}, r));
+    EXPECT_TRUE(r.truncated);
+    EXPECT_TRUE(has_code(r.diagnostics, "sparse-bad-chunk"));
+    ASSERT_EQ(r.entries_out.size(), 1u);
+    EXPECT_TRUE(r.entries_out[0].truncated);
+}
+
+TEST(SparseContainer, OpenRejectsWhatIsNotSparse) {
+    std::shared_ptr<const Source> keep;
+    const Bytes junk(64, 0x5A);
+    EXPECT_FALSE(make("android-sparse")->open(span_of(junk, keep)));
+    // The magic written the wrong way round must not open either: that is the
+    // bug the signature had until a real img2simg image caught it.
+    Bytes reversed(64, 0);
+    reversed[0] = 0xED; reversed[1] = 0x26; reversed[2] = 0xFF; reversed[3] = 0x3A;
+    std::shared_ptr<const Source> keep2;
+    EXPECT_FALSE(make("android-sparse")->open(span_of(reversed, keep2)));
+}

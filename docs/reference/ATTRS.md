@@ -99,16 +99,16 @@ Source: `src/discovery/validators/android_sparse.cpp` (10 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `block_size` | `src/discovery/validators/android_sparse.cpp:45` | blk_sz from the file header (multiple of 4) |
-| `chunks_walked` | `src/discovery/validators/android_sparse.cpp:114` | chunk headers actually parsed before the walk stopped |
-| `crc_chunks` | `src/discovery/validators/android_sparse.cpp:113` | number of CRC32 chunks |
-| `dont_care_chunks` | `src/discovery/validators/android_sparse.cpp:112` | number of don't-care chunks |
-| `fill_chunks` | `src/discovery/validators/android_sparse.cpp:111` | number of fill chunks |
-| `image_checksum` | `src/discovery/validators/android_sparse.cpp:49` | header checksum field as hex |
-| `output_size` | `src/discovery/validators/android_sparse.cpp:48` | total_blocks * block_size, the expanded image size |
-| `raw_chunks` | `src/discovery/validators/android_sparse.cpp:110` | number of raw chunks |
-| `total_blocks` | `src/discovery/validators/android_sparse.cpp:46` | total_blks from the header |
-| `total_chunks` | `src/discovery/validators/android_sparse.cpp:47` | total_chunks from the header |
+| `block_size` | `src/discovery/validators/android_sparse.cpp:46` | blk_sz from the file header (multiple of 4) |
+| `chunks_walked` | `src/discovery/validators/android_sparse.cpp:115` | chunk headers actually parsed before the walk stopped |
+| `crc_chunks` | `src/discovery/validators/android_sparse.cpp:114` | number of CRC32 chunks |
+| `dont_care_chunks` | `src/discovery/validators/android_sparse.cpp:113` | number of don't-care chunks |
+| `fill_chunks` | `src/discovery/validators/android_sparse.cpp:112` | number of fill chunks |
+| `image_checksum` | `src/discovery/validators/android_sparse.cpp:50` | header checksum field as hex |
+| `output_size` | `src/discovery/validators/android_sparse.cpp:49` | total_blocks * block_size, the expanded image size |
+| `raw_chunks` | `src/discovery/validators/android_sparse.cpp:111` | number of raw chunks |
+| `total_blocks` | `src/discovery/validators/android_sparse.cpp:47` | total_blks from the header |
+| `total_chunks` | `src/discovery/validators/android_sparse.cpp:48` | total_chunks from the header |
 
 ## validator `cpio`
 

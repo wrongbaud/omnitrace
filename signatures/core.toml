@@ -286,7 +286,10 @@ references = ["https://source.android.com/docs/core/architecture/bootloader/part
 name = "android-sparse"
 format = "android-sparse"
 category = "container"
-hex = "ed26ff3a"
+# SPARSE_HEADER_MAGIC is 0xed26ff3a in a __le32 field, so the bytes on disk
+# are the reverse. Writing the constant here instead meant the signature never
+# matched a real image; img2simg output is what caught it.
+hex = "3aff26ed"
 endian = "little"
 validator = "android-sparse"
 description = "Android sparse image (simg); chunk list walked"

@@ -17,6 +17,7 @@ void omnitrace_container_anchor_androidboot();
 void omnitrace_container_anchor_cpio();
 void omnitrace_container_anchor_tar();
 void omnitrace_container_anchor_zip();
+void omnitrace_container_anchor_sparse();
 
 void link_builtin_containers() {
     // Calling each (empty) anchor is enough to make the linker keep its object
@@ -27,6 +28,7 @@ void link_builtin_containers() {
     omnitrace_container_anchor_cpio();
     omnitrace_container_anchor_tar();
     omnitrace_container_anchor_zip();
+    omnitrace_container_anchor_sparse();
 }
 }  // namespace detail
 

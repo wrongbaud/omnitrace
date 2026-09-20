@@ -889,6 +889,10 @@ sink-version-skipped:
   meaning: a superseded or deleted version was recorded but not written (no --history)
   action: re-run with --history to extract it
 
+sparse-bad-chunk:
+  meaning: an Android sparse chunk has an unknown type or an unwalkable size, or the chunks do not cover the blocks the header claims
+  action: the expanded image is short or stops early; carve the sparse image and try simg2img
+
 sparse-bad-chunk-type:
   meaning: a chunk has a type other than raw, fill, don't-care or crc32
   action: the image is damaged or not sparse; the walk stopped there

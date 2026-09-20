@@ -961,7 +961,10 @@ TEST(ZstdValidator, FrameHeader) {
 
 Bytes sparse_image() {
     Bytes b(28 + 12 + 4096 * 2 + 16 + 12 + 16, 0);
-    test::put_u32le(b, 0, 0x3AFF26ED);
+    // SPARSE_HEADER_MAGIC as the __le32 field holds it, so the bytes on disk
+    // are 3a ff 26 ed. Writing the constant byte-reversed here is what let the
+    // signature be wrong the same way without the test noticing.
+    test::put_u32le(b, 0, 0xED26FF3A);
     test::put_u16le(b, 4, 1);
     test::put_u16le(b, 6, 0);
     test::put_u16le(b, 8, 28);

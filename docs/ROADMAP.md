@@ -19,7 +19,7 @@ Today that is 52 signatures over 36 format ids, 27 validators, 7 filesystem
 readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`) and 9
 container readers: `gzip`, `xz`, `lzma`, `lz4` and `zstd` (one
 `StreamReader`), `tar`, `cpio`, `zip`, `uimage`, `android-boot` and
-`android-vendor-boot`.
+`android-vendor-boot` and `android-sparse`.
 `--history` is recovered by the ext, JFFS2 and QNX6 readers.
 
 Nested analysis runs for extracted files: every file a walk writes to the host
@@ -47,12 +47,10 @@ Items 1-4 of the original list are done: the ext4, JFFS2, QNX6 and QNX IFS
 readers, and both halves of the container work (readers plus the payload
 recursion). See the section above.
 
-1. **The remaining container readers.** `android-sparse` (expands a sparse
-   image back into the raw filesystem; the validator already walks the chunk
-   list), `fit` (the FDT parser to reuse is in
+1. **The remaining container readers.** `fit` (the FDT parser to reuse is in
    `src/discovery/validators/fit.cpp` and would move to `src/core/`) and `ubi`
    (which is really UBI volume reassembly, and pairs with the UBIFS reader
-   below). `src/containers/` holds five readers over nine formats and
+   below). `src/containers/` holds six readers over twelve formats and
    `tests/unit/containers/` the test shapes.
 2. **bzip2 and LZO stream support**, the last two compressed formats with no
    signature. Both need a new third-party dependency (libbz2, liblzo2), which
