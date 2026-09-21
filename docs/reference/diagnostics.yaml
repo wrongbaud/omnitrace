@@ -165,6 +165,26 @@ cpio-truncated:
   meaning: a cpio member or the archive itself runs past the available data
   action: the dump is short; entries before the cut are still extracted
 
+cramfs-bad-block:
+  meaning: a file's block-pointer table or one of its block pointers lies outside the image, or a pointer runs backwards
+  action: the image is damaged or the offsets were forged; the entry is listed with whatever decoded before that block
+
+cramfs-bad-inode:
+  meaning: an inode is unreadable, runs past its directory's data, or a directory's data lies outside the image
+  action: the rest of that directory is not walked; entries before it are still emitted
+
+cramfs-bad-magic:
+  meaning: no cramfs magic at the start of the span, in either byte order
+  action: contributor error or a stale signature; the node keeps the validator's finding
+
+cramfs-bad-root:
+  meaning: the root inode is unreadable or is not a directory
+  action: the superblock matched but its root does not; treat the image as damaged and carve it for another tool
+
+cramfs-bad-signature:
+  meaning: the 16-byte "Compressed ROMFS" signature is not at offset 16
+  action: the 4-byte magic alone turns up in compressed data; without the signature this is not a cramfs image
+
 cramfs-bad-size:
   meaning: the superblock size or file count is out of range
   action: magic-tier hit; probably not a cramfs image
@@ -173,6 +193,30 @@ cramfs-crc-mismatch:
   meaning: the image CRC32 does not match the superblock field
   action: the image is modified or truncated; extract with care and note it in the report
 
+cramfs-cycle:
+  meaning: a directory's data offset points at a directory that was already walked, so the tree loops
+  action: the branch is cut there; the image is damaged or was built to loop
+
+cramfs-decompress-failed:
+  meaning: a zlib block did not inflate
+  action: the block is damaged or uses a variant this build does not have; the file is cut at that block and marked truncated
+
+cramfs-limit-depth:
+  meaning: directory nesting went deeper than the reader's bound
+  action: the image is looping through fresh offsets each step; the branch is not descended
+
+cramfs-limit-nodes:
+  meaning: max_nodes_per_fs was reached
+  action: raise --max-nodes-per-fs for a trusted image; this is the guard against a directory run that never ends
+
+cramfs-not-open:
+  meaning: walk() was called before a successful open()
+  action: contributor error in a caller, not something an image causes
+
+cramfs-sink-error:
+  meaning: the Sink refused an entry (unsafe path or a limit)
+  action: see the sink-* code quoted in the message
+
 cramfs-truncated:
   meaning: the superblock size extends past the available data; size clamped
   action: the dump or partition is short
@@ -180,6 +224,10 @@ cramfs-truncated:
 cramfs-unknown-flags:
   meaning: flag bits outside the ones cramfs defines are set
   action: informational; may be a vendor variant
+
+cramfs-unsupported-flags:
+  meaning: the image sets EXT_BLOCK_POINTERS, whose high pointer bits this build does not decode
+  action: file contents may be wrong; compare against the vendor's tooling before relying on them
 
 cramfs-v1-no-size:
   meaning: FSID_VERSION_2 is clear, so the size and fsid fields are not valid and the extent is unknown
@@ -885,6 +933,18 @@ romfs-bad-first-header:
   meaning: the first file header points past the end of the image
   action: structural-tier hit; damaged or not romfs
 
+romfs-bad-header:
+  meaning: a file header is unreadable or has an empty name
+  action: the rest of that directory list is not walked; entries before it are still emitted
+
+romfs-bad-link:
+  meaning: a hard link does not resolve to a readable header, or a chain of them loops
+  action: the entry is skipped; the image is damaged or the offset was forged
+
+romfs-bad-magic:
+  meaning: no "-rom1fs-" at the start of the span
+  action: contributor error or a stale signature; the node keeps the validator's finding
+
 romfs-bad-name:
   meaning: the volume name is not printable ASCII
   action: magic string inside other data; ignore
@@ -897,9 +957,33 @@ romfs-checksum-mismatch:
   meaning: the header checksum over the first 512 bytes is not zero
   action: modified or damaged image; extract with care
 
+romfs-cycle:
+  meaning: a directory list or a directory's first child points at a header already visited
+  action: the branch is cut there; romfs is a graph of raw offsets and nothing in the format forbids a loop
+
+romfs-limit-depth:
+  meaning: directory nesting went deeper than the reader's bound
+  action: the image loops through fresh offsets each step; the branch is not descended
+
+romfs-limit-nodes:
+  meaning: max_nodes_per_fs was reached
+  action: raise --max-nodes-per-fs for a trusted image; this is the guard against a list that never ends
+
+romfs-not-open:
+  meaning: walk() was called before a successful open()
+  action: contributor error in a caller, not something an image causes
+
+romfs-sink-error:
+  meaning: the Sink refused an entry (unsafe path or a limit)
+  action: see the sink-* code quoted in the message
+
 romfs-truncated:
   meaning: full_size extends past the available data
   action: the dump or partition is short
+
+romfs-truncated-entry:
+  meaning: an entry claims more bytes than the image holds
+  action: what was present is still emitted and the entry marked truncated; the image is short or the size was forged
 
 romfs-truncated-header:
   meaning: fewer than 16 bytes for the superblock

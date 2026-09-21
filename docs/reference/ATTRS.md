@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-611 keys across 50 source files.
+618 keys across 52 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -763,6 +763,18 @@ Source: `src/discovery/validators/zstd.cpp` (6 keys)
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 
+Source: `src/filesystems/cramfs/CramfsReader.cpp` (5 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `blocks` | `src/filesystems/cramfs/CramfsReader.cpp:247` | fsid.blocks from the superblock: 4 KiB blocks the image holds |
+| `edition` | `src/filesystems/cramfs/CramfsReader.cpp:246` | fsid.edition from the superblock |
+| `files` | `src/filesystems/cramfs/CramfsReader.cpp:248` | fsid.files from the superblock: inodes the image holds |
+| `flags` | `src/filesystems/cramfs/CramfsReader.cpp:245` | superblock flag names (fsid_v2, sorted_dirs, holes, wrong_signature, shifted_root_offset, ext_block_pointers) |
+| `version` | `src/filesystems/cramfs/CramfsReader.cpp:244` | 1 or 2, from the FSID_VERSION_2 flag |
+
+## filesystem reader (`FilesystemInfo::attrs`)
+
 Source: `src/filesystems/ext/ExtReader.cpp` (33 keys)
 
 | key | first set at | meaning |
@@ -905,6 +917,15 @@ Source: `src/filesystems/qnxifs/QnxIfsReader.cpp` (39 keys)
 | `stored_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:852` | startup header stored_size |
 | `symlinks` | `src/filesystems/qnxifs/QnxIfsReader.cpp:880` | symlink entries |
 | `version` | `src/filesystems/qnxifs/QnxIfsReader.cpp:841` | startup header version |
+
+## filesystem reader (`FilesystemInfo::attrs`)
+
+Source: `src/filesystems/romfs/RomfsReader.cpp` (2 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `checksum` | `src/filesystems/romfs/RomfsReader.cpp:257` | ok or mismatch for the superblock checksum, the one the kernel itself verifies |
+| `full_size` | `src/filesystems/romfs/RomfsReader.cpp:256` | the size field from the superblock, in bytes |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 

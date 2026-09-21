@@ -115,7 +115,12 @@ const std::vector<BytePattern>& byte_patterns() {
         {"lz4-frame", {0x04, 0x22, 0x4d, 0x18}, true, true},
         {"lzop", {0x89, 0x4c, 0x5a, 0x4f, 0x00, 0x0d, 0x0a, 0x1a, 0x0a}, true, true},
         {"dtb", {0xd0, 0x0d, 0xfe, 0xed}, true, true},
-        {"cramfs-le", {0x45, 0x3d, 0xcd, 0x28}, true, true},
+        // Neither cramfs entry vetoes: one is the other's swap32 image, so a
+        // hit proves only that this is cramfs, not which view is right. Listing
+        // just the LE one as a veto made every big-endian cramfs image score 0
+        // in the raw view and 8 in swap32, so it was "corrected" into garbage.
+        {"cramfs-le", {0x45, 0x3d, 0xcd, 0x28}, true, false},
+        {"cramfs-be", {0x28, 0xcd, 0x3d, 0x45}, true, false},
         {"romfs", {'-', 'r', 'o', 'm', '1', 'f', 's', '-'}, true, true},
         {"android-boot", {'A', 'N', 'D', 'R', 'O', 'I', 'D', '!'}, true, true},
         {"u-boot", {'U', '-', 'B', 'o', 'o', 't'}, true, true},

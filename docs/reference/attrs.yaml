@@ -536,6 +536,13 @@ src/discovery/validators/zstd.cpp:
   single_segment: "true when the single-segment flag is set"
   window_size: window size in bytes (absent for single segment)
 
+src/filesystems/cramfs/CramfsReader.cpp:
+  blocks: fsid.blocks from the superblock: 4 KiB blocks the image holds
+  edition: fsid.edition from the superblock
+  files: fsid.files from the superblock: inodes the image holds
+  flags: superblock flag names (fsid_v2, sorted_dirs, holes, wrong_signature, shifted_root_offset, ext_block_pointers)
+  version: 1 or 2, from the FSID_VERSION_2 flag
+
 src/filesystems/ext/ExtReader.cpp:
   block_groups: number of block groups, ceil((blocks_count - first_data_block) / blocks_per_group)
   block_size: 1024 << s_log_block_size
@@ -660,6 +667,10 @@ src/filesystems/qnxifs/QnxIfsReader.cpp:
   stored_size: startup header stored_size
   symlinks: symlink entries
   version: startup header version
+
+src/filesystems/romfs/RomfsReader.cpp:
+  checksum: ok or mismatch for the superblock checksum, the one the kernel itself verifies
+  full_size: the size field from the superblock, in bytes
 
 src/filesystems/squashfs/SquashfsReader.cpp:
   compression_id: numeric compression id

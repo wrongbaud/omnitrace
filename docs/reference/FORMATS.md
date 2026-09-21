@@ -20,7 +20,7 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 
 | format | category | identify | sized | reader | history | mount.sh | docs page | notes |
 |---|---|---|---|---|---|---|---|---|
-| `cramfs` | filesystem | validated to verified (`cramfs`) | yes | no | no (no reader) | `cramfs` | [cramfs.md](../formats/cramfs.md) | signatures: `cramfs-le`, `cramfs-be` |
+| `cramfs` | filesystem | validated to verified (`cramfs`) | yes | yes (`src/filesystems/cramfs/CramfsReader.cpp:469`) | no | `cramfs` | [cramfs.md](../formats/cramfs.md) | signatures: `cramfs-le`, `cramfs-be` |
 | `ext` | filesystem | validated to verified (`ext`) | yes | no | no (no reader) | `ext4` | [ext.md](../formats/ext.md) | validator reports ext2/ext3/ext4; native reader; history from freed inodes and slack directory entries; signatures: `ext` |
 | `ext2` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2345`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
 | `ext3` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2346`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
@@ -28,7 +28,7 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `jffs2` | filesystem | validated to verified (`jffs2`) | yes | yes (`src/filesystems/jffs2/Jffs2Reader.cpp:1816`) | yes | mtd (comment) | [jffs2.md](../formats/jffs2.md) | one finding per partition: nodes coalesced across gaps up to `max_gap`; obsolete nodes CRC-checked; signatures: `jffs2-le`, `jffs2-be` |
 | `qnx-ifs` | filesystem | validated to verified (`qnx-ifs`) | yes | yes (`src/filesystems/qnxifs/QnxIfsReader.cpp:917`) | no | - | [qnx-ifs.md](../formats/qnx-ifs.md) | compressed images sized by walking the block chain; startup checksum reported but never lowers the tier; signatures: `qnx-ifs` |
 | `qnx6` | filesystem | validated to verified (`qnx6`) | yes | yes (`src/filesystems/qnx6/Qnx6Reader.cpp:1229`) | yes | `qnx6` | [qnx6.md](../formats/qnx6.md) | size covers both superblocks; second-superblock hits with a corrupt primary are placed at the filesystem start; signatures: `qnx6-le`, `qnx6-be` |
-| `romfs` | filesystem | validated to verified (`romfs`) | yes | no | no (no reader) | `romfs` | [romfs.md](../formats/romfs.md) | signatures: `romfs` |
+| `romfs` | filesystem | validated to verified (`romfs`) | yes | yes (`src/filesystems/romfs/RomfsReader.cpp:455`) | no | `romfs` | [romfs.md](../formats/romfs.md) | signatures: `romfs` |
 | `squashfs` | filesystem | validated to consistent (`squashfs`) | yes | yes (`src/filesystems/squashfs/SquashfsReader.cpp:1375`) | no | `squashfs` | [squashfs.md](../formats/squashfs.md) | signatures: `squashfs-le`, `squashfs-be`, `squashfs-vendor-shsq`, `squashfs-vendor-qshs` |
 | `ubifs` | filesystem | validated to verified (`ubifs`) | yes | yes (`src/filesystems/ubifs/UbifsReader.cpp:1375`) | yes | mtd (comment) | [ubifs.md](../formats/ubifs.md) | aligned hits only (`min_io_size` or 512); inside UBI the size is not meaningful; signatures: `ubifs` |
 | `yaffs2` | filesystem | validated to verified (`yaffs2`) | yes | yes (`src/filesystems/yaffs2/Yaffs2Reader.cpp:693`) | yes | mtd (comment) | [yaffs2.md](../formats/yaffs2.md) | signatures: `yaffs2` |
@@ -63,5 +63,5 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 ## Counts
 
 - 55 signatures over 39 format ids
-- 31 validators, 9 filesystem reader(s), 17 container reader(s)
+- 31 validators, 11 filesystem reader(s), 17 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`
