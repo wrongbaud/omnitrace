@@ -1,0 +1,58 @@
+pack: pii
+version: 1
+description: >
+  Personal information, and the vehicle identifiers that sit beside it in an
+  automotive case. Every rule whose shape carries a check digit uses it, so a
+  hit is a real identifier rather than a run of digits.
+
+rules:
+  - id: email
+    category: pii
+    kind: regex
+    pattern: '\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}\b'
+    severity: medium
+    description: Email address
+
+  - id: vin
+    category: pii
+    kind: regex
+    # I, O and Q are not used in a VIN, which is most of what keeps this from
+    # matching any 17-character token.
+    pattern: '\b[A-HJ-NPR-Z0-9]{17}\b'
+    validate: vin-checksum
+    severity: high
+    description: Vehicle identification number, confirmed by its check digit
+
+  - id: imei
+    category: pii
+    kind: regex
+    pattern: '\b\d{15}\b'
+    validate: luhn
+    severity: high
+    description: IMEI, confirmed by its Luhn check digit
+
+  - id: payment-card
+    category: pii
+    kind: regex
+    pattern: '\b(?:4\d{12}(?:\d{3})?|5[1-5]\d{14}|3[47]\d{13}|6(?:011|5\d{2})\d{12})\b'
+    validate: luhn
+    severity: critical
+    description: Payment card number, confirmed by its Luhn check digit
+
+  - id: phone-e164
+    category: pii
+    kind: regex
+    # Not preceded by a letter either: `e+631065600` inside file(1)'s magic
+    # database is a float format, not a number anyone can call.
+    pattern: '(?:[^0-9+A-Za-z]|^)(\+[1-9]\d{7,14})(?:[^0-9]|$)'
+    severity: low
+    description: Phone number in E.164 form
+
+  - id: gps-coordinate
+    category: pii
+    kind: regex
+    # A latitude/longitude pair with enough decimals to be a real fix rather
+    # than a version number.
+    pattern: '[-+]?(?:[0-8]?\d|90)\.\d{4,}\s*,\s*[-+]?(?:1[0-7]\d|[0-9]?\d|180)\.\d{4,}'
+    severity: high
+    description: GPS coordinate pair with at least four decimal places

@@ -989,6 +989,82 @@ romfs-truncated-header:
   meaning: fewer than 16 bytes for the superblock
   action: magic-tier hit at the end of the data
 
+rules-bad-kind:
+  meaning: a rule's `kind:` is not regex, literal, hex or glob-path
+  action: use one of those four
+
+rules-bad-pattern:
+  meaning: a rule's pattern does not compile, or its hex is not whole bytes
+  action: the message names the pack, the rule and the engine's complaint; the whole pack is refused so a rule is never silently dropped
+
+rules-bad-rule:
+  meaning: an entry in `rules:` is not a map
+  action: each rule is a map of keys; check the indentation
+
+rules-bad-scope:
+  meaning: a rule's `scope:` lists something other than files or regions
+  action: use either or both
+
+rules-bad-severity:
+  meaning: a rule's `severity:` is not info, low, medium, high or critical
+  action: use one of those five
+
+rules-bad-validate:
+  meaning: a rule names a `validate:` filter this build does not have
+  action: the built-ins are vin-checksum, luhn and mac-not-broadcast; an unknown one is refused rather than ignored, so a rule never silently loses its check
+
+rules-bad-version:
+  meaning: a pack's `version:` is not a number
+  action: use an integer
+
+rules-bad-yaml:
+  meaning: a rule pack is not valid YAML, or its top level is not a map
+  action: fix the pack; the message carries the parser's own complaint and the file it came from
+
+rules-duplicate-id:
+  meaning: two rules in one pack share an id
+  action: rename one; a duplicate would make a hit ambiguous about which rule produced it
+
+rules-empty-scope:
+  meaning: a rule's `scope:` is present but lists nothing
+  action: remove it to mean both, or name at least one
+
+rules-file-unreadable:
+  meaning: an extracted file or a region could not be read back for rule matching
+  action: the entry is in the listing but was not searched; check permissions on the case directory
+
+rules-limit-hits:
+  meaning: the sweep reached --max-hits and stopped
+  action: raise it, or narrow the packs; the hits kept are the first found in a deterministic order, not a sample
+
+rules-no-id:
+  meaning: a rule has no `id:`
+  action: every hit names the rule that found it, so an id is required
+
+rules-no-image-view:
+  meaning: unidentified regions were not searched because no image view was available
+  action: this happens when a word-swapped image's corrected view was too large to write; raise --max-carve-bytes to get region coverage
+
+rules-no-name:
+  meaning: a pack has no `pack:` key, so its rules could not be attributed to anything
+  action: give the pack a name; it appears on every hit the pack produces
+
+rules-no-pattern:
+  meaning: a rule has no `pattern:`
+  action: add one, or remove the rule
+
+rules-no-rules:
+  meaning: a pack has no `rules:` sequence, or it is empty
+  action: a pack that matches nothing is almost always an editing mistake, so it is refused rather than loaded
+
+rules-set-too-large:
+  meaning: the combined patterns exceed the matcher's memory bound
+  action: split the packs or simplify the largest patterns; the bound is what keeps a pack from exhausting the host
+
+rules-unreadable:
+  meaning: a pack file named with --rules could not be opened
+  action: check the path and permissions
+
 scan-hit-limit:
   meaning: the scan stopped after ScanOptions::max_hits; the rest of the span was not scanned
   action: the finding list is incomplete; raise max_hits (a contributor option) or scan a sub-range

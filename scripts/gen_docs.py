@@ -378,7 +378,10 @@ def scan_diagnostics(path: Path) -> tuple[list[Site], list[Site], list[tuple], l
         record(args[2], sev, line_of(text, m.start()), message_template(args[3]))
 
     # Pattern B: {Severity::X, code, message} aggregate initialisation.
-    for m in re.finditer(r"\{\s*Severity::(\w+)\s*,", text):
+    # The namespace qualifier is optional: a layer with its own `Severity`
+    # (rules/) has to spell the diagnostic one `omnitrace::Severity::...`, and
+    # that is the same construction site.
+    for m in re.finditer(r"\{\s*(?:\w+::)*Severity::(\w+)\s*,", text):
         end = balanced(text, m.start())
         args = split_args(text[m.start() + 1 : end - 1])
         if len(args) < 3:

@@ -15,6 +15,7 @@
     "cli11",
     "spdlog",
     "tomlplusplus",
+    "re2",
     "gtest"
   ],
   "builtin-baseline": "b322364f06075bb2d0c88d4c5a9e2d6aa8a5cdba"

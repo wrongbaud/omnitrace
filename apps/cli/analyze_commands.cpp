@@ -24,18 +24,19 @@
 #include <nlohmann/json.hpp>
 
 #include "commands.h"
+#include "omnitrace/containers/Container.h"
 #include "omnitrace/core/Clock.h"
 #include "omnitrace/core/Hash.h"
 #include "omnitrace/core/Manifest.h"
 #include "omnitrace/core/Source.h"
 #include "omnitrace/core/Span.h"
 #include "omnitrace/core/Text.h"
-#include "omnitrace/containers/Container.h"
 #include "omnitrace/discovery/Recurse.h"
 #include "omnitrace/discovery/Signature.h"
 #include "omnitrace/filesystems/Filesystem.h"
 #include "omnitrace/output/Markdown.h"
 #include "omnitrace/output/Yaml.h"
+#include "omnitrace/rules/Sweep.h"
 
 #ifndef OMNITRACE_VERSION
 #define OMNITRACE_VERSION "0.0.0"
@@ -190,6 +191,9 @@ struct AnalyzeArgs {
     std::string carve = "all";      // none | table | all
     std::uint64_t max_carve_bytes = 4ull << 30;
     bool copy_image = false;
+    bool no_rules = false;
+    std::vector<std::string> rule_packs;
+    std::uint64_t max_hits = 100'000;
     bool no_extract = false, history = false;
     Limits limits;
 };
@@ -247,6 +251,15 @@ CorrectedView corrected_view_of(const Manifest& m) {
         break;
     }
     return c;
+}
+
+std::string corrected_skipped(const Manifest& m) {
+    for (const Node& n : m.nodes()) {
+        if (n.kind != NodeKind::Image) continue;
+        const auto it = n.attrs.find("corrected_skipped");
+        if (it != n.attrs.end()) return it->second;
+    }
+    return {};
 }
 
 // flash/SOURCE.yaml: where the evidence came from and what it hashes to.
@@ -343,6 +356,53 @@ std::string copy_image_into(const std::filesystem::path& flash, const std::strin
     return "flash/" + name;
 }
 
+// The search packs, over everything the analysis produced. Runs after the
+// graph exists rather than during it: `discovery` has no business knowing what
+// an examiner is looking for, and a hit has to be able to name the node it
+// came from, which only exists once the graph is built.
+void run_rules(const AnalyzeArgs& a, const Manifest& m, const discovery::Listings& listings,
+               const std::shared_ptr<const Source>& image, const std::filesystem::path& out) {
+    std::vector<rules::RulePack> packs = rules::RulePack::builtin();
+    for (const std::string& path : a.rule_packs) {
+        rules::RulePack p;
+        if (const Status st = rules::RulePack::load_file(path, p); !st) fail(st.error);
+        packs.push_back(std::move(p));
+    }
+    rules::Engine engine;
+    // A pack that does not compile is the examiner's own file being wrong, and
+    // they need to hear about it rather than get a case with nothing in it.
+    if (const Status st = rules::Engine::build(packs, engine); !st) fail(st.error);
+
+    // Regions are read through the view the analysis ran on. For a
+    // word-swapped image that is the corrected one, which analyze already
+    // wrote to flash/ precisely so other things can use it; when it was too
+    // large to write, regions are skipped and the sweep says so.
+    std::shared_ptr<const Source> view = image;
+    const CorrectedView corrected = corrected_view_of(m);
+    if (!corrected.path.empty()) {
+        std::shared_ptr<MappedFile> f;
+        if (const Status st = MappedFile::open((out / corrected.path).string(), f); st)
+            view = f;
+        else
+            view.reset();
+    } else if (!corrected_skipped(m).empty()) {
+        view.reset();
+    }
+
+    rules::ScanLimits limits;
+    limits.max_hits_total = a.max_hits;
+    rules::SweepResult r;
+    if (const Status st =
+            rules::sweep(engine, m, listings, view ? Span::whole(view) : Span{}, limits, r);
+        !st)
+        fail(st.error);
+
+    write_text(out / "artifacts.yaml", rules::artifacts_to_yaml(m, r));
+    write_text(out / "artifacts.md", rules::artifacts_to_markdown(m, r));
+    spdlog::info("rules: {} hit(s) from {} rule(s) over {} file(s) and {} region(s)", r.hits.size(),
+                 engine.content_rules() + engine.path_rules(), r.files_scanned, r.regions_scanned);
+}
+
 void cmd_analyze(const AnalyzeArgs& a) {
     const auto file = open_image(a.image);
     const bool corpus = a.layout != "flat";
@@ -396,6 +456,7 @@ void cmd_analyze(const AnalyzeArgs& a) {
         if (!m.evidence.empty())
             write_text(flash / "SOURCE.yaml",
                        source_yaml(m.evidence.back(), copied, corrected_view_of(m), out));
+        if (!a.no_rules) run_rules(a, m, listings, file, out);
     } else {
         write_text(out / "manifest.yaml", yaml);
     }
@@ -507,6 +568,14 @@ void register_analyze_commands(CLI::App& app) {
                      "partitions are skipped with a coverage row, as is a corrected view of a "
                      "word-swapped image")
         ->transform(CLI::AsSizeValue(false))
+        ->capture_default_str();
+    analyze->add_flag("--no-rules", args->no_rules,
+                      "Skip the search packs; the case gets no artifacts.yaml");
+    analyze
+        ->add_option("--rules", args->rule_packs,
+                     "Add a YAML rule pack (repeatable); the built-in packs still run")
+        ->check(CLI::ExistingFile);
+    analyze->add_option("--max-hits", args->max_hits, "Rule hits to keep per run")
         ->capture_default_str();
     analyze->add_flag("--copy-image", args->copy_image,
                       "Copy the image into flash/ (verified by hash); by default only "

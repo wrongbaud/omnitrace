@@ -4,7 +4,7 @@ This guide is for anyone about to change OmniTrace: it gets you from a clean mac
 
 ## Prerequisites
 
-The build needs CMake 3.28 or newer, Ninja, a C++20 compiler (GCC 14+, Clang 17+, MSVC 19.40+) and the libraries in the table. `cmake/Deps.cmake` finds them with `find_package`; `tomlplusplus` and GoogleTest fall back to `FetchContent` when the system does not have them, so a fresh clone builds with network access even without those two packages.
+The build needs CMake 3.28 or newer, Ninja, a C++20 compiler (GCC 14+, Clang 17+, MSVC 19.40+) and the libraries in the table. `cmake/Deps.cmake` finds them with `find_package`; `tomlplusplus`, RE2 (with Abseil) and GoogleTest fall back to `FetchContent` when the system does not have them, so a fresh clone builds with network access even without them.
 
 | Library | Used for | Arch | Debian / Ubuntu |
 |---|---|---|---|
@@ -14,7 +14,8 @@ The build needs CMake 3.28 or newer, Ninja, a C++20 compiler (GCC 14+, Clang 17+
 | lz4 | LZ4 blocks and frames | `lz4` | `liblz4-dev` |
 | zstd | zstd blocks | `zstd` | `libzstd-dev` |
 | OpenSSL | MD5 / SHA-1 / SHA-256 | `openssl` | `libssl-dev` |
-| yaml-cpp | reading `manifest.yaml` back | `yaml-cpp` | `libyaml-cpp-dev` |
+| yaml-cpp | reading `manifest.yaml` back, parsing rule packs | `yaml-cpp` | `libyaml-cpp-dev` |
+| RE2 | the rules engine; linear-time matching so a user-supplied pattern cannot hang a scan | `re2` | `libre2-dev` |
 | nlohmann-json | `scan --json`, JSON schema | `nlohmann-json` | `nlohmann-json3-dev` |
 | CLI11 | the command line | `cli11` | `libcli11-dev` |
 | spdlog (needs fmt >= 10) | logging | `spdlog` | `libspdlog-dev` |
@@ -24,14 +25,14 @@ The build needs CMake 3.28 or newer, Ninja, a C++20 compiler (GCC 14+, Clang 17+
 Linux, Arch:
 
 ```sh
-sudo pacman -S --needed cmake ninja gcc clang pkgconf zlib xz bzip2 lz4 zstd openssl yaml-cpp nlohmann-json cli11 spdlog gtest
+sudo pacman -S --needed cmake ninja gcc clang pkgconf zlib xz bzip2 lz4 zstd openssl yaml-cpp nlohmann-json cli11 spdlog gtest re2
 ```
 
 Linux, Debian / Ubuntu (the same list CI installs in `.github/workflows/ci.yml`):
 
 ```sh
 sudo apt-get install -y cmake ninja-build g++ clang pkg-config zlib1g-dev liblzma-dev libbz2-dev liblz4-dev libzstd-dev \
-  libssl-dev libyaml-cpp-dev nlohmann-json3-dev libcli11-dev libspdlog-dev libgtest-dev
+  libssl-dev libyaml-cpp-dev nlohmann-json3-dev libcli11-dev libspdlog-dev libgtest-dev libre2-dev
 ```
 
 macOS: install vcpkg, set `VCPKG_ROOT`, and use the `macos-clang` preset. `vcpkg.json` is the manifest; the preset points CMake at `$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake` and vcpkg builds every dependency on the first configure.

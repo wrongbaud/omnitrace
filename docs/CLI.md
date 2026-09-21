@@ -62,7 +62,7 @@ determine an extent), `Format`, `Tier` (`magic` / `structural` / `consistent` /
 `also_matched` holds lower-confidence findings the resolver suppressed because
 a better one covers the same bytes.
 
-## `analyze <image> --out DIR [--layout corpus|flat] [--carve none|table|all] [--max-carve-bytes N] [--copy-image] [--no-extract] [--history] [--max-depth N] [--max-files N] [--max-bytes N] [--max-bytes-ratio N] [--max-file-bytes N]`
+## `analyze <image> --out DIR [--layout corpus|flat] [--carve none|table|all] [--max-carve-bytes N] [--copy-image] [--no-extract] [--history] [--max-depth N] [--max-files N] [--max-bytes N] [--max-bytes-ratio N] [--max-file-bytes N] [--rules FILE] [--no-rules]`
 
 The end-to-end pipeline:
 
@@ -126,7 +126,16 @@ The end-to-end pipeline:
 | `--max-files N` | Entries emitted per run, across all filesystems (default 500000). When the budget is spent the remaining filesystems are recorded but not walked. |
 | `--max-bytes N` | Floor for the total bytes written per run (default 4 GiB; `2G`, `64G` accepted, 1024-based). The budget actually applied is the larger of this and `--max-bytes-ratio` x the image size, so it tracks the evidence instead of being a number chosen for one size of dump. Passing this flag on its own means "exactly this", and clears the ratio. |
 | `--max-bytes-ratio N` | Extraction budget as a multiple of the image size (default 4). A 2 MiB SPI dump stays on the `--max-bytes` floor; a 16 GiB eMMC image gets 64 GiB. `0` uses `--max-bytes` exactly. The ratio is the guard that matters: real firmware expands by up to ~5x (a compressed SquashFS router image, all of which are small enough to sit under the floor), while a decompression bomb expands by orders of magnitude more and still trips. Before this existed, the fixed 4 GiB default truncated every image over a few GiB — the 15.7 GB QNX corpus image lost most of its extraction to it and said so 22,788 times. |
+| `--rules FILE` | Add a YAML search pack, repeatable; the built-in packs still run. Format in [RULES.md](RULES.md). A pack that does not parse or whose pattern does not compile stops the run, naming the rule — an examiner's own file being wrong is something to hear about, not to silently ignore. |
+| `--no-rules` | Skip the search entirely. The case gets no `artifacts.yaml`. |
+| `--max-hits N` | Rule hits to keep per run (default 100000). Reaching it sets a `rules-limit-hits` warning. |
 | `--max-file-bytes N` | Largest single extracted entry (default 1 GiB; `2G`, `8G` accepted, 1024-based). A larger entry is written up to the cap and cut there: the file node gets `truncated: "true"` and a `<fmt>-limit-file-bytes` warning. Raise it when a filesystem holds whole nested images as files — the QNX6 `storage` partition of the corpus keeps SquashFS update images of 1.0-1.6 GiB, and at the default each one is cut mid-image and will not read back as a filesystem. |
+
+After the graph is built, the search packs run over every extracted file and
+every region no signature claimed, and the case gets `artifacts.yaml` and
+`artifacts.md`. Regions classed `erased` or `random` are skipped: fill holds
+nothing and uniform bytes hold nothing a pattern can find. `--no-rules` turns
+the pass off.
 
 Every limit that trips is visible: the node gets `truncated: "true"` in its
 attrs, a `Warning` diagnostic, and the format's coverage row becomes `partial`.

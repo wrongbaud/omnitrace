@@ -17,7 +17,7 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 `INFO.yaml` uses). A code listed with two severities is emitted at both;
 `where` names every site, `message` is the literal with runtime parts as `...`.
 
-337 diagnostic codes, 56 status codes.
+340 diagnostic codes, 72 status codes.
 
 ## Diagnostics
 
@@ -246,6 +246,9 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 | `romfs-truncated` | warning | `src/discovery/validators/romfs.cpp:58` | full size ... extends past the available data | full_size extends past the available data | the dump or partition is short |
 | `romfs-truncated-entry` | warning | `src/filesystems/romfs/RomfsReader.cpp:430` | '...' claims ... bytes but the image ends first; what was there is emitted | an entry claims more bytes than the image holds | what was present is still emitted and the entry marked truncated; the image is short or the size was forged |
 | `romfs-truncated-header` | warning | `src/discovery/validators/romfs.cpp:28` | fewer than 16 bytes available for the superblock | fewer than 16 bytes for the superblock | magic-tier hit at the end of the data |
+| `rules-file-unreadable` | warning | `src/rules/Sweep.cpp:73`, `src/rules/Sweep.cpp:116` | '...' could not be read back for rule matching; it was extracted but is not searchable | an extracted file or a region could not be read back for rule matching | the entry is in the listing but was not searched; check permissions on the case directory |
+| `rules-limit-hits` | warning | `src/rules/Sweep.cpp:135` | the sweep reached max_hits_total (...) and stopped; raise it, or narrow the packs, to see the rest | the sweep reached --max-hits and stopped | raise it, or narrow the packs; the hits kept are the first found in a deterministic order, not a sample |
+| `rules-no-image-view` | info | `src/rules/Sweep.cpp:96` | no image view was available, so unidentified regions were not searched; only extracted files were | unidentified regions were not searched because no image view was available | this happens when a word-swapped image's corrected view was too large to write; raise --max-carve-bytes to get region coverage |
 | `scan-hit-limit` | warning | `src/discovery/Scan.cpp:353` | ... | the scan stopped after ScanOptions::max_hits; the rest of the span was not scanned | the finding list is incomplete; raise max_hits (a contributor option) or scan a sub-range |
 | `sink-duplicate-path` | warning | `src/core/Sink.cpp:713` | '...' already exists on disk; written as '...' | an entry's path already existed on disk; it was written with a ~N suffix (or no free suffix was left) | the filesystem has duplicate names or an earlier walk left files; listing.yaml has the host path |
 | `sink-io-error` | error | `src/core/Sink.cpp:812` | ... | a host write, mkdir or stat failed | check free space and permissions; the entry is truncated or missing |
@@ -402,6 +405,22 @@ not diagnostics on their own: they surface as the `message` of
 | `romfs-bad-size` | `src/filesystems/romfs/RomfsReader.cpp:251` | full size ... cannot hold the header and a file entry | full_size cannot hold the header and a file entry | magic-tier hit; ignore |
 | `romfs-not-open` | `src/filesystems/romfs/RomfsReader.cpp:287` | walk before a successful open | walk() was called before a successful open() | contributor error in a caller, not something an image causes |
 | `romfs-truncated` | `src/filesystems/romfs/RomfsReader.cpp:205`, `src/filesystems/romfs/RomfsReader.cpp:210`, `src/filesystems/romfs/RomfsReader.cpp:254` | fewer than 32 bytes of superblock | full_size extends past the available data | the dump or partition is short |
+| `rules-bad-kind` | `src/rules/Rule.cpp:400` | ...: '...': '...' is not regex, literal, hex or glob-path | a rule's `kind:` is not regex, literal, hex or glob-path | use one of those four |
+| `rules-bad-pattern` | `src/rules/Rule.cpp:494`, `src/rules/Rule.cpp:498`, `src/rules/Rule.cpp:501` | ...: '...': not a valid ... pattern | a rule's pattern does not compile, or its hex is not whole bytes | the message names the pack, the rule and the engine's complaint; the whole pack is refused so a rule is never silently dropped |
+| `rules-bad-rule` | `src/rules/Rule.cpp:383` | ... is not a map | an entry in `rules:` is not a map | each rule is a map of keys; check the indentation |
+| `rules-bad-scope` | `src/rules/Rule.cpp:421` | ...: '...': '...' is not files or regions | a rule's `scope:` lists something other than files or regions | use either or both |
+| `rules-bad-severity` | `src/rules/Rule.cpp:404` | ...: '...': '...' is not info, low, medium, high or critical | a rule's `severity:` is not info, low, medium, high or critical | use one of those five |
+| `rules-bad-validate` | `src/rules/Rule.cpp:408` | ...: '...': '...' is not a built-in filter (vin-checksum, luhn, mac-not-broadcast) | a rule names a `validate:` filter this build does not have | the built-ins are vin-checksum, luhn and mac-not-broadcast; an unknown one is refused rather than ignored, so a rule never silently loses its check |
+| `rules-bad-version` | `src/rules/Rule.cpp:372` | ...: 'version' is not a number | a pack's `version:` is not a number | use an integer |
+| `rules-bad-yaml` | `src/rules/Rule.cpp:361`, `src/rules/Rule.cpp:363` | ...: ... | a rule pack is not valid YAML, or its top level is not a map | fix the pack; the message carries the parser's own complaint and the file it came from |
+| `rules-duplicate-id` | `src/rules/Rule.cpp:390` | ...: '...' is defined twice | two rules in one pack share an id | rename one; a duplicate would make a hit ambiguous about which rule produced it |
+| `rules-empty-scope` | `src/rules/Rule.cpp:425` | ...: '...': 'scope' lists nothing | a rule's `scope:` is present but lists nothing | remove it to mean both, or name at least one |
+| `rules-no-id` | `src/rules/Rule.cpp:388` | ...: 'id' is required | a rule has no `id:` | every hit names the rule that found it, so an id is required |
+| `rules-no-name` | `src/rules/Rule.cpp:367` | ...: 'pack' is required | a pack has no `pack:` key, so its rules could not be attributed to anything | give the pack a name; it appears on every hit the pack produces |
+| `rules-no-pattern` | `src/rules/Rule.cpp:396` | ...: '...': 'pattern' is required | a rule has no `pattern:` | add one, or remove the rule |
+| `rules-no-rules` | `src/rules/Rule.cpp:377`, `src/rules/Rule.cpp:431` | ...: 'rules' must be a sequence | a pack has no `rules:` sequence, or it is empty | a pack that matches nothing is almost always an editing mistake, so it is refused rather than loaded |
+| `rules-set-too-large` | `src/rules/Rule.cpp:507` | the combined patterns exceed RE2's memory bound | the combined patterns exceed the matcher's memory bound | split the packs or simplify the largest patterns; the bound is what keeps a pack from exhausting the host |
+| `rules-unreadable` | `src/rules/Rule.cpp:437` | cannot open '...' | a pack file named with --rules could not be opened | check the path and permissions |
 | `sink-duplicate-path` | `src/core/Sink.cpp:719` | no free '~<n>' suffix for '...' | an entry's path already existed on disk; it was written with a ~N suffix (or no free suffix was left) | the filesystem has duplicate names or an earlier walk left files; listing.yaml has the host path |
 | `sink-io-error` | `src/core/Sink.cpp:380`, `src/core/Sink.cpp:384`, `src/core/Sink.cpp:416` (+7 more) | mkdir '...': ... | a host write, mkdir or stat failed | check free space and permissions; the entry is truncated or missing |
 | `sink-limit-bytes` | `src/core/Sink.cpp:259` | max_bytes reached | the run-wide max_bytes budget was reached; data truncated | re-run with a larger --max-bytes |

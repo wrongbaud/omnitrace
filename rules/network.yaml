@@ -1,0 +1,99 @@
+pack: network
+version: 1
+description: >
+  Addresses, identifiers and configuration an embedded device carries about
+  the networks it has been on. These are the things that place a device on a
+  network and next to other devices, which is what an examiner is usually
+  asked first.
+
+rules:
+  - id: mac-colon
+    category: network
+    kind: regex
+    # Six hex pairs separated by colons, not preceded or followed by another
+    # hex digit so a longer hash does not yield a MAC out of its middle.
+    pattern: '(?i)(?:[^0-9a-f:]|^)((?:[0-9a-f]{2}:){5}[0-9a-f]{2})(?:[^0-9a-f:]|$)'
+    validate: mac-not-broadcast
+    severity: medium
+    description: MAC address in colon notation; all-zero and all-ff are dropped as placeholders
+
+  - id: mac-dash
+    category: network
+    kind: regex
+    pattern: '(?i)(?:[^0-9a-f-]|^)((?:[0-9a-f]{2}-){5}[0-9a-f]{2})(?:[^0-9a-f-]|$)'
+    validate: mac-not-broadcast
+    severity: medium
+    description: MAC address in dash notation
+
+  - id: ipv4
+    category: network
+    kind: regex
+    # Each octet 0-255, so 999.1.1.1 and version strings like 1.2.3.4.5 do not match.
+    pattern: '(?:[^0-9.]|^)((?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(?:\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3})(?:[^0-9.]|$)'
+    severity: low
+    description: IPv4 address
+
+  - id: url
+    category: network
+    kind: regex
+    pattern: '(?i)\b(?:https?|ftp|tftp)://[A-Za-z0-9._~:/?#\[\]@!$&''()*+,;=%-]{4,200}'
+    severity: low
+    description: URL, including the update and telemetry endpoints firmware calls home to
+
+  - id: wifi-psk
+    category: credentials
+    kind: regex
+    # `=` and not `==`, and the assignment is the whole line: the loose form
+    # matched JavaScript comparisons all over a router's web UI.
+    pattern: '(?im)^[ \t]*psk[ \t]*=[ \t]*"?([^"\n\r]{8,63})"?[ \t]*$'
+    severity: critical
+    description: wpa_supplicant pre-shared key
+
+  - id: wifi-ssid
+    category: network
+    kind: regex
+    pattern: '(?im)^[ \t]*ssid[ \t]*=[ \t]*"?([^"\n\r]{1,32})"?[ \t]*$'
+    severity: medium
+    description: Wi-Fi network name a device was configured to join
+
+  - id: wpa-supplicant-conf
+    category: network
+    kind: glob-path
+    pattern: '**/wpa_supplicant*.conf'
+    severity: high
+    description: wpa_supplicant configuration, which carries SSIDs and pre-shared keys
+
+  - id: hostapd-conf
+    category: network
+    kind: glob-path
+    pattern: '**/hostapd*.conf'
+    severity: high
+    description: Access-point configuration, which carries the network this device offered
+
+  - id: network-interfaces
+    category: network
+    kind: glob-path
+    pattern: '**/etc/network/interfaces'
+    severity: medium
+    description: Debian-style interface configuration
+
+  - id: resolv-conf
+    category: network
+    kind: glob-path
+    pattern: '**/etc/resolv.conf'
+    severity: low
+    description: Configured DNS servers
+
+  - id: hosts-file
+    category: network
+    kind: glob-path
+    pattern: '**/etc/hosts'
+    severity: low
+    description: Static host mappings
+
+  - id: dhcp-leases
+    category: network
+    kind: glob-path
+    pattern: '**/*dhcp*.leases'
+    severity: medium
+    description: DHCP leases, which record the other devices that were on this network

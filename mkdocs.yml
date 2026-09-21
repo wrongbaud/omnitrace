@@ -96,6 +96,7 @@ nav:
           - dm-verity: formats/verity.md
           - Word-swapped images: formats/word-swap.md
           - Entropy: formats/entropy.md
+      - Search rules: RULES.md
   - Background:
       - Competitive landscape: COMPETITIVE_LANDSCAPE.md
       - moria spike: MORIA_SPIKE.md
