@@ -470,3 +470,37 @@ TEST(Romfs, MaxNodesStopsTheWalk) {
     EXPECT_TRUE(r.truncated);
     EXPECT_LE(r.entries, 10u);
 }
+
+// `-rom1fs-` appears inside blkid's compiled magic table, between `XFSB` and
+// `iso9660`, and the audio corpus image has one. The reader has to refuse it:
+// accepting it once meant `info()` returned a size read out of noise, the
+// node took a 1.87 GB extent from it, and two gigabytes of unrelated image
+// were carved to disk as a filesystem.
+TEST(Romfs, TheMagicInsideAStringTableIsRefused) {
+    // The bytes around the hit in corpus/audio-example, which is a table of
+    // filesystem magics rather than a filesystem.
+    const Bytes table{'-',  'r',  'o',  'm',  '1',  'f',  's',  '-',  0x78, 0x00, 0x13, 0x62,
+                      0x28, 0x00, 0x41, 0xce, 0xfa, 0x7b, 0x1b, 0xb8, 0x08, 0x21, 0x72, 0x61,
+                      0x29, 0x00, 0x41, 0x45, 0x3d, 0xcd, 0x28, 0x48, 0x08, 0x30, 0x6e, 0x78,
+                      0x34, 0x08, 0x00, 0xb2, 'Q',  'N',  'X',  '4',  'F',  'S',  0x00, 0x00};
+    Bytes img = table;
+    img.resize(4096, 0);
+
+    std::shared_ptr<const Source> keep;
+    const Status st = make()->open(span_of(img, keep));
+    EXPECT_FALSE(st) << "a volume name of raw bytes is the magic inside other data";
+    EXPECT_NE(st.error.find("romfs-bad-name"), std::string::npos) << st.error;
+}
+
+// The size field is the one the node's extent comes from, so a value that
+// cannot even hold the header it follows must not be accepted.
+TEST(Romfs, ASizeTooSmallForItsOwnHeaderIsRefused) {
+    std::vector<Entry> root{file("a", "1")};
+    Bytes img = Writer("vol").build(root);
+    put_be32(img, 8, 16u);
+
+    std::shared_ptr<const Source> keep;
+    const Status st = make()->open(span_of(img, keep));
+    EXPECT_FALSE(st);
+    EXPECT_NE(st.error.find("romfs-bad-size"), std::string::npos) << st.error;
+}

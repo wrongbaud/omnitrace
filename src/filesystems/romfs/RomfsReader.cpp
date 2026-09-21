@@ -214,8 +214,17 @@ Status RomfsReader::open(const Span& span) {
     d.full_size = *full;
 
     // Volume name: NUL-terminated, padded to 16. The first file header follows.
+    //
+    // It has to be printable ASCII, which is the same rule the validator uses
+    // and the reason it keeps a hit like this at the magic tier. `-rom1fs-`
+    // turns up inside blkid's compiled magic table, between `XFSB` and
+    // `iso9660`, and the audio corpus image has one. Accepting that meant
+    // `info()` handed back a `full_size` read out of noise, the node got a
+    // 1.87 GB extent from it, and two gigabytes of unrelated image were
+    // carved to disk as a filesystem.
     std::uint64_t n = 0;
     bool terminated = false;
+    bool printable = true;
     while (n < kMaxNameBytes && 16 + n < span.size()) {
         const auto c = span.u8(16 + n);
         if (!c) break;
@@ -223,13 +232,28 @@ Status RomfsReader::open(const Span& span) {
             terminated = true;
             break;
         }
+        printable = printable && *c >= 0x20 && *c < 0x7F;
         d.volume.push_back(static_cast<char>(*c));
         ++n;
     }
     if (!terminated) return Status::fail("romfs-bad-name: the volume name has no terminator");
+    if (!printable)
+        return Status::fail(
+            "romfs-bad-name: the volume name is not printable ASCII, so this is the magic string "
+            "inside other data rather than a filesystem");
+
     d.root = 16 + align16(n + 1);
+    // The size field has to be able to hold the header and one file entry, and
+    // the first header has to be inside it. Both are the validator's checks:
+    // a reader that accepts what the validator would not hands `analyze` an
+    // extent built from noise.
+    if (d.full_size < d.root + kHeaderBytes)
+        return Status::fail("romfs-bad-size: full size " + std::to_string(d.full_size) +
+                            " cannot hold the header and a file entry");
     if (d.root + kHeaderBytes > span.size())
         return Status::fail("romfs-truncated: no room for the first file header");
+    if (!d.read_header(d.root))
+        return Status::fail("romfs-bad-first-header: the first file header is not readable");
 
     // The one checksum the kernel itself verifies: the u32 words of the first
     // 512 bytes (or the whole image when smaller) sum to zero.

@@ -924,8 +924,8 @@ Source: `src/filesystems/romfs/RomfsReader.cpp` (2 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `checksum` | `src/filesystems/romfs/RomfsReader.cpp:257` | ok or mismatch for the superblock checksum, the one the kernel itself verifies |
-| `full_size` | `src/filesystems/romfs/RomfsReader.cpp:256` | the size field from the superblock, in bytes |
+| `checksum` | `src/filesystems/romfs/RomfsReader.cpp:281` | ok or mismatch for the superblock checksum, the one the kernel itself verifies |
+| `full_size` | `src/filesystems/romfs/RomfsReader.cpp:280` | the size field from the superblock, in bytes |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 
