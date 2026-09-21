@@ -13,6 +13,8 @@
 // stream, and one that does not is two coincidental bytes.
 //
 // Reference: xz-utils `doc/lzma-file-format.txt`.
+#include <bit>
+
 #include "anchors.h"
 #include "common.h"
 
@@ -27,6 +29,19 @@ constexpr std::uint64_t kUnknownSize = UINT64_MAX;
 // A dictionary below 4 KiB or above 1.5 GiB is not something an encoder emits.
 constexpr std::uint32_t kMinDict = 4096;
 constexpr std::uint32_t kMaxDict = 1536U << 20;
+
+// The format's own portability rule: "only sizes of 2^n and 2^n + 2^(n-1)
+// should be used" (xz doc/lzma-file-format.txt). Any 32-bit value is legal in
+// principle, but nothing that writes .lzma emits another, and the field is
+// otherwise four bytes of whatever happened to be there. Every real stream in
+// the corpus is 2^n; every dictionary that is neither belonged to a false
+// positive.
+bool plausible_dict(std::uint32_t d) {
+    if (d == 0) return false;
+    if (std::has_single_bit(d)) return true;  // 2^n
+    const std::uint32_t high = std::bit_floor(d);
+    return d == high + (high >> 1);  // 2^n + 2^(n-1)
+}
 
 std::string attr_or_empty(const Finding& f, const char* key) {
     const auto it = f.attrs.find(key);
@@ -51,9 +66,18 @@ std::optional<Finding> validate_lzma(const Span& span, std::uint64_t start, cons
     if (!props || !dict || !usize) return std::nullopt;  // fewer than 13 bytes
     if (*props >= kMaxProps) return std::nullopt;        // not a properties byte
     if (*dict < kMinDict || *dict > kMaxDict) return std::nullopt;
+    if (!plausible_dict(*dict)) return std::nullopt;
 
     const std::uint64_t cap = extra_u64(sig, "max_payload").value_or(4ULL << 30);
     if (*usize != kUnknownSize && *usize > cap) return std::nullopt;
+    // A declared size of zero makes the decode probe below prove nothing: the
+    // decoder consumes the header and its five priming bytes, produces the
+    // zero bytes it was promised, and reports success. Any 18 bytes that pass
+    // the cheap screens above would do the same. No encoder writes it either
+    // -- an empty file compressed with `lzma` gets the all-ones "unknown"
+    // size, not 0 -- so this is the shape of a false positive, and it was 16
+    // of the 17 the corpus produced.
+    if (*usize == 0) return std::nullopt;
 
     // The first byte of the range-coded data is always zero: the decoder reads
     // five bytes to prime itself and the encoder writes the first as padding.
@@ -80,8 +104,8 @@ std::optional<Finding> validate_lzma(const Span& span, std::uint64_t start, cons
     f.attrs["uncompressed_size"] = *usize == kUnknownSize ? "unknown" : dec(*usize);
     f.size = n;
     f.confidence = Confidence::Consistent;
-    f.evidence = "lc" + dec(lc) + " lp" + dec(lp) + " pb" + dec(pb) + ", dictionary " +
-                 dec(*dict) + " bytes, decodes to " + attr_or_empty(f, "payload_bytes") + " bytes";
+    f.evidence = "lc" + dec(lc) + " lp" + dec(lp) + " pb" + dec(pb) + ", dictionary " + dec(*dict) +
+                 " bytes, decodes to " + attr_or_empty(f, "payload_bytes") + " bytes";
     return f;
 }
 

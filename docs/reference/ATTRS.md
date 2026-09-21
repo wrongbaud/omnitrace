@@ -471,11 +471,11 @@ Source: `src/discovery/validators/lzma.cpp` (5 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `dict_size` | `src/discovery/validators/lzma.cpp:79` | LZMA dictionary size in bytes, from the header |
-| `lc` | `src/discovery/validators/lzma.cpp:76` | literal context bits, unpacked from the properties byte |
-| `lp` | `src/discovery/validators/lzma.cpp:77` | literal position bits, unpacked from the properties byte |
-| `pb` | `src/discovery/validators/lzma.cpp:78` | position bits, unpacked from the properties byte |
-| `uncompressed_size` | `src/discovery/validators/lzma.cpp:80` | size the stream declares, or "unknown" when the encoder did not know it |
+| `dict_size` | `src/discovery/validators/lzma.cpp:103` | LZMA dictionary size in bytes, from the header |
+| `lc` | `src/discovery/validators/lzma.cpp:100` | literal context bits, unpacked from the properties byte |
+| `lp` | `src/discovery/validators/lzma.cpp:101` | literal position bits, unpacked from the properties byte |
+| `pb` | `src/discovery/validators/lzma.cpp:102` | position bits, unpacked from the properties byte |
+| `uncompressed_size` | `src/discovery/validators/lzma.cpp:104` | size the stream declares, or "unknown" when the encoder did not know it |
 
 ## validator `lzop`
 

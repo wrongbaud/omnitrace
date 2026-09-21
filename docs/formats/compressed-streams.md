@@ -58,11 +58,37 @@ what OpenWrt's lzma-loader emits). Another properties byte is one more line in
 
 Because there is no magic, the validator **rejects rather than downgrades**,
 at every step: a properties byte of 225 or more, a dictionary outside
-4 KiB..1.5 GiB, a declared size above `max_payload`, or a stream that does not
-decode to its end. `5d 00 00` occurs about a hundred times in a 16 MB router
-image, and reporting those as magic-tier findings buried the one real stream
-among them. The consequence is that a finding is only ever `consistent`, and a
-real but truncated `.lzma` is missed — the price of a format with no magic.
+4 KiB..1.5 GiB, a dictionary that is neither `2^n` nor `2^n + 2^(n-1)`, a
+declared size above `max_payload`, a declared size of **zero**, or a stream
+that does not decode to its end. `5d 00 00` occurs about a hundred times in a
+16 MB router image, and reporting those as magic-tier findings buried the one
+real stream among them. The consequence is that a finding is only ever
+`consistent`, and a real but truncated `.lzma` is missed — the price of a
+format with no magic.
+
+The last two of those checks were added after a full-corpus run, which
+produced 17 LZMA findings that decoded to nothing and five
+`decompress-memlimit` errors. Both rules are grounded in what encoders
+actually write rather than in what the format permits:
+
+* **A declared size of zero makes the decode probe vacuous.** The probe is the
+  validator's only real evidence, and a header promising zero output is
+  satisfied by consuming 13 header bytes plus 5 priming bytes and producing
+  nothing — which any 18 bytes passing the cheap screens will do. It accounted
+  for 16 of the 17. No encoder writes it: compressing an *empty* file with
+  `lzma` still yields the all-ones "unknown" size.
+* **A dictionary that is neither `2^n` nor `2^n + 2^(n-1)`** is one the format
+  calls unportable and liblzma will not emit — asked for 1552809984 it writes
+  1610612736, asked for 2031616 it writes 2097152. Every real stream in the
+  corpus has a `2^n` dictionary; every non-conforming one belonged to a false
+  positive, including the five whose ~1.5 GB dictionaries exceeded the
+  reader's memory limit and produced the errors.
+
+One caveat worth knowing: the probe's memory limit is derived from the payload
+cap, which is derived from how many bytes follow the header. A stream near the
+end of an image therefore gets a smaller allowance than the same stream in the
+middle of one, so a very large dictionary can validate in one position and not
+in another.
 
 This is what completes the router chain: a uImage payload is usually LZMA-alone,
 so `uImage -> lzma -> the kernel` and everything the kernel embeds (a device

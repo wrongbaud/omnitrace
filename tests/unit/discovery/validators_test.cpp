@@ -5,6 +5,8 @@
 
 #include <algorithm>
 
+#include <lzma.h>
+
 #include "../../../src/discovery/crc32.h"
 #include "helpers.h"
 
@@ -1094,4 +1096,102 @@ TEST(Bzip2Validator, NeedsTheDigitAndTheBlockMagic) {
     const auto g = scan_one(empty, "bzip2");
     ASSERT_EQ(g.size(), 1u);
     EXPECT_EQ(g[0].attrs.at("empty"), "true");
+}
+
+// ------------------------------------------------------------------- lzma
+
+namespace {
+
+// A real .lzma stream, built with liblzma so the test never hand-rolls the
+// range coder. The encoder always writes all-ones ("unknown") for the size and
+// rounds the dictionary up to a power of two, so both fields are patched
+// afterwards when a case needs a value an encoder would not produce.
+Bytes make_lzma(const std::string& payload) {
+    lzma_options_lzma opt;
+    EXPECT_FALSE(lzma_lzma_preset(&opt, 6));  // 8 MiB dictionary
+    lzma_stream s = LZMA_STREAM_INIT;
+    EXPECT_EQ(lzma_alone_encoder(&s, &opt), LZMA_OK);
+    Bytes out(payload.size() + 1024);
+    s.next_in = reinterpret_cast<const std::uint8_t*>(payload.data());
+    s.avail_in = payload.size();
+    s.next_out = out.data();
+    s.avail_out = out.size();
+    EXPECT_EQ(lzma_code(&s, LZMA_FINISH), LZMA_STREAM_END);
+    out.resize(s.total_out);
+    lzma_end(&s);
+    return out;
+}
+
+void set_dict(Bytes& b, std::uint32_t v) {
+    for (int i = 0; i < 4; ++i)
+        b[1 + static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(v >> (8 * i));
+}
+
+void set_usize(Bytes& b, std::uint64_t v) {
+    for (int i = 0; i < 8; ++i)
+        b[5 + static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(v >> (8 * i));
+}
+
+constexpr std::uint64_t kUnknown = ~std::uint64_t{0};
+
+}  // namespace
+
+TEST(Validators, LzmaAcceptsARealStream) {
+    const std::string payload(4096, 'A');
+    Bytes img = make_lzma(payload);
+    set_usize(img, payload.size());
+    const auto found = scan_one(img, "lzma-lc3-lp0-pb2");
+    ASSERT_EQ(found.size(), 1u);
+    EXPECT_EQ(found[0].confidence, Confidence::Consistent);
+    EXPECT_EQ(found[0].attrs.at("dict_size"), "8388608");
+    EXPECT_EQ(found[0].attrs.at("uncompressed_size"), std::to_string(payload.size()));
+
+    // All-ones is what an encoder actually writes when it did not know the
+    // size, including for an empty file, and it has to keep working.
+    Bytes unknown = make_lzma(payload);
+    set_usize(unknown, kUnknown);
+    const auto found2 = scan_one(unknown, "lzma-lc3-lp0-pb2");
+    ASSERT_EQ(found2.size(), 1u);
+    EXPECT_EQ(found2[0].attrs.at("uncompressed_size"), "unknown");
+}
+
+// A declared size of zero makes the decode probe prove nothing: the decoder
+// consumes the header plus its priming bytes, produces the zero bytes it was
+// promised, and reports success. Any 18 bytes passing the cheap screens would
+// do the same. It was 16 of the 17 false positives the corpus produced, and no
+// encoder writes it -- even an empty file gets all-ones.
+TEST(Validators, LzmaRejectsAStreamThatDeclaresZeroOutput) {
+    Bytes img = make_lzma(std::string(4096, 'A'));
+    set_usize(img, 0);
+    EXPECT_TRUE(scan_one(img, "lzma-lc3-lp0-pb2").empty());
+}
+
+// The dictionary must be 2^n or 2^n + 2^(n-1). That is the format's own
+// portability rule, and liblzma enforces it on the way out: asked for
+// 1552809984 it writes 1610612736, asked for 2031616 it writes 2097152. An
+// encoder cannot emit the other values, so a header carrying one is four bytes
+// of whatever happened to be there -- which is what the five streams whose
+// 1.5 GB dictionaries produced decompress-memlimit turned out to be.
+TEST(Validators, LzmaRejectsADictionarySizeNoEncoderWrites) {
+    const std::string payload(4096, 'A');
+    for (const std::uint32_t dict : {1u << 16, 1u << 20, 1u << 23}) {
+        Bytes img = make_lzma(payload);
+        set_dict(img, dict);
+        set_usize(img, payload.size());
+        EXPECT_EQ(scan_one(img, "lzma-lc3-lp0-pb2").size(), 1u) << "2^n dictionary " << dict;
+    }
+    {  // the other form the spec allows
+        Bytes img = make_lzma(payload);
+        set_dict(img, (1u << 22) + (1u << 21));
+        set_usize(img, payload.size());
+        EXPECT_EQ(scan_one(img, "lzma-lc3-lp0-pb2").size(), 1u) << "2^n + 2^(n-1)";
+    }
+    // Exactly the values the corpus carried, all of them on false positives.
+    for (const std::uint32_t dict : {1552809984u, 1576206336u, 30146560u, 2031616u, 771751936u}) {
+        Bytes img = make_lzma(payload);
+        set_dict(img, dict);
+        set_usize(img, payload.size());
+        EXPECT_TRUE(scan_one(img, "lzma-lc3-lp0-pb2").empty())
+            << "dictionary " << dict << " is neither 2^n nor 2^n + 2^(n-1)";
+    }
 }
