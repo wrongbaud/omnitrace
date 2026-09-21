@@ -9,7 +9,7 @@ extracted from the CLI11 `add_option` / `add_flag` calls in `apps/cli/*.cpp`
 (`--help` and `-h` are CLI11 built-ins and not listed). The narrative is in
 `docs/CLI.md`; `scripts/check_docs.py` fails when a flag here is missing there.
 
-17 entries.
+18 entries.
 
 | command | option | kind | help | constraints | default | where |
 |---|---|---|---|---|---|---|
@@ -25,8 +25,9 @@ extracted from the CLI11 `add_option` / `add_flag` calls in `apps/cli/*.cpp`
 | `analyze` | `--history` | flag | Recover superseded and deleted versions when the format keeps them | - | - | `apps/cli/analyze_commands.cpp:515` |
 | `analyze` | `--max-depth` | option | Nested extraction levels | - | `8` | `apps/cli/analyze_commands.cpp:517` |
 | `analyze` | `--max-files` | option | Entries per run | - | `500000` | `apps/cli/analyze_commands.cpp:519` |
-| `analyze` | `--max-bytes` | option | Total bytes written per run | - | `4294967296` | `apps/cli/analyze_commands.cpp:521` |
-| `analyze` | `--max-file-bytes` | option | Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a larger entry is cut there with a <fmt>-limit-file-bytes warning | AsSizeValue | `1073741824` | `apps/cli/analyze_commands.cpp:523` |
+| `analyze` | `--max-bytes` | option | Total bytes written per run; the default is the larger of this and --max-bytes-ratio x the image, so it tracks the evidence | AsSizeValue | `4294967296` | `apps/cli/analyze_commands.cpp:523` |
+| `analyze` | `--max-bytes-ratio` | option | Extraction budget as a multiple of the image size; 0 uses --max-bytes exactly, which is also what passing --max-bytes alone does | - | `4` | `apps/cli/analyze_commands.cpp:530` |
+| `analyze` | `--max-file-bytes` | option | Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a larger entry is cut there with a <fmt>-limit-file-bytes warning | AsSizeValue | `1073741824` | `apps/cli/analyze_commands.cpp:541` |
 | `hash` | `file` | positional | Path to image | required | - | `apps/cli/main.cpp:46` |
 | `scan` | `image` | positional | Path to image | required, ExistingFile | - | `apps/cli/analyze_commands.cpp:480` |
 | `scan` | `--json` | flag | Print findings as JSON | - | - | `apps/cli/analyze_commands.cpp:483` |

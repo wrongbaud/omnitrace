@@ -518,8 +518,26 @@ void register_analyze_commands(CLI::App& app) {
         ->capture_default_str();
     analyze->add_option("--max-files", args->limits.max_files, "Entries per run")
         ->capture_default_str();
-    analyze->add_option("--max-bytes", args->limits.max_bytes, "Total bytes written per run")
-        ->capture_default_str();
+    // Given explicitly, --max-bytes is the budget exactly: clearing the ratio
+    // stops analyze() raising it to track the image size (core/Limits.h).
+    CLI::Option* max_bytes =
+        analyze
+            ->add_option("--max-bytes", args->limits.max_bytes,
+                         "Total bytes written per run; the default is the larger of this and "
+                         "--max-bytes-ratio x the image, so it tracks the evidence")
+            ->transform(CLI::AsSizeValue(false))
+            ->capture_default_str();
+    CLI::Option* ratio =
+        analyze
+            ->add_option("--max-bytes-ratio", args->limits.max_bytes_ratio,
+                         "Extraction budget as a multiple of the image size; 0 uses --max-bytes "
+                         "exactly, which is also what passing --max-bytes alone does")
+            ->capture_default_str();
+    analyze->parse_complete_callback([args, max_bytes, ratio]() {
+        // --max-bytes alone means "that budget, exactly". Given both, the
+        // examiner said what they wanted twice and both are honoured.
+        if (max_bytes->count() > 0 && ratio->count() == 0) args->limits.max_bytes_ratio = 0;
+    });
     analyze
         ->add_option("--max-file-bytes", args->limits.max_file_bytes,
                      "Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a "

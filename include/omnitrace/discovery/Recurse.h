@@ -165,6 +165,13 @@ struct AnalyzeOptions {
     bool write_corrected_view = false;
 };
 
+/// The extraction budget `analyze()` applies, from the run's `Limits` and the
+/// image size: `max(max_bytes, image_size * max_bytes_ratio)`, saturating, and
+/// exactly `max_bytes` when the ratio is 0. Exposed because it is policy, not
+/// arithmetic -- a caller assembling its own pipeline wants the same answer,
+/// and it is the one place the "budget tracks the evidence" rule lives.
+std::uint64_t extraction_budget(const Limits& lim, std::uint64_t image_size);
+
 // One (filesystem node id, entries) pair per walked filesystem, in node order.
 /// One (filesystem node id, entries) pair per walked filesystem, in node
 /// order; the input to `output::listing_to_yaml` / `listing_markdown`.

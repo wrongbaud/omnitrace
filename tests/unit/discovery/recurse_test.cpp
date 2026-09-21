@@ -1938,3 +1938,35 @@ TEST(Analyze, CorrectedViewOverTheCarveLimitIsSkippedAndSaysSo) {
     EXPECT_TRUE(has_code(*img, "image-corrected-view-limit"));
     EXPECT_FALSE(fsys::exists(out.path / "flash" / "dump-swap32.bin"));
 }
+
+// ------------------------------------------------------ the extraction budget
+
+// A fixed byte budget cannot serve evidence that ranges from a 2 MiB SPI part
+// to a 16 GiB eMMC dump. The full-corpus run showed what that costs: the
+// 15.7 GB QNX image exhausted the 4 GiB default partway through extraction and
+// reported it 22,788 times. The budget now tracks the image, with the old
+// fixed value as a floor.
+TEST(Analyze, ExtractionBudgetScalesWithTheImage) {
+    Limits lim;  // defaults: 4 GiB floor, ratio 4
+    const std::uint64_t floor = lim.max_bytes;
+
+    // Small image: the floor wins, so nothing about today's behaviour moves.
+    EXPECT_EQ(extraction_budget(lim, 2u << 20), floor);
+    EXPECT_EQ(extraction_budget(lim, 32u << 20), floor);
+    // Large image: the ratio wins and the budget follows the evidence.
+    EXPECT_EQ(extraction_budget(lim, 8ull << 30), 32ull << 30);
+    EXPECT_EQ(extraction_budget(lim, 16ull << 30), 64ull << 30);
+    // The crossover is exactly where floor and ratio meet.
+    EXPECT_EQ(extraction_budget(lim, floor / lim.max_bytes_ratio), floor);
+
+    // Ratio 0 means "use max_bytes exactly", which is what an explicit
+    // --max-bytes sets, so an examiner's own budget is never raised.
+    lim.max_bytes_ratio = 0;
+    lim.max_bytes = 1u << 20;
+    EXPECT_EQ(extraction_budget(lim, 16ull << 30), 1u << 20);
+
+    // A hostile Source size must not overflow the multiply into a small budget.
+    lim = Limits{};
+    EXPECT_EQ(extraction_budget(lim, std::numeric_limits<std::uint64_t>::max()),
+              std::numeric_limits<std::uint64_t>::max());
+}

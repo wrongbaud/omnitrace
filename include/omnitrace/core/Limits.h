@@ -18,10 +18,25 @@ namespace omnitrace {
 struct Limits {
     std::size_t max_depth = 8;  ///< Nesting levels `discovery::analyze` descends; deeper finds get
                                 ///< an "analyze-limit-depth" run diagnostic.
-    std::uint64_t max_files = 500'000;  ///< Entries a Sink accepts per run ("sink-limit-files").
-    std::uint64_t max_bytes = 4ull
-                              << 30;  ///< Total bytes a Sink accepts per run ("sink-limit-bytes");
-                                      ///< the rest of the entry is dropped and `truncated` set.
+    std::uint64_t max_files = 500'000;     ///< Entries a Sink accepts per run ("sink-limit-files").
+    std::uint64_t max_bytes = 4ull << 30;  ///< Floor for the total bytes a Sink accepts per run
+                                           ///< ("sink-limit-bytes"); the rest of the entry is
+                                           ///< dropped and `truncated` set. See `max_bytes_ratio`.
+    /// Extraction budget as a multiple of the image, which is what makes the
+    /// budget track the evidence: `analyze` raises `max_bytes` to
+    /// `image_size * max_bytes_ratio` when that is larger, so a 2 MiB SPI dump
+    /// keeps the floor above and a 16 GiB eMMC image gets room to be extracted
+    /// at all. A fixed byte count cannot do both, and the fixed 4 GiB this
+    /// replaced silently truncated every large image.
+    ///
+    /// The ratio is the guard that matters: legitimate firmware expands by up
+    /// to ~5x (a compressed SquashFS router image), and the floor already
+    /// covers those because they are small. A decompression bomb expands by
+    /// orders of magnitude more and still trips.
+    ///
+    /// 0 means use `max_bytes` exactly -- what the CLI sets when `--max-bytes`
+    /// is given, so an explicit budget is never silently raised.
+    std::uint64_t max_bytes_ratio = 4;
     std::uint64_t max_file_bytes =
         1ull << 30;  ///< Bytes of one entry a Sink accepts ("sink-limit-file-bytes").
     std::uint64_t max_decompress_ratio =

@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include <system_error>
@@ -1555,11 +1556,29 @@ std::string mount_script_text(const Manifest& m) {
     return s;
 }
 
+// `Limits::max_bytes` is a floor that suits a small compressed image, and
+// `max_bytes_ratio` scales it with the evidence so a 16 GiB eMMC dump is not
+// truncated by a number chosen for a 2 MiB SPI part. Saturating, because
+// image_size * ratio overflows on a hostile Source size.
+std::uint64_t extraction_budget(const Limits& lim, std::uint64_t image_size) {
+    if (lim.max_bytes_ratio == 0) return lim.max_bytes;  // set exactly; do not raise
+    const std::uint64_t scaled =
+        image_size > std::numeric_limits<std::uint64_t>::max() / lim.max_bytes_ratio
+            ? std::numeric_limits<std::uint64_t>::max()
+            : image_size * lim.max_bytes_ratio;
+    return std::max(lim.max_bytes, scaled);
+}
+
 Status analyze(const std::shared_ptr<const Source>& image, const std::string& evidence_path,
                const AnalyzeOptions& opts, Manifest& out, Listings& listings) {
     if (!image) return Status::fail("analyze-no-image: image source is null");
     if (opts.extract && opts.out_dir.empty())
         return Status::fail("analyze-no-out-dir: extraction needs out_dir");
+
+    // Size the extraction budget to the evidence before any walk reads it.
+    // `scaled` is a local the Ctx below borrows, so it has to outlive the run.
+    AnalyzeOptions scaled = opts;
+    scaled.limits.max_bytes = extraction_budget(opts.limits, image->size());
 
     const Digests digests = hash_span(Span::whole(image));
 
@@ -1637,14 +1656,14 @@ Status analyze(const std::shared_ptr<const Source>& image, const std::string& ev
     // manifest describes, so it is written before anything is found in it.
     if (!transform.empty()) {
         if (Node* n = out.find(image_id)) {
-            const std::string rel = write_corrected_view(opts, whole, evidence_path, transform, *n);
+            const std::string rel = write_corrected_view(scaled, whole, evidence_path, transform, *n);
             if (!rel.empty())
                 for (Coverage& row : out.coverage)
                     if (row.format == "word-swap") row.detail += "; view written to " + rel;
         }
     }
 
-    Ctx ctx{opts, out, listings, image_id, 0, 0, {}, {}};
+    Ctx ctx{scaled, out, listings, image_id, 0, 0, {}, {}};
     for (std::size_t i = 0; i < out.coverage.size(); ++i)
         ctx.coverage_index.emplace(out.coverage[i].format, i);
     analyze_span(ctx, whole, image_id, 0);

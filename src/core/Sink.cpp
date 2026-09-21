@@ -249,11 +249,14 @@ LimitClamp clamp_write(const Limits& lim, std::uint64_t file_so_far, std::uint64
     }
     if (static_cast<std::uint64_t>(r.allowed) > total_room) {
         r.allowed = static_cast<std::size_t>(total_room);
-        r.diagnostic = {
-            Severity::Warning, "sink-limit-bytes",
-            "run exceeds max_bytes (" + std::to_string(lim.max_bytes) + "); data truncated"};
-        r.status = fail_code("sink-limit-bytes",
-                             "max_bytes " + std::to_string(lim.max_bytes) + " reached");
+        // No number here: the driver hands each walk what is *left* of the
+        // run's budget (discovery/Recurse.cpp), so `lim.max_bytes` is a
+        // remainder that reaches 0, not the budget anyone configured. Naming
+        // it read as "run exceeds max_bytes (0)". max_file_bytes above is not
+        // derived that way and is safe to quote.
+        r.diagnostic = {Severity::Warning, "sink-limit-bytes",
+                        "the run's extraction budget (max_bytes) is exhausted; data truncated"};
+        r.status = fail_code("sink-limit-bytes", "max_bytes reached");
     }
     return r;
 }

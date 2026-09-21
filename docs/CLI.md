@@ -62,7 +62,7 @@ determine an extent), `Format`, `Tier` (`magic` / `structural` / `consistent` /
 `also_matched` holds lower-confidence findings the resolver suppressed because
 a better one covers the same bytes.
 
-## `analyze <image> --out DIR [--layout corpus|flat] [--carve none|table|all] [--max-carve-bytes N] [--copy-image] [--no-extract] [--history] [--max-depth N] [--max-files N] [--max-bytes N] [--max-file-bytes N]`
+## `analyze <image> --out DIR [--layout corpus|flat] [--carve none|table|all] [--max-carve-bytes N] [--copy-image] [--no-extract] [--history] [--max-depth N] [--max-files N] [--max-bytes N] [--max-bytes-ratio N] [--max-file-bytes N]`
 
 The end-to-end pipeline:
 
@@ -124,7 +124,8 @@ The end-to-end pipeline:
 | `--history` | Ask readers for superseded and deleted versions (JFFS2 / UBIFS / YAFFS2 keep them). Extracted versions land in `files/.omnitrace-versions/<path>/v<version>`. |
 | `--max-depth N` | Nesting levels analysed (default 8). The image is level 0, a file extracted from a filesystem in it is level 1, a file extracted from a filesystem inside *that* is level 2. When the cap stops a level the run gets one `analyze-limit-depth` warning naming the filesystem and how many extracted files were not re-scanned — one per level, not one per file. `0` analyses the image and nothing nested. |
 | `--max-files N` | Entries emitted per run, across all filesystems (default 500000). When the budget is spent the remaining filesystems are recorded but not walked. |
-| `--max-bytes N` | Total bytes written per run (default 4 GiB). |
+| `--max-bytes N` | Floor for the total bytes written per run (default 4 GiB; `2G`, `64G` accepted, 1024-based). The budget actually applied is the larger of this and `--max-bytes-ratio` x the image size, so it tracks the evidence instead of being a number chosen for one size of dump. Passing this flag on its own means "exactly this", and clears the ratio. |
+| `--max-bytes-ratio N` | Extraction budget as a multiple of the image size (default 4). A 2 MiB SPI dump stays on the `--max-bytes` floor; a 16 GiB eMMC image gets 64 GiB. `0` uses `--max-bytes` exactly. The ratio is the guard that matters: real firmware expands by up to ~5x (a compressed SquashFS router image, all of which are small enough to sit under the floor), while a decompression bomb expands by orders of magnitude more and still trips. Before this existed, the fixed 4 GiB default truncated every image over a few GiB — the 15.7 GB QNX corpus image lost most of its extraction to it and said so 22,788 times. |
 | `--max-file-bytes N` | Largest single extracted entry (default 1 GiB; `2G`, `8G` accepted, 1024-based). A larger entry is written up to the cap and cut there: the file node gets `truncated: "true"` and a `<fmt>-limit-file-bytes` warning. Raise it when a filesystem holds whole nested images as files — the QNX6 `storage` partition of the corpus keeps SquashFS update images of 1.0-1.6 GiB, and at the default each one is cut mid-image and will not read back as a filesystem. |
 
 Every limit that trips is visible: the node gets `truncated: "true"` in its
