@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <random>
 
 #include "helpers.h"
@@ -399,4 +400,73 @@ TEST(AnalyzeSwap, CorpusRouterIsNotSwapped) {
     ASSERT_TRUE(analyze(file, path, opts, m, listings));
     EXPECT_EQ(attr(m.nodes()[0], "word_swap"), "");
     EXPECT_EQ(coverage_for(m, "word-swap"), nullptr);
+}
+
+// --------------------------------------- the veto table against the scanner
+
+// The word-swap table and the signature set are maintained separately, and
+// the table is the one nobody remembers to update. A format with no entry
+// scores nothing in the raw view, so a small image of it — one with no other
+// structure to speak for it — falls through to the text score, gets
+// "corrected", and is lost whole. That has happened twice: a bare .bz2 of
+// compressed noise, and every big-endian cramfs image.
+//
+// A format counts as represented when the table names an entry for it or an
+// entry's bytes prefix-match one of its magics. bzip2 is the reason for the
+// first of those: its signature magic is the three bytes "BZh", too short to
+// score on, so the table carries the 48-bit block magic behind it under the
+// name "bzip2-block".
+TEST(SwapTable, EverySignatureFormatIsRepresented) {
+    // Formats whose magic is too short or too positional to score on at all.
+    // Each is a deliberate absence with a reason, not an oversight.
+    const std::map<std::string, std::string> exempt = {
+        {"ext", "2-byte 0x53EF at offset 0x438 inside the superblock"},
+        {"mbr", "2-byte 0x55AA at offset 510 of the first sector"},
+        {"lzma", "no magic at all: a properties byte below 225"},
+    };
+
+    const SignatureSet& sigs = SignatureSet::builtin();
+    const std::vector<SwapMagic> table = swap_magics();
+
+    std::map<std::string, std::vector<std::vector<std::uint8_t>>> by_format;
+    for (const Signature& s : sigs.signatures) by_format[s.format].push_back(s.magic);
+
+    std::vector<std::string> missing;
+    for (const auto& [format, magics] : by_format) {
+        if (exempt.count(format) != 0) continue;
+        bool named = false, matched = false;
+        for (const SwapMagic& e : table) {
+            named = named || e.name == format || e.name.rfind(format + "-", 0) == 0;
+            for (const std::vector<std::uint8_t>& m : magics) {
+                const std::size_t n = std::min(e.bytes.size(), m.size());
+                if (n != 0 &&
+                    std::equal(e.bytes.begin(), e.bytes.begin() + static_cast<std::ptrdiff_t>(n),
+                               m.begin()))
+                    matched = true;
+            }
+        }
+        if (!named && !matched) missing.push_back(format);
+    }
+
+    std::string detail;
+    for (const std::string& m : missing) detail += "\n    " + m;
+    EXPECT_TRUE(missing.empty())
+        << missing.size()
+        << " format(s) with a signature have no entry in src/core/Swap.cpp's table, so an image "
+           "of that format scores nothing in the raw view and can be word-swapped into garbage. "
+           "Add a strong entry, or exempt it here with the reason its magic cannot score:"
+        << detail;
+}
+
+// The exemptions have to stay honest: if one of them ever grows a magic long
+// enough to score on, it belongs in the table and not on this list.
+TEST(SwapTable, ExemptFormatsReallyHaveNothingToScoreOn) {
+    const SignatureSet& sigs = SignatureSet::builtin();
+    for (const Signature& s : sigs.signatures) {
+        if (s.format != "ext" && s.format != "mbr" && s.format != "lzma") continue;
+        EXPECT_LE(s.magic.size(), 3u)
+            << s.name << " (" << s.format << ") has a " << s.magic.size()
+            << "-byte magic, which is long enough to score on; it should be in the word-swap "
+               "table rather than exempt from it";
+    }
 }

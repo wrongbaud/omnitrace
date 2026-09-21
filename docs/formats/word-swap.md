@@ -51,8 +51,11 @@ are scored:
   (dirent, inode, cleanmarker; LE and BE), UBI `UBI#`, UBIFS `31 18 10 06`,
   xz `fd 37 7a 58 5a 00`, zstd `28 b5 2f fd`, LZ4 frame `04 22 4d 18`, lzop
   `89 4c 5a 4f 00 0d 0a 1a 0a`, the bzip2 block magic `31 41 59 26 53 59`, 7z
-  `37 7a bc af 27 1c`, zip `PK 03 04`, cpio-newc `070701`, DTB
-  `d0 0d fe ed`, cramfs `45 3d cd 28`, romfs `-rom1fs-`, `ANDROID!`,
+  `37 7a bc af 27 1c`, zip `PK 03 04`, cpio `070701`/`070702`/`070707`, tar
+  `ustar`, DTB `d0 0d fe ed`, cramfs `45 3d cd 28` and `28 cd 3d 45`, romfs
+  `-rom1fs-`, YAFFS2's first-chunk tag, QNX6 `68 19 11 22` and `22 11 19 68`,
+  QNX IFS `eb 7e ff 00`, GPT `EFI PART`, LUKS `LUKS\xba\xbe`, dm-verity
+  `verity\0\0`, Android sparse `3a ff 26 ed`, `ANDROID!`, `VNDRBOOT`,
   `U-Boot`, `Linux version`, `-----BEGIN`, and the ARM NOP word `0xE1A00000`
   at 4-byte alignment;
 - weak hits are gzip `1f 8b 08` (three bytes; a chance hit every 16 MiB) and
@@ -104,6 +107,31 @@ swapped, its magic destroyed, and reported as one unidentified region.
 bzip2's own "BZh" is three bytes and level-dependent, so the entry is the
 48-bit block magic behind it, whose first copy is byte-aligned at offset 4.
 Anything with a strong magic that a reader can open belongs here.
+
+## The table's rule, and the tests that hold it
+
+The table has produced two bugs of the same shape — bzip2 absent entirely, and
+`cramfs-le` vetoing when its swap32 image *is* the big-endian cramfs magic —
+so the rule is now enforced rather than remembered. `swap_magics()` exports the
+table and four tests assert on it:
+
+| test | what it forbids |
+|---|---|
+| `NoVetoingMagicIsTheSwapImageOfAnother` (core) | a veto whose swap16/swap32 image is another entry's magic; such a hit may be the swap rendering of that other format |
+| `AStrongMagicOnlyDeclinesToVetoWhenItHasATwin` (core) | a strong entry that neither vetoes nor has a twin — there are only two reasons not to veto, and "nobody claimed it" is not one |
+| `NoWeakMagicVetoes` (core) | a short or wildcarded pattern vetoing, where a chance hit would silently disable correction for a whole image |
+| `EverySignatureFormatIsRepresented` (discovery) | a format with a signature and no entry, which is the bzip2 bug |
+
+Each was checked against the bug it exists for: removing `bzip2-block` fails
+the fourth naming `bzip2`, removing `cramfs-be` fails the second naming
+`cramfs-le`, and restoring `cramfs-le`'s veto fails the first.
+
+Three formats are exempt from the coverage test, each because its magic is too
+short or too positional to score on at all: **ext** (2 bytes at offset 0x438
+inside the superblock), **mbr** (2 bytes at offset 510) and **lzma** (no magic
+at all — a properties byte below 225). A fifth test asserts those three still
+have nothing longer to offer, so an exemption cannot quietly outlive its
+reason.
 
 ## In the analysis driver (discovery/Recurse)
 

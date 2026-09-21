@@ -123,6 +123,25 @@ const std::vector<BytePattern>& byte_patterns() {
         {"cramfs-be", {0x28, 0xcd, 0x3d, 0x45}, true, false},
         {"romfs", {'-', 'r', 'o', 'm', '1', 'f', 's', '-'}, true, true},
         {"android-boot", {'A', 'N', 'D', 'R', 'O', 'I', 'D', '!'}, true, true},
+        {"android-vendor-boot", {'V', 'N', 'D', 'R', 'B', 'O', 'O', 'T'}, true, true},
+        {"android-sparse", {0x3a, 0xff, 0x26, 0xed}, true, true},
+        {"cpio-crc", {'0', '7', '0', '7', '0', '2'}, true, true},
+        {"cpio-odc", {'0', '7', '0', '7', '0', '7'}, true, true},
+        {"dm-verity", {'v', 'e', 'r', 'i', 't', 'y', 0x00, 0x00}, true, true},
+        {"gpt", {'E', 'F', 'I', ' ', 'P', 'A', 'R', 'T'}, true, true},
+        {"luks", {'L', 'U', 'K', 'S', 0xba, 0xbe}, true, true},
+        {"qnx-ifs", {0xeb, 0x7e, 0xff, 0x00}, true, true},
+        {"tar-ustar", {'u', 's', 't', 'a', 'r'}, true, true},
+        {"yaffs2", {0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff}, true, true},
+        // QNX6 writes its superblock magic in the host's byte order, so the
+        // two spellings are each other's swap32 image and neither can say
+        // which view is right -- the same shape as SquashFS below.
+        {"qnx6-be", {0x68, 0x19, 0x11, 0x22}, true, false},
+        {"qnx6-le", {0x22, 0x11, 0x19, 0x68}, true, false},
+        // The DD-WRT/Broadcom SquashFS spellings complete that family: `shsq`
+        // is `hsqs` under swap16 and `qshs` under swap32, and so on round.
+        {"squashfs-vendor-shsq", {'s', 'h', 's', 'q'}, true, false},
+        {"squashfs-vendor-qshs", {'q', 's', 'h', 's'}, true, false},
         {"u-boot", {'U', '-', 'B', 'o', 'o', 't'}, true, true},
         {"linux-version",
          {'L', 'i', 'n', 'u', 'x', ' ', 'v', 'e', 'r', 's', 'i', 'o', 'n'},
@@ -131,6 +150,16 @@ const std::vector<BytePattern>& byte_patterns() {
         {"pem", {'-', '-', '-', '-', '-', 'B', 'E', 'G', 'I', 'N'}, true, true},
     };
     return t;
+}
+
+// Copies the table out for `swap_magics()`. The internal form is an
+// implementation detail; the exported one is what a test can assert on.
+std::vector<SwapMagic> export_patterns() {
+    std::vector<SwapMagic> out;
+    out.reserve(byte_patterns().size());
+    for (const BytePattern& p : byte_patterns())
+        out.push_back(SwapMagic{p.name, p.bytes, p.strong, p.veto});
+    return out;
 }
 
 const std::vector<WordPattern>& word_patterns() {
@@ -343,6 +372,10 @@ std::size_t SwappedSource::read(std::uint64_t off, std::span<std::uint8_t> out) 
 
 std::span<const std::uint8_t> SwappedSource::map(std::uint64_t, std::size_t) const {
     return {};
+}
+
+std::vector<SwapMagic> swap_magics() {
+    return export_patterns();
 }
 
 SwapDetection detect_word_swap(const Span& span, std::uint64_t budget) {

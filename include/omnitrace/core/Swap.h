@@ -18,6 +18,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "omnitrace/core/Source.h"
 #include "omnitrace/core/Span.h"
@@ -76,5 +77,21 @@ struct SwapDetection {
 /// is at least twice the raw view's and at least one strong hit's worth.
 /// Bounded work; never fails (an empty span yields `None`).
 SwapDetection detect_word_swap(const Span& span, std::uint64_t budget = 64u << 20);
+
+/// One entry of the magic table `detect_word_swap` scores with.
+struct SwapMagic {
+    std::string name;                 ///< The format the pattern identifies.
+    std::vector<std::uint8_t> bytes;  ///< The pattern itself.
+    bool strong = false;              ///< A full format identifier, not a short or wildcarded one.
+    bool veto = false;                ///< A hit in the raw view proves the raw view is right.
+};
+
+/// The table, in declaration order. Exposed so its own rule can be a test
+/// rather than a habit: an entry may only `veto` when its 16- and 32-bit swap
+/// images are not themselves magics, because otherwise a hit may be the swap
+/// rendering of the other format rather than evidence for this one. Getting
+/// that wrong has twice made a whole class of image unreadable -- once for
+/// big-endian cramfs, whose swap32 image is the little-endian magic.
+std::vector<SwapMagic> swap_magics();
 
 }  // namespace omnitrace

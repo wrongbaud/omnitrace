@@ -278,4 +278,73 @@ TEST(DetectWordSwap, CorpusRouterIsNone) {
 }
 
 }  // namespace
+
+// ----------------------------------------------------- the magic table's rule
+
+namespace {
+
+bool is_prefix(const Bytes& a, const Bytes& b) {
+    const std::size_t n = std::min(a.size(), b.size());
+    return n != 0 && std::equal(a.begin(), a.begin() + static_cast<std::ptrdiff_t>(n), b.begin());
+}
+
+}  // namespace
+
+// The rule the table states, as a test rather than a habit. A `veto` entry
+// claims that finding it in the raw view proves the raw view is right. That
+// only holds when the entry's own 16- and 32-bit swap images are not magics
+// themselves — otherwise the hit may be the swap rendering of the other
+// format, and vetoing on it leaves a genuinely swapped image uncorrected.
+//
+// Getting this wrong has twice cost a whole class of image: `cramfs-le`
+// vetoed while its swap32 image is the big-endian cramfs magic, so every
+// big-endian cramfs was "corrected" into garbage.
+TEST(DetectWordSwap, NoVetoingMagicIsTheSwapImageOfAnother) {
+    const std::vector<SwapMagic> table = swap_magics();
+    ASSERT_FALSE(table.empty());
+    for (const SwapMagic& e : table) {
+        if (!e.veto) continue;
+        for (const std::size_t w : {std::size_t{2}, std::size_t{4}}) {
+            const Bytes image = reference_swap(e.bytes, w);
+            if (image == e.bytes) continue;  // palindromic under this width
+            for (const SwapMagic& other : table) {
+                EXPECT_FALSE(is_prefix(image, other.bytes))
+                    << e.name << " vetoes, but its swap" << (w * 8) << " image is " << other.name
+                    << "'s magic; it cannot tell the two views apart";
+            }
+        }
+    }
+}
+
+// The converse, so the table cannot drift the other way either. There are
+// exactly two reasons for a strong magic not to veto: it is one of a swap
+// pair, or it is weak enough that a chance hit is plausible. A strong entry
+// with neither excuse is a veto someone forgot to claim, and the cost of that
+// is a swapped image left uncorrected because nothing spoke for the raw view.
+TEST(DetectWordSwap, AStrongMagicOnlyDeclinesToVetoWhenItHasATwin) {
+    const std::vector<SwapMagic> table = swap_magics();
+    for (const SwapMagic& e : table) {
+        if (e.veto || !e.strong) continue;
+        bool twin = false;
+        for (const std::size_t w : {std::size_t{2}, std::size_t{4}}) {
+            const Bytes image = reference_swap(e.bytes, w);
+            if (image == e.bytes) continue;
+            for (const SwapMagic& other : table)
+                twin = twin || (other.name != e.name && is_prefix(image, other.bytes));
+        }
+        EXPECT_TRUE(twin) << e.name
+                          << " is strong and does not veto, but no other entry is its swap "
+                             "image; nothing stops a swapped image of this format being "
+                             "\"corrected\" into garbage";
+    }
+}
+
+// A weak pattern must never veto: it is short or wildcarded enough that a
+// chance hit is expected, and a chance hit that vetoes silently disables
+// correction for the whole image.
+TEST(DetectWordSwap, NoWeakMagicVetoes) {
+    for (const SwapMagic& e : swap_magics())
+        EXPECT_FALSE(e.veto && !e.strong) << e.name << " is weak but vetoes";
+}
+
 }  // namespace omnitrace
