@@ -305,6 +305,7 @@ src/discovery/validators/gpt.cpp:
   primary: "on a backup: valid | mismatch | invalid | outside for its primary"
   revision: header revision as hex
   sector_size: "512 or 4096, from which signature matched"
+  signature_bytes: the eight signature bytes as hex, present only when they are not "EFI PART"
   table: "gpt-primary | gpt-backup"
 
 src/discovery/validators/gzip.cpp:

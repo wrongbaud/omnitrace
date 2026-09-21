@@ -128,11 +128,52 @@ protective MBR and can never start a partition); they are skipped and
 counted in `gpt-entry-invalid`. At most `max_entries` (TOML) entries are
 read.
 
+### A header whose signature is not "EFI PART"
+
+The header CRC32 is computed over `header_size` bytes with the CRC field
+zeroed — the signature is inside that range. So a matching CRC proves the 92
+bytes are exactly what the writer wrote, which is a stronger statement than
+the magic makes. Two signatures therefore exist for the one damage form that
+has turned up in evidence, `gpt-cleared-sig` and `gpt-cleared-sig-4k`, which
+match `00 00 00 00 50 41 52 54` — the spec magic with its leading word
+cleared.
+
+These are the only hits the validator will reject outright rather than report
+at `magic`: **without "EFI PART", a failed header CRC yields no finding at
+all.** The reason is the carver. A magic-tier GPT finding still gets an
+extent from its header fields, and eight coincidental bytes that survive to
+`structural` would hand the carver a partition map read out of noise. The
+same lesson as the romfs reader: a producer more permissive than its
+validator turns a guess into bytes on disk.
+
+A header accepted this way carries `attrs["signature_bytes"]` (the eight
+bytes as hex) and the `gpt-signature-nonstandard` warning. It is a Warning
+and not an Info because it is evidentially interesting in its own right: it
+says the signature was already in this state when the CRC was computed, and
+it explains why other tools show nothing.
+
+The motivating case is an automotive Android unit VCUNH infotainment unit's 116 GiB UFS user LUN.
+Its primary header at LBA 1 (4096-byte sectors) has the cleared signature and
+a CRC that matches over it; its backup at the end of the disk is an ordinary
+"EFI PART" describing the same 47 partitions. Before this, omnitrace read the
+map only from the backup — 116 GiB of scanning away — and then reported the
+primary as missing.
+
+A shorter magic ("PART" alone, at +4) would cover every way the leading word
+can be lost, and the CRC would still gate it. It is not used because "PART"
+is far too common a byte sequence to scan an image for: the alignment test
+would reject the hits cheaply, but the scanner would carry the pattern
+through every byte of every image to get there. A new damage form belongs in
+`signatures/core.toml` and `kClearedMagic` together.
+
 ### Backup recovery rule
 
 A header whose `my_lba > alternate_lba` is a backup. It is parsed exactly
 like a primary from its own entry array (the array before the header), and
-the state of the primary it names decides the diagnostic:
+the state of the primary it names decides the diagnostic. The header it looks
+for at `alternate_lba` may carry either signature form — a backup that
+insisted on "EFI PART" would call an intact primary destroyed, and send an
+examiner hunting for a table that is right there:
 
 * primary present, header CRC ok, `my_lba`/`alternate_lba` cross-consistent,
   same disk GUID and same entry-array CRC → `gpt-backup` (Info, "backup
@@ -254,3 +295,9 @@ byte-identical run to run.
 * Apple APM, BSD disklabels, Sun VTOC and vendor tables (MTD partition
   strings in the kernel command line, Qualcomm `partition.xml`) are not
   recognised yet.
+* Android LP "super" metadata (dynamic partitions) is not read. The logical
+  partitions inside a super are found by their own magics when they have one
+  — all four in the automotive Android unit's 32 GiB `la_super` are ext4 and are reached
+  today — but they are named by offset rather than `system_a`, `vendor_a`,
+  `system_ext_a`, `product_a`, and a partition assembled from more than one
+  extent would not be reassembled at all.

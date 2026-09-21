@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-618 keys across 52 source files.
+619 keys across 52 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -360,30 +360,31 @@ Source: `src/discovery/validators/fit.cpp` (18 keys)
 
 ## validator `gpt`
 
-Source: `src/discovery/validators/gpt.cpp` (20 keys)
+Source: `src/discovery/validators/gpt.cpp` (21 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `alternate` | `src/discovery/validators/gpt.cpp:343` | valid \| invalid \| outside: the header at alternate_lba |
-| `alternate_lba` | `src/discovery/validators/gpt.cpp:226` | alternate_lba field |
-| `backup` | `src/discovery/validators/gpt.cpp:361` | on a primary: valid \| mismatch \| invalid \| outside for its backup |
-| `disk_guid` | `src/discovery/validators/gpt.cpp:224` | disk GUID |
-| `disk_offset` | `src/discovery/validators/gpt.cpp:255` | span-relative offset of LBA 0 of the disk the table describes (absent when LBA 0 lies before the data) |
-| `disk_size` | `src/discovery/validators/gpt.cpp:334` | (last LBA + 1) * sector: alternate_lba for a primary, my_lba for a backup, never smaller than the farthest partition |
-| `entries_lba` | `src/discovery/validators/gpt.cpp:269` | partition entry array LBA |
-| `entry_array_crc` | `src/discovery/validators/gpt.cpp:304` | ok \| mismatch (absent when the array is outside the data) |
-| `entry_count` | `src/discovery/validators/gpt.cpp:267` | number of entries in the array |
-| `entry_size` | `src/discovery/validators/gpt.cpp:268` | size of one entry |
-| `first_usable_lba` | `src/discovery/validators/gpt.cpp:270` | first_usable_lba field |
-| `header_lba` | `src/discovery/validators/gpt.cpp:225` | my_lba of this header |
-| `last_usable_lba` | `src/discovery/validators/gpt.cpp:271` | last_usable_lba field |
-| `my_lba` | `src/discovery/validators/gpt.cpp:252` | alias of header_lba on a backup header (older consumers read it) |
-| `partition_count` | `src/discovery/validators/gpt.cpp:290` | entries listed in partitions |
-| `partitions` | `src/discovery/validators/gpt.cpp:289` | pN:start_bytes:size_bytes:type_guid:unique_guid:name[:attrs=0x..];... disk-relative |
-| `primary` | `src/discovery/validators/gpt.cpp:346` | on a backup: valid \| mismatch \| invalid \| outside for its primary |
-| `revision` | `src/discovery/validators/gpt.cpp:222` | header revision as hex |
-| `sector_size` | `src/discovery/validators/gpt.cpp:223` | 512 or 4096, from which signature matched |
-| `table` | `src/discovery/validators/gpt.cpp:251` | gpt-primary \| gpt-backup |
+| `alternate` | `src/discovery/validators/gpt.cpp:387` | valid \| invalid \| outside: the header at alternate_lba |
+| `alternate_lba` | `src/discovery/validators/gpt.cpp:261` | alternate_lba field |
+| `backup` | `src/discovery/validators/gpt.cpp:405` | on a primary: valid \| mismatch \| invalid \| outside for its backup |
+| `disk_guid` | `src/discovery/validators/gpt.cpp:259` | disk GUID |
+| `disk_offset` | `src/discovery/validators/gpt.cpp:299` | span-relative offset of LBA 0 of the disk the table describes (absent when LBA 0 lies before the data) |
+| `disk_size` | `src/discovery/validators/gpt.cpp:378` | (last LBA + 1) * sector: alternate_lba for a primary, my_lba for a backup, never smaller than the farthest partition |
+| `entries_lba` | `src/discovery/validators/gpt.cpp:313` | partition entry array LBA |
+| `entry_array_crc` | `src/discovery/validators/gpt.cpp:348` | ok \| mismatch (absent when the array is outside the data) |
+| `entry_count` | `src/discovery/validators/gpt.cpp:311` | number of entries in the array |
+| `entry_size` | `src/discovery/validators/gpt.cpp:312` | size of one entry |
+| `first_usable_lba` | `src/discovery/validators/gpt.cpp:314` | first_usable_lba field |
+| `header_lba` | `src/discovery/validators/gpt.cpp:260` | my_lba of this header |
+| `last_usable_lba` | `src/discovery/validators/gpt.cpp:315` | last_usable_lba field |
+| `my_lba` | `src/discovery/validators/gpt.cpp:296` | alias of header_lba on a backup header (older consumers read it) |
+| `partition_count` | `src/discovery/validators/gpt.cpp:334` | entries listed in partitions |
+| `partitions` | `src/discovery/validators/gpt.cpp:333` | pN:start_bytes:size_bytes:type_guid:unique_guid:name[:attrs=0x..];... disk-relative |
+| `primary` | `src/discovery/validators/gpt.cpp:390` | on a backup: valid \| mismatch \| invalid \| outside for its primary |
+| `revision` | `src/discovery/validators/gpt.cpp:257` | header revision as hex |
+| `sector_size` | `src/discovery/validators/gpt.cpp:258` | 512 or 4096, from which signature matched |
+| `signature_bytes` | `src/discovery/validators/gpt.cpp:282` | the eight signature bytes as hex, present only when they are not "EFI PART" |
+| `table` | `src/discovery/validators/gpt.cpp:295` | gpt-primary \| gpt-backup |
 
 ## validator `gzip`
 

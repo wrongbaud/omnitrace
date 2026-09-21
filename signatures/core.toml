@@ -333,6 +333,34 @@ validator = "gpt"
 max_entries = 1024
 description = "GUID partition table with 4096-byte sectors (header at LBA 1)"
 
+# A GPT header whose leading "EFI " has been cleared. The header CRC32 covers
+# the signature, so one of these is only a GPT when the CRC matches over the
+# bytes as stored -- which is a stronger statement than the magic makes, and is
+# what the validator requires before it emits anything at all. Seen on an automotive Android unit
+# VCUNH unit's 116 GiB user LUN, whose backup header is an ordinary "EFI PART":
+# every other tool reads the map from the end of the disk, or not at all.
+[[signature]]
+name = "gpt-cleared-sig"
+format = "gpt"
+category = "partition-table"
+hex = "0000000050415254"
+magic_offset = 512
+endian = "little"
+validator = "gpt"
+max_entries = 1024
+description = "GPT header with a cleared signature, 512-byte sectors; accepted only on a valid header CRC32"
+
+[[signature]]
+name = "gpt-cleared-sig-4k"
+format = "gpt"
+category = "partition-table"
+hex = "0000000050415254"
+magic_offset = 4096
+endian = "little"
+validator = "gpt"
+max_entries = 1024
+description = "GPT header with a cleared signature, 4096-byte sectors; accepted only on a valid header CRC32"
+
 # ------------------------------------------------------------------ compressed
 
 [[signature]]

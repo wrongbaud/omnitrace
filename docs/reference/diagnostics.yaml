@@ -493,6 +493,10 @@ gpt-primary-missing:
   meaning: no valid primary header; the partitions were recovered from the backup header
   action: expected on truncated or wiped disks; verify the map against the partition contents
 
+gpt-signature-nonstandard:
+  meaning: the header's signature is not "EFI PART", but its CRC32 matches over the bytes as stored
+  action: the map is intact and was read; note that most tools will not find this header at all, and that the signature was already in this state when the CRC was computed
+
 gpt-truncated-header:
   meaning: fewer than 92 bytes after the magic
   action: magic-tier hit at the end of the data; usually noise

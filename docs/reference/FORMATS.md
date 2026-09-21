@@ -49,7 +49,7 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `lzop` | compressed | validated to consistent (`lzop`) | yes | yes (`src/containers/lzop/LzopReader.cpp:264`) | no | - | [lzop.md](../formats/lzop.md) | signatures: `lzop` |
 | `xz` | compressed | validated to consistent (`xz`) | yes | yes (`src/containers/stream/StreamReader.cpp:238`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `xz` |
 | `zstd` | compressed | validated to consistent (`zstd`) | yes | yes (`src/containers/stream/StreamReader.cpp:236`) | no | - | [compressed-streams.md](../formats/compressed-streams.md) | signatures: `zstd` |
-| `gpt` | partition-table | validated to verified (`gpt`) | yes | no | n.a. | - | [partition-tables.md](../formats/partition-tables.md) | size is the table extent (header + entry array); the disk extent is `disk_size`; signatures: `gpt`, `gpt-4k` |
+| `gpt` | partition-table | validated to verified (`gpt`) | yes | no | n.a. | - | [partition-tables.md](../formats/partition-tables.md) | size is the table extent (header + entry array); the disk extent is `disk_size`; signatures: `gpt`, `gpt-4k`, `gpt-cleared-sig`, `gpt-cleared-sig-4k` |
 | `mbr` | partition-table | validated to consistent (`mbr`) | yes | no | n.a. | - | [partition-tables.md](../formats/partition-tables.md) | size is the 512-byte table sector; EBR chain sectors hidden through `also_covers`; signatures: `mbr` |
 | `dm-verity` | crypto | validated to consistent (`verity`) | yes | no | n.a. | - | [verity.md](../formats/verity.md) | signatures: `dm-verity` |
 | `luks` | crypto | validated to consistent (`luks`) | yes | no | n.a. | - | [luks.md](../formats/luks.md) | signatures: `luks` |
@@ -62,6 +62,6 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 
 ## Counts
 
-- 55 signatures over 39 format ids
+- 57 signatures over 39 format ids
 - 31 validators, 11 filesystem reader(s), 17 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

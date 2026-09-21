@@ -16,6 +16,16 @@
 // all parse the same way. Partition offsets in attrs["partitions"] are
 // disk-relative bytes; attrs["disk_offset"] says where LBA 0 is in the Span.
 //
+// A header whose signature is not "EFI PART" is still read when its CRC32
+// matches. The CRC covers the signature bytes, so a match proves the 92 bytes
+// are exactly what the writer wrote -- a stronger statement than the magic
+// makes. One automotive Android unit VCUNH unit's 116 GiB user LUN stores its primary header with
+// the leading "EFI " cleared and the CRC computed over the cleared form; the
+// table is intact and self-consistent, and the backup at the end of the disk
+// is an ordinary "EFI PART". Without the spec magic the CRC is the only thing
+// separating a header from eight bytes of coincidence, so a hit that fails it
+// yields no finding at all rather than the usual magic-tier one.
+//
 // The finding covers the table's own bytes only, never the disk:
 //   primary  [LBA 0, end of the entry array)          typically 0x4400 bytes
 //   backup   [entry array, end of the header sector)  typically 0x4200 bytes
@@ -36,6 +46,21 @@ using namespace validators;
 
 constexpr std::uint64_t kHeaderMin = 92;
 constexpr std::uint64_t kEntryMin = 128;
+
+// The signature the spec defines, and the one form of damage that has been
+// seen in evidence. A shorter magic ("PART" alone) would cover every way the
+// leading word can be lost, but it is far too common a byte sequence to scan
+// an image for; a new form belongs here and in signatures/core.toml together.
+constexpr std::uint8_t kSpecMagic[8] = {'E', 'F', 'I', ' ', 'P', 'A', 'R', 'T'};
+constexpr std::uint8_t kClearedMagic[8] = {0, 0, 0, 0, 'P', 'A', 'R', 'T'};
+
+bool is_spec_magic(const Span& span, std::uint64_t off) {
+    return span.matches_at(off, std::span<const std::uint8_t>(kSpecMagic, 8));
+}
+bool is_gpt_magic(const Span& span, std::uint64_t off) {
+    return is_spec_magic(span, off) ||
+           span.matches_at(off, std::span<const std::uint8_t>(kClearedMagic, 8));
+}
 
 std::string utf16le_to_utf8(std::span<const std::uint8_t> raw) {
     std::string out;
@@ -139,8 +164,7 @@ std::string alternate_state(const Span& span, std::uint64_t hdr, const Header& h
     matches = false;
     const auto off = lba_offset(hdr, h.my_lba, h.alternate_lba, sector);
     if (!off || *off >= span.size()) return "outside";
-    static constexpr std::uint8_t kMagic[8] = {'E', 'F', 'I', ' ', 'P', 'A', 'R', 'T'};
-    if (!span.matches_at(*off, std::span<const std::uint8_t>(kMagic, 8))) {
+    if (!is_gpt_magic(span, *off)) {
         return remaining(span, *off) < sector ? "outside" : "invalid";
     }
     const auto alt = read_header(span, *off);
@@ -213,11 +237,22 @@ std::optional<Finding> validate_gpt(const Span& span, std::uint64_t start, const
     if (hdr % sector != 0) return std::nullopt;
     Finding f = make_finding(sig, start, Confidence::Magic);
 
+    // Eight bytes that are not "EFI PART" are only a GPT header if the CRC
+    // agrees, so every path that would otherwise settle for a magic-tier
+    // finding gives up instead. The CRC cannot be computed until header_size
+    // has been read and range-checked, which is why the tests below still run
+    // in their usual order.
+    const bool spec_magic = is_spec_magic(span, hdr);
+    const auto give_up = [&]() -> std::optional<Finding> {
+        if (!spec_magic) return std::nullopt;
+        return f;
+    };
+
     const auto h = read_header(span, hdr);
     if (!h) {
         diag(f, Severity::Warning, "gpt-truncated-header",
              "fewer than 92 bytes available for the GPT header");
-        return f;
+        return give_up();
     }
     f.attrs["revision"] = hex_fixed(h->revision, 8);
     f.attrs["sector_size"] = dec(sector);
@@ -227,22 +262,31 @@ std::optional<Finding> validate_gpt(const Span& span, std::uint64_t start, const
     if (!header_size_ok(*h, sector)) {
         diag(f, Severity::Warning, "gpt-bad-header-size",
              "header_size " + dec(h->header_size) + " is not in [92, " + dec(sector) + "]");
-        return f;
+        return give_up();
     }
     if (!entry_size_ok(*h)) {
         diag(f, Severity::Warning, "gpt-bad-entry-size",
              "entry_size " + dec(h->entry_size) + " is not a multiple of 8 >= 128");
-        return f;
+        return give_up();
     }
     if (h->my_lba == 0 || h->my_lba == h->alternate_lba) {
         diag(f, Severity::Warning, "gpt-bad-my-lba",
              "my_lba " + dec(h->my_lba) + " / alternate_lba " + dec(h->alternate_lba) +
                  " cannot describe a header");
-        return f;
+        return give_up();
+    }
+    const bool header_ok = header_crc_ok(span, hdr, *h);
+    if (!spec_magic) {
+        if (!header_ok) return std::nullopt;
+        const auto raw = span.bytes(hdr, 8);
+        f.attrs["signature_bytes"] = raw ? hex_bytes(*raw) : "";
+        diag(f, Severity::Warning, "gpt-signature-nonstandard",
+             "the header's signature is not \"EFI PART\", but its CRC32 matches over the "
+             "bytes as stored, so the table is intact and the signature was already in this "
+             "state when the CRC was computed; the partition map was read from it");
     }
     f.confidence = Confidence::Structural;
 
-    const bool header_ok = header_crc_ok(span, hdr, *h);
     if (!header_ok)
         diag(f, Severity::Warning, "gpt-header-crc-mismatch", "header CRC32 does not match");
 

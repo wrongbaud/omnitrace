@@ -421,6 +421,76 @@ TEST(PartitionTable, GptCarvedBackupSliceStillYieldsPartitions) {
     EXPECT_EQ(backup.confidence, Confidence::Verified);
 }
 
+// A GPT header whose leading "EFI " has been cleared, with the CRC computed
+// over the cleared bytes. Seen on an automotive Android unit VCUNH unit's 116 GiB user LUN; the four
+// tests below are the whole rule, and each one fails if a different half of it
+// is removed.
+Bytes gpt_disk_cleared_sig(bool recompute_crc) {
+    Bytes b = gpt_disk(4096, kTwoParts);
+    for (std::size_t i = 0; i < 4; ++i) b[kSector + i] = 0;
+    if (recompute_crc) {
+        test::put_u32le(b, kSector + 16, 0);
+        test::put_u32le(b, kSector + 16, test::crc_zlib(b, kSector, 92));
+    }
+    return b;
+}
+
+TEST(PartitionTable, GptClearedSignatureIsReadWhenTheCrcCoversIt) {
+    const Bytes b = gpt_disk_cleared_sig(/*recompute_crc=*/true);
+    const auto found = scan(test::span_of(b),
+                            test::only({"gpt", "gpt-4k", "gpt-cleared-sig", "gpt-cleared-sig-4k"}));
+    ASSERT_GE(found.size(), 1u);
+    const Finding& primary = found[0];
+    EXPECT_EQ(primary.signature, "gpt-cleared-sig");
+    EXPECT_EQ(primary.attrs.at("table"), "gpt-primary");
+    EXPECT_EQ(primary.confidence, Confidence::Verified);
+    EXPECT_EQ(primary.attrs.at("partition_count"), "2");
+    EXPECT_EQ(primary.attrs.at("signature_bytes"), "0000000050415254");
+    EXPECT_TRUE(has_diag(primary, "gpt-signature-nonstandard"));
+}
+
+TEST(PartitionTable, GptClearedSignatureWithoutTheCrcIsNotAFindingAtAll) {
+    // The point of the gate: without "EFI PART" the CRC is the only evidence,
+    // so a failed one yields nothing rather than the usual magic-tier hit. A
+    // magic-tier finding here would put 8 coincidental bytes in the manifest
+    // and, worse, give the region an extent.
+    const Bytes b = gpt_disk_cleared_sig(/*recompute_crc=*/false);
+    const auto found = scan(test::span_of(b),
+                            test::only({"gpt", "gpt-4k", "gpt-cleared-sig", "gpt-cleared-sig-4k"}));
+    for (const Finding& f : found) EXPECT_NE(f.signature, "gpt-cleared-sig");
+}
+
+TEST(PartitionTable, GptBackupDoesNotCallAClearedPrimaryMissing) {
+    // The backup names LBA 1 as its alternate. Before the signature bytes were
+    // widened it found no magic there and reported the primary destroyed --
+    // which would have an examiner hunting for a table that is intact.
+    const Bytes b = gpt_disk_cleared_sig(/*recompute_crc=*/true);
+    const auto found = scan(test::span_of(b),
+                            test::only({"gpt", "gpt-4k", "gpt-cleared-sig", "gpt-cleared-sig-4k"}));
+    ASSERT_EQ(found.size(), 2u);
+    const Finding& backup = found[1];
+    ASSERT_EQ(backup.attrs.at("table"), "gpt-backup");
+    EXPECT_EQ(backup.attrs.at("alternate"), "valid");
+    EXPECT_EQ(backup.attrs.at("primary"), "valid");
+    EXPECT_FALSE(has_diag(backup, "gpt-primary-missing"));
+    EXPECT_TRUE(has_diag(backup, "gpt-backup"));
+}
+
+TEST(PartitionTable, GptSpecSignatureWithABadCrcStillReportsItself) {
+    // The gate applies only to the cleared form. An "EFI PART" header that
+    // fails its CRC is damaged evidence an examiner still wants to see, and it
+    // keeps the behaviour it always had.
+    Bytes b = gpt_disk(4096, kTwoParts);
+    test::put_u32le(b, kSector + 16, 0xDEADBEEF);
+    const auto found = scan(test::span_of(b),
+                            test::only({"gpt", "gpt-4k", "gpt-cleared-sig", "gpt-cleared-sig-4k"}));
+    ASSERT_GE(found.size(), 1u);
+    EXPECT_EQ(found[0].signature, "gpt");
+    EXPECT_TRUE(has_diag(found[0], "gpt-header-crc-mismatch"));
+    EXPECT_FALSE(has_diag(found[0], "gpt-signature-nonstandard"));
+    EXPECT_GE(found[0].confidence, Confidence::Structural);
+}
+
 TEST(PartitionTable, GptHostileHeadersNeverClaimTheDisk) {
     Bytes b = gpt_disk(4096, kTwoParts);
     // Entry array pointer into the far future: the header stays a 2-sector
