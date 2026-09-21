@@ -82,6 +82,9 @@ src/containers/zip/ZipReader.cpp:
   zip64: "true" when the archive uses the zip64 records
 
 src/discovery/Recurse.cpp:
+  entropy: mean Shannon entropy of the region in bits per byte, 0.000 to 8.000, over sampled windows
+  entropy_chi2: reduced chi-square of the sampled byte histogram against a uniform distribution; about 1.0 is uniform, far above it is structured
+  entropy_class: erased, sparse, text, binary, packed or random - what the region's bytes look like statistically (core/Entropy.h)
   corrected_path: case-relative path of the corrected rendering the analysis ran on (word-swapped images); every offset on this node's descendants is an offset into that file
   corrected_sha256: sha256 of the file named by corrected_path
   corrected_skipped: max-carve-bytes when the corrected view was larger than the limit and was not written

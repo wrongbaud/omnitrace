@@ -18,6 +18,7 @@
 #include <set>
 #include <system_error>
 
+#include "omnitrace/core/Entropy.h"
 #include "omnitrace/core/Hash.h"
 #include "omnitrace/core/Span.h"
 #include "omnitrace/core/Swap.h"
@@ -804,6 +805,14 @@ std::string uniform_fill(const Span& span, std::uint64_t off, std::uint64_t len)
     return *fill == 0xFF ? "0xff" : *fill == 0x00 ? "0x00" : hex(*fill);
 }
 
+// A number with three decimals, for the entropy attrs. std::to_string gives
+// six and they are all noise at this precision.
+std::string bits_text(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.3f", v);
+    return buf;
+}
+
 Node gap_node(const Span& span, std::uint64_t off, std::uint64_t len,
               const std::string& parent_id) {
     Node n;
@@ -813,10 +822,39 @@ Node gap_node(const Span& span, std::uint64_t off, std::uint64_t len,
     n.location = {span.source_id(), span.absolute(off), len};
     n.confidence = 0;
     n.evidence = "no signature matched";
-    const std::string fill = uniform_fill(span, off, len);
-    if (!fill.empty()) n.attrs["fill"] = fill;
     n.diagnostics.push_back(
         {Severity::Info, "region-unidentified", "no signature matched in " + dec(len) + " bytes"});
+
+    // "Unidentified" on its own tells an examiner nothing, and an image is
+    // mostly regions. What the bytes look like statistically is the difference
+    // between erased flash they can ignore and a payload they cannot read.
+    //
+    // uniform_fill first: it reads the whole region, but bails on the first
+    // byte that differs, so it is cheap for everything that is not fill -- and
+    // when it does hold it is an exact claim about every byte, which a sampled
+    // profile could not make.
+    const std::string fill = uniform_fill(span, off, len);
+    if (!fill.empty()) {
+        n.attrs["fill"] = fill;
+        n.attrs["entropy"] = "0.000";
+        n.attrs["entropy_class"] = entropy::class_name(entropy::Class::Erased);
+        return n;
+    }
+    const entropy::Profile e = entropy::profile(span, off, len);
+    if (e.klass == entropy::Class::Unknown) return n;  // too few bytes to say
+    n.attrs["entropy"] = bits_text(e.mean);
+    n.attrs["entropy_class"] = entropy::class_name(e.klass);
+    n.attrs["entropy_chi2"] = bits_text(e.chi_square);
+    // Only the two high-entropy classes get a diagnostic. Text and binary
+    // regions are ordinary and saying so on every one of them would be noise.
+    if (e.klass == entropy::Class::Random || e.klass == entropy::Class::Packed) {
+        n.diagnostics.push_back(
+            {Severity::Info, "region-high-entropy",
+             dec(len) + " bytes at " + bits_text(e.mean) + " bits/byte (" +
+                 entropy::class_name(e.klass) + "): " + entropy::class_meaning(e.klass) +
+                 ". No signature matched, so it is either a format this build does not know, a "
+                 "headerless compressed stream, or ciphertext"});
+    }
     return n;
 }
 

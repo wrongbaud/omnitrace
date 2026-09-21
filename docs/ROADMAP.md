@@ -50,6 +50,16 @@ the router-wrt image has one, a damaged 1 MB gzip holding a tar that was previou
 reported only as an unmeasured magic. `docs/formats/compressed-streams.md`
 has the per-format table and the two limits.
 
+Every unidentified region says what its bytes look like: `omnitrace::entropy`
+(`src/core/Entropy.h`) profiles it in sampled windows and the node carries
+`entropy`, `entropy_chi2` and `entropy_class` (erased, sparse, text, binary,
+packed, random), with `region-high-entropy` on the two high classes. It is
+what turns "no signature matched" into something actionable -- the two IP camera
+images that yield nothing are one 8 MB region at 7.955 bits/byte and chi2/df
+1.2, uniform and magic-free end to end. `random` deliberately stops short of
+claiming encryption: xz output is statistically indistinguishable from AES
+(`docs/formats/entropy.md` has the measurements).
+
 Word-swapped dumps are detected by `detect_word_swap` (`src/core/Swap.cpp:334`)
 and analysed through a `SwappedSource` view; the Image node gets
 `image-word-swapped`, and the view the analysis actually read is written to

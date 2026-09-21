@@ -16,6 +16,10 @@ contract, the confidence tiers (`magic` 25, `structural` 60, `consistent` 85,
 `verified` 99) and deterministic conflict resolution.
 [`word-swap.md`](word-swap.md) covers the byte-reversed dumps some flash
 readers produce, which is handled before any signature runs.
+[`entropy.md`](entropy.md) covers what happens after every signature has run
+and matched nothing: what an unidentified region's bytes look like
+statistically, and why "high entropy" is a lead rather than proof of
+encryption.
 
 ## Pages
 

@@ -873,6 +873,10 @@ qnx6-unsupported-feature:
   meaning: the superblock version is not 4.x (Warning), or the iclaim/iextra trees hold data this reader does not decode (Info)
   action: the layout was verified on version 4.3 automotive images only; compare the walk against qnxmount
 
+region-high-entropy:
+  meaning: an unidentified region's bytes are high-entropy and no signature matched anywhere in it; it is compressed, encrypted or a format this build does not know
+  action: entropy cannot tell compression from encryption (xz output is statistically identical to AES), so treat "random" as a lead, not a verdict; carve the region and try the vendor's tooling
+
 region-unidentified:
   meaning: no signature matched in this gap of at least min_region_bytes
   action: check fill (0xff/0x00 is erased or padding); otherwise strings or entropy tools
