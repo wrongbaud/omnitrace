@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-619 keys across 52 source files.
+620 keys across 52 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -623,14 +623,15 @@ Source: `src/discovery/validators/squashfs.cpp` (10 keys)
 
 ## validator `tar`
 
-Source: `src/discovery/validators/tar.cpp` (4 keys)
+Source: `src/discovery/validators/tar.cpp` (5 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `data_bytes` | `src/discovery/validators/tar.cpp:154` | total bytes of member data the archive holds |
-| `entries` | `src/discovery/validators/tar.cpp:153` | members counted before the end-of-archive block (extended headers are not counted) |
-| `extent` | `src/discovery/validators/tar.cpp:161` | unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it |
-| `variant` | `src/discovery/validators/tar.cpp:89` | ustar \| gnu \| pax, the header flavour |
+| `data_bytes` | `src/discovery/validators/tar.cpp:172` | total bytes of member data the archive holds |
+| `entries` | `src/discovery/validators/tar.cpp:171` | members counted before the end-of-archive block (extended headers are not counted) |
+| `extent` | `src/discovery/validators/tar.cpp:209` | unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it |
+| `terminated` | `src/discovery/validators/tar.cpp:193` | '"false" when no end-of-archive block was reached but verified members gave the finding an extent anyway' |
+| `variant` | `src/discovery/validators/tar.cpp:105` | ustar \| gnu \| pax, the header flavour |
 
 ## validator `ubi`
 

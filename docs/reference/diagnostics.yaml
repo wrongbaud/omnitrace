@@ -1290,8 +1290,12 @@ tar-limit-entries:
   action: re-run with a larger cap if the remaining members matter
 
 tar-no-end-marker:
-  meaning: no end-of-archive block was reached, so the archive has no extent and claims no bytes
-  action: informational; a stray ustar magic in other data looks like this, and so does a truncated archive
+  meaning: no end-of-archive block was reached and no member verified, so the archive has no extent and claims no bytes
+  action: informational; this is what a stray ustar magic in other data looks like. An archive that really was cut short verifies at least one member and gets tar-unterminated instead
+
+tar-unterminated:
+  meaning: no end-of-archive block, but complete members verified; the extent is the bytes they account for
+  action: those members were extracted; the archive is incomplete, so expect its tail to be missing - on the router-wrt image the cause is a gzip whose CRC failed
 
 tar-truncated:
   meaning: a tar member or the archive itself runs past the available data

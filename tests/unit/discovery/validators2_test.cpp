@@ -1,7 +1,7 @@
 // validators2_test.cpp — JFFS2 coalescing plus the fit/dtb, dm-verity, LUKS,
-// romfs, cramfs, Android boot, UBIFS and ELF validators: hand-built minimal
-// structures (accept), hostile variants (reject or downgrade), and corpus
-// slices when the evidence images are present (GTEST_SKIP otherwise).
+// romfs, cramfs, Android boot, UBIFS, tar and ELF validators: hand-built
+// minimal structures (accept), hostile variants (reject or downgrade), and
+// corpus slices when the evidence images are present (GTEST_SKIP otherwise).
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -1193,6 +1193,145 @@ TEST(Corpus2, HyundaiAndroidBootSlice) {
     EXPECT_EQ(b->attrs.at("kernel_size"), "6409432");
     EXPECT_EQ(b->size, 6438912u);
     EXPECT_EQ(b->attrs.at("cmdline").rfind("root=/dev/mmcblk0p2", 0), 0u);
+}
+
+// ------------------------------------------------------------------ tar
+//
+// An archive with no end-of-archive block. The rule under test is that the
+// members whose headers verified give the finding an extent, while anything
+// that verified nothing still claims no bytes.
+
+// One 512-byte ustar header with its checksum filled in.
+Bytes tar_hdr(const std::string& name, std::uint64_t size) {
+    Bytes h(512, 0);
+    const auto put = [&h](std::size_t off, const std::string& v) {
+        for (std::size_t i = 0; i < v.size(); ++i) h[off + i] = static_cast<std::uint8_t>(v[i]);
+    };
+    const auto octal = [](std::uint64_t v, std::size_t width) {
+        std::string s(width - 1, '0');
+        for (std::size_t i = width - 1; i-- > 0;) {
+            s[i] = static_cast<char>('0' + (v & 7U));
+            v >>= 3;
+        }
+        return s + '\0';
+    };
+    put(0, name);
+    put(100, octal(0644, 8));
+    put(124, octal(size, 12));
+    put(136, octal(1700000000, 12));
+    h[156] = '0';
+    put(257, "ustar");
+    put(263, "00");
+    for (std::size_t i = 148; i < 156; ++i) h[i] = static_cast<std::uint8_t>(' ');
+    std::uint64_t sum = 0;
+    for (const std::uint8_t b : h) sum += b;
+    // Canonical checksum field: six octal digits, NUL, space. Writing seven
+    // digits and then overwriting the last with a space drops the low digit,
+    // which the reader does not notice (it never verifies a checksum) but the
+    // validator does -- and the validator is what these tests exercise.
+    put(148, octal(sum, 7));
+    h[155] = static_cast<std::uint8_t>(' ');
+    return h;
+}
+
+void tar_append(Bytes& out, const Bytes& part) {
+    out.insert(out.end(), part.begin(), part.end());
+}
+// `size` bytes of member data, padded to the 512-byte block.
+void tar_data(Bytes& out, std::uint64_t size) {
+    for (std::uint64_t i = 0; i < size; ++i) out.push_back(static_cast<std::uint8_t>('a' + i % 26));
+    out.resize((out.size() + 511) / 512 * 512, 0);
+}
+
+TEST(TarValidator, UnterminatedArchiveClaimsTheBytesItsMembersAccountFor) {
+    // Two members, then damage where the third header would be. This is the
+    // shape of the router-wrt image's OpenWrt package inside a CRC-failed gzip.
+    Bytes img;
+    tar_append(img, tar_hdr("debian-binary", 4));
+    tar_data(img, 4);
+    tar_append(img, tar_hdr("data.tar.gz", 600));
+    tar_data(img, 600);
+    const std::uint64_t accounted = img.size();
+    for (int i = 0; i < 512; ++i) img.push_back(static_cast<std::uint8_t>(0xD2 + i % 7));
+
+    const auto found = scan_one(img, "tar-ustar");
+    ASSERT_EQ(found.size(), 1u) << "every tar member header carries its own ustar magic; a "
+                                   "second finding here means the archive was read twice";
+    EXPECT_EQ(found[0].offset, 0u);
+    EXPECT_EQ(found[0].size, accounted);
+    EXPECT_EQ(found[0].attrs.at("entries"), "2");
+    EXPECT_EQ(found[0].attrs.at("terminated"), "false");
+    EXPECT_EQ(found[0].attrs.count("extent"), 0u) << "an extent it can state is not 'unknown'";
+    EXPECT_TRUE(has_diag(found[0], "tar-unterminated"));
+    // Consistent, not Verified: the members corroborate each other, but no end
+    // marker was seen. The tier is what suppresses the second member's hit.
+    EXPECT_EQ(found[0].confidence, Confidence::Consistent);
+}
+
+TEST(TarValidator, OneVerifiedMemberHasNothingToAgreeWith) {
+    Bytes img;
+    tar_append(img, tar_hdr("only", 4));
+    tar_data(img, 4);
+    const std::uint64_t accounted = img.size();
+    for (int i = 0; i < 512; ++i) img.push_back(static_cast<std::uint8_t>(0xD2 + i % 7));
+
+    const auto found = scan_one(img, "tar-ustar");
+    ASSERT_EQ(found.size(), 1u);
+    EXPECT_EQ(found[0].size, accounted);
+    EXPECT_EQ(found[0].confidence, Confidence::Structural);
+    EXPECT_TRUE(has_diag(found[0], "tar-unterminated"));
+}
+
+TEST(TarValidator, StrayUstarInBinaryDataStillClaimsNothing) {
+    // The 91 "ustar" strings inside the QNX corpus's binary data are why the
+    // extent rule exists. A header there cannot produce a checksum field that
+    // equals the sum of its own bytes, so nothing is accounted for.
+    Bytes img(4096);
+    for (std::size_t i = 0; i < img.size(); ++i)
+        img[i] = static_cast<std::uint8_t>((i * 37 + 11) & 0xFF);
+    const std::string magic = "ustar";
+    for (std::size_t i = 0; i < magic.size(); ++i)
+        img[1024 + 257 + i] = static_cast<std::uint8_t>(magic[i]);
+
+    const auto found = scan_one(img, "tar-ustar");
+    ASSERT_EQ(found.size(), 1u);
+    EXPECT_EQ(found[0].size, 0u);
+    EXPECT_EQ(found[0].attrs.at("extent"), "unknown");
+    EXPECT_EQ(found[0].confidence, Confidence::Magic);
+    EXPECT_TRUE(has_diag(found[0], "tar-no-end-marker"));
+}
+
+TEST(TarValidator, MemberRunningPastTheDataAccountsForNothing) {
+    // A verified header whose declared size is not there. Claiming to the end
+    // of the Span would let one plausible header swallow everything after it,
+    // so `accounted` does not move and the finding takes no extent.
+    Bytes img;
+    tar_append(img, tar_hdr("big.bin", 1u << 20));
+    tar_data(img, 64);
+
+    const auto found = scan_one(img, "tar-ustar");
+    ASSERT_EQ(found.size(), 1u);
+    EXPECT_EQ(found[0].size, 0u);
+    EXPECT_EQ(found[0].attrs.at("extent"), "unknown");
+    EXPECT_TRUE(has_diag(found[0], "tar-truncated"));
+}
+
+TEST(TarValidator, TerminatedArchiveIsUnchanged) {
+    Bytes img;
+    tar_append(img, tar_hdr("a.txt", 4));
+    tar_data(img, 4);
+    tar_append(img, tar_hdr("b.txt", 4));
+    tar_data(img, 4);
+    const std::uint64_t members = img.size();
+    img.resize(img.size() + 1024, 0);  // two zero blocks
+
+    const auto found = scan_one(img, "tar-ustar");
+    ASSERT_EQ(found.size(), 1u);
+    EXPECT_EQ(found[0].confidence, Confidence::Verified);
+    EXPECT_EQ(found[0].size, members + 1024);
+    EXPECT_EQ(found[0].attrs.count("terminated"), 0u);
+    EXPECT_FALSE(has_diag(found[0], "tar-unterminated"));
+    EXPECT_FALSE(has_diag(found[0], "tar-no-end-marker"));
 }
 
 }  // namespace

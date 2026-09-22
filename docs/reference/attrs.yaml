@@ -220,6 +220,7 @@ src/discovery/validators/tar.cpp:
   data_bytes: total bytes of member data the archive holds
   entries: members counted before the end-of-archive block (extended headers are not counted)
   extent: unknown when the validator walked the structure and could not find its end; the finding claims no bytes and no reader is asked to open it
+  terminated: '"false" when no end-of-archive block was reached but verified members gave the finding an extent anyway'
   variant: ustar | gnu | pax, the header flavour
 
 src/discovery/validators/cramfs.cpp:

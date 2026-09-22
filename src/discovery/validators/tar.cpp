@@ -14,6 +14,22 @@
 //
 // The archive ends with two zero blocks, then padding to the writer's blocking
 // factor (GNU tar uses 20 blocks, 10 KiB).
+//
+// Without that marker the walk still knows how far it got. It tracks
+// `accounted`: the offset past the last member whose header checksum verified
+// and whose data is entirely present. When that is more than nothing the
+// finding takes it as its extent, so the members the walk *did* parse reach a
+// reader instead of being lost with the damaged tail -- the router-wrt image holds
+// an OpenWrt package inside a CRC-failed gzip, two verified members over
+// 999936 bytes, previously extracted as nothing.
+//
+// The checksum is what makes that safe. 91 "ustar" strings sit inside the QNX
+// corpus's binary data, and a header there has to produce a valid octal
+// checksum field that equals the sum of its own 512 bytes to account for
+// anything; none do, so they still claim no bytes. Only complete members
+// count: a header whose declared data runs past the end of the Span leaves
+// `accounted` where it was, because a stray-but-plausible header with a large
+// size would otherwise claim everything after it.
 // Reference: https://www.gnu.org/software/tar/manual/html_node/Standard.html
 #include "anchors.h"
 #include "common.h"
@@ -90,6 +106,7 @@ std::optional<Finding> validate_tar(const Span& span, std::uint64_t start, const
 
     const std::uint64_t cap = extra_u64(sig, "max_entries").value_or(200000);
     std::uint64_t pos = start;
+    std::uint64_t accounted = start;  // past the last complete, verified member
     std::uint64_t entries = 0, data_bytes = 0, checked = 0, bad_sums = 0;
     bool end_marker = false;
     bool pax = false;
@@ -147,19 +164,49 @@ std::optional<Finding> validate_tar(const Span& span, std::uint64_t start, const
             break;
         }
         pos = next;
+        accounted = next;
     }
 
     if (pax) f.attrs["variant"] = "pax";
     f.attrs["entries"] = dec(entries);
     f.attrs["data_bytes"] = dec(data_bytes);
     if (!end_marker) {
-        // Without the end marker the extent is unknown. A stray "ustar" in
-        // other data must not claim whatever follows it.
+        if (entries != 0 && accounted > start) {
+            // Members were verified. The extent is what they account for, not
+            // a confirmed archive end, and the reader emits them.
+            //
+            // Two or more verified headers earn Consistent, because the chain
+            // corroborates itself: each header's size field landed exactly on
+            // another header whose own checksum verified, which is not
+            // something unrelated bytes do twice in a row. One verified header
+            // has nothing to agree with and stays at Structural.
+            //
+            // The tier is load-bearing, not cosmetic. Scan.cpp suppresses
+            // later hits of the same signature inside an accepted finding's
+            // extent only from Consistent up, and every tar member header
+            // carries its own "ustar" -- at Structural the second member of
+            // this archive became a second tar finding and extracted its
+            // payload a second time.
+            const std::uint64_t verified = checked - bad_sums;
+            f.size = accounted - start;
+            f.confidence = verified >= 2 ? Confidence::Consistent : Confidence::Structural;
+            f.attrs["terminated"] = "false";
+            diag(f, Severity::Warning, "tar-unterminated",
+                 "no end-of-archive block was reached, so the extent is the " +
+                     dec(accounted - start) + " bytes the " + dec(entries) +
+                     " verified member(s) account for rather than a confirmed end; expect the "
+                     "tail of the archive to be missing");
+            f.evidence = f.attrs["variant"] + " archive, unterminated, " + dec(entries) +
+                         " member(s) recovered over " + dec(accounted - start) + " bytes, " +
+                         dec(checked) + " header checksum(s) ok";
+            return f;
+        }
+        // Nothing verified: a stray "ustar" in other data must not claim
+        // whatever follows it.
         diag(f, Severity::Info, "tar-no-end-marker",
-             "no end-of-archive block was reached, so the archive has no extent and claims no "
-             "bytes");
+             "no end-of-archive block was reached and no member was verified, so the archive has "
+             "no extent and claims no bytes");
         f.attrs["extent"] = "unknown";
-        if (checked != 0 && bad_sums == 0) f.confidence = Confidence::Structural;
         return f;
     }
     f.confidence = checked != 0 ? Confidence::Verified : Confidence::Consistent;
