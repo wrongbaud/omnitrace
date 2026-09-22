@@ -18,6 +18,7 @@ void omnitrace_container_anchor_cpio();
 void omnitrace_container_anchor_tar();
 void omnitrace_container_anchor_zip();
 void omnitrace_container_anchor_sparse();
+void omnitrace_container_anchor_super();
 void omnitrace_container_anchor_fit();
 void omnitrace_container_anchor_ubi();
 void omnitrace_container_anchor_lzop();
@@ -33,6 +34,7 @@ void link_builtin_containers() {
     omnitrace_container_anchor_tar();
     omnitrace_container_anchor_zip();
     omnitrace_container_anchor_sparse();
+    omnitrace_container_anchor_super();
     omnitrace_container_anchor_fit();
     omnitrace_container_anchor_ubi();
     omnitrace_container_anchor_lzop();

@@ -91,6 +91,7 @@ nav:
           - Android sparse: formats/android-sparse.md
           - Compressed streams: formats/compressed-streams.md
           - Android boot: formats/android-boot.md
+          - Android super: formats/android-super.md
           - ELF: formats/elf.md
           - LUKS: formats/luks.md
           - dm-verity: formats/verity.md

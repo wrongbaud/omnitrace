@@ -361,6 +361,22 @@ validator = "gpt"
 max_entries = 1024
 description = "GPT header with a cleared signature, 4096-byte sectors; accepted only on a valid header CRC32"
 
+# Android dynamic partitions. The geometry magic "gDla" sits 4096 bytes into
+# the super, after a reserved area that may hold a partition table of its own.
+# Four bytes at a fixed offset is weak -- an eMMC image finds it in unrelated
+# data -- so the validator will not size the structure, and no reader is given
+# it, unless the SHA-256 liblp stores over the partition map verifies.
+[[signature]]
+name = "android-super"
+format = "android-super"
+category = "container"
+magic = "gDla"
+magic_offset = 4096
+endian = "little"
+validator = "android_super"
+description = "Android logical partitions (super): liblp geometry at 4096, metadata slot 0 at 12288"
+references = ["https://source.android.com/docs/core/ota/dynamic_partitions"]
+
 # ------------------------------------------------------------------ compressed
 
 [[signature]]

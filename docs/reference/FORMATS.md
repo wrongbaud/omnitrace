@@ -35,6 +35,7 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `7z` | container | validated to consistent (`7z`) | yes | yes (`src/containers/sevenzip/SevenZipReader.cpp:329`) | no | - | [7z.md](../formats/7z.md) | signatures: `7z` |
 | `android-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:197`) | no | - | [android-boot.md](../formats/android-boot.md) | size is the sum of page-aligned sections, header v0-v4; signatures: `android-boot` |
 | `android-sparse` | container | validated to consistent (`android-sparse`) | yes | yes (`src/containers/sparse/SparseReader.cpp:258`) | no | - | [android-sparse.md](../formats/android-sparse.md) | size is the chunk walk; no reader expands the image yet; signatures: `android-sparse` |
+| `android-super` | container | validated to verified (`android_super`) | yes | yes (`src/containers/super/SuperReader.cpp:176`) | no | - | [android-super.md](../formats/android-super.md) | signatures: `android-super` |
 | `android-vendor-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:198`) | no | - | [android-boot.md](../formats/android-boot.md) | signatures: `android-vendor-boot` |
 | `cpio` | container | validated to consistent (`cpio`) | yes | yes (`src/containers/cpio/CpioReader.cpp:295`) | no | - | [cpio.md](../formats/cpio.md) | signatures: `cpio-newc`, `cpio-crc`, `cpio-odc` |
 | `fit` | container | validated to verified (`fit`) | yes | yes (`src/containers/fit/FitReader.cpp:250`) | no | - | [fit.md](../formats/fit.md) | signatures: `fit` |
@@ -62,6 +63,6 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 
 ## Counts
 
-- 57 signatures over 39 format ids
-- 31 validators, 11 filesystem reader(s), 17 container reader(s)
+- 58 signatures over 40 format ids
+- 32 validators, 11 filesystem reader(s), 18 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

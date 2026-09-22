@@ -38,6 +38,7 @@ encryption.
 | [dtb.md](dtb.md) | `dtb` | `dtb` (consistent) | n.a. | model / compatible in attrs |
 | [android-boot.md](android-boot.md) | `android-boot`, `android-vendor-boot` | `android-boot` (consistent) | none | no; sections in attrs |
 | [android-sparse.md](android-sparse.md) | `android-sparse` | `android-sparse` (consistent) | none | no; not expanded |
+| [android-super.md](android-super.md) | `android-super` | `android_super` (verified on the map SHA-256) | none | yes; one entry per logical partition |
 | [compressed-streams.md](compressed-streams.md) | `gzip`, `xz`, `lz4`, `zstd` | one each (structural) | none | no; size unknown |
 | [elf.md](elf.md) | `elf` | `elf` (consistent) | n.a. | arch / type in attrs |
 | [luks.md](luks.md) | `luks` | `luks` (consistent) | n.a. | header fields only |

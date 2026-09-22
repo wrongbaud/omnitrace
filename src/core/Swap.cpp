@@ -125,6 +125,12 @@ const std::vector<BytePattern>& byte_patterns() {
         {"android-boot", {'A', 'N', 'D', 'R', 'O', 'I', 'D', '!'}, true, true},
         {"android-vendor-boot", {'V', 'N', 'D', 'R', 'B', 'O', 'O', 'T'}, true, true},
         {"android-sparse", {0x3a, 0xff, 0x26, 0xed}, true, true},
+        // The super's own magic sits 4096 bytes in, past a reserved area, so a
+        // window has to reach it -- but the logical partitions it holds are
+        // ext4, whose 2-byte magic cannot score, so this is the only thing
+        // that speaks for a super image in the raw view. "Dgal" and "alDg" are
+        // nothing, so it vetoes.
+        {"android-super", {'g', 'D', 'l', 'a'}, true, true},
         {"cpio-crc", {'0', '7', '0', '7', '0', '2'}, true, true},
         {"cpio-odc", {'0', '7', '0', '7', '0', '7'}, true, true},
         {"dm-verity", {'v', 'e', 'r', 'i', 't', 'y', 0x00, 0x00}, true, true},

@@ -1281,6 +1281,38 @@ squashfs-unsupported-version:
   meaning: the major version is not 4
   action: SquashFS 1-3; use an old unsquashfs
 
+super-bad-geometry:
+  meaning: the liblp geometry magic is present but its fields are not a super's
+  action: informational; four bytes at a fixed offset turn up in unrelated data, and this is what that looks like
+
+super-bad-metadata:
+  meaning: the geometry parses but metadata slot 0 does not, or a table runs outside the slot
+  action: the structure has no extent and no reader is asked to open it; the backup slots are not read yet
+
+super-tables-checksum-mismatch:
+  meaning: the partition map does not match the SHA-256 the header stores over it
+  action: the extents it lists are not trustworthy, so nothing was claimed or extracted; dump the super and inspect the metadata slots by hand
+
+super-truncated:
+  meaning: the block-device table describes more bytes than the data holds
+  action: the dump is short; the logical partitions near the end will be missing or partial
+
+super-no-device-size:
+  meaning: the block-device table does not state the super's size
+  action: the structure has no extent; carve it by hand if the partitions inside matter
+
+super-extent-outside:
+  meaning: a logical partition names an extent that runs past the end of the super
+  action: that entry is short; the map disagrees with the image, so treat both as suspect
+
+super-partition-empty:
+  meaning: a logical partition has no extents - the slot exists but holds nothing
+  action: informational; an unpopulated A/B slot looks like this
+
+super-partition-unnamed:
+  meaning: a logical partition's name field is empty, so it was emitted by index
+  action: informational; the partition is still extracted
+
 tar-bad-header:
   meaning: a tar member header is not readable, so the walk stops there
   action: the archive is damaged or the ustar magic was a false positive; earlier members are still extracted

@@ -54,6 +54,13 @@ src/containers/stream/StreamReader.cpp:
   payload_bytes: bytes the stream decoded to
   stream_bytes: bytes of the input the decoder consumed
 
+src/containers/super/SuperReader.cpp:
+  extents: extents the logical partition is assembled from
+  logical_block_size: block size the geometry declares
+  metadata_slots: metadata slots the geometry declares
+  partitions: logical partitions the map lists
+  version: liblp metadata version as major.minor
+
 src/containers/tar/TarReader.cpp:
   entries: members emitted
   variant: which tar the archive is (ustar, gnu, pax, v7)
@@ -215,6 +222,22 @@ src/discovery/validators/sevenzip.cpp:
   undecodable_folders: folders using a coder this build does not decode (absent when none)
   unpacked_bytes: what the substreams add up to
   version: the format version the signature header records
+
+src/discovery/validators/super.cpp:
+  device_size: bytes the block-device table says the super occupies
+  extent: unknown when the map did not verify or states no device size; the finding claims no bytes and no reader is asked to open it
+  extent_count: rows in the extent table
+  geometry_checksum: "ok | mismatch: the SHA-256 liblp stores over the geometry"
+  group_count: rows in the group table
+  header_checksum: "ok | mismatch: the SHA-256 over the metadata header"
+  logical_block_size: block size the geometry declares
+  logical_bytes: bytes the logical partitions come to in total
+  metadata_max_size: bytes one metadata slot occupies
+  metadata_slots: metadata slots the geometry declares
+  partition_count: logical partitions the map lists
+  partitions: "name:bytes:extent_count;... for every logical partition"
+  tables_checksum: "ok | mismatch: the SHA-256 over the partition map itself, which is what decides whether the map is trusted"
+  version: liblp metadata version as major.minor
 
 src/discovery/validators/tar.cpp:
   data_bytes: total bytes of member data the archive holds

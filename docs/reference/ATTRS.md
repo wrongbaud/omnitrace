@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-620 keys across 52 source files.
+639 keys across 54 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -98,6 +98,18 @@ Source: `src/containers/stream/StreamReader.cpp` (3 keys)
 | `checksum_kind` | `src/containers/stream/StreamReader.cpp:79` | the check the stream records over its own payload (crc32, adler32, crc64, sha256, xxh32, xxh64 or none) |
 | `payload_bytes` | `src/containers/stream/StreamReader.cpp:77` | bytes the stream decoded to |
 | `stream_bytes` | `src/containers/stream/StreamReader.cpp:76` | bytes of the input the decoder consumed |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/super/SuperReader.cpp` (5 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `extents` | `src/containers/super/SuperReader.cpp:57` | extents the logical partition is assembled from |
+| `logical_block_size` | `src/containers/super/SuperReader.cpp:58` | block size the geometry declares |
+| `metadata_slots` | `src/containers/super/SuperReader.cpp:59` | metadata slots the geometry declares |
+| `partitions` | `src/containers/super/SuperReader.cpp:56` | logical partitions the map lists |
+| `version` | `src/containers/super/SuperReader.cpp:54` | liblp metadata version as major.minor |
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -620,6 +632,27 @@ Source: `src/discovery/validators/squashfs.cpp` (10 keys)
 | `inodes` | `src/discovery/validators/squashfs.cpp:89` | inode count |
 | `mkfs_time` | `src/discovery/validators/squashfs.cpp:91` | mkfs_time (epoch seconds) |
 | `version` | `src/discovery/validators/squashfs.cpp:78` | major.minor |
+
+## validator `android_super`
+
+Source: `src/discovery/validators/super.cpp` (14 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `device_size` | `src/discovery/validators/super.cpp:90` | bytes the block-device table says the super occupies |
+| `extent` | `src/discovery/validators/super.cpp:38` | unknown when the map did not verify or states no device size; the finding claims no bytes and no reader is asked to open it |
+| `extent_count` | `src/discovery/validators/super.cpp:57` | rows in the extent table |
+| `geometry_checksum` | `src/discovery/validators/super.cpp:75` | ok \| mismatch: the SHA-256 liblp stores over the geometry |
+| `group_count` | `src/discovery/validators/super.cpp:58` | rows in the group table |
+| `header_checksum` | `src/discovery/validators/super.cpp:76` | ok \| mismatch: the SHA-256 over the metadata header |
+| `logical_block_size` | `src/discovery/validators/super.cpp:43` | block size the geometry declares |
+| `logical_bytes` | `src/discovery/validators/super.cpp:72` | bytes the logical partitions come to in total |
+| `metadata_max_size` | `src/discovery/validators/super.cpp:41` | bytes one metadata slot occupies |
+| `metadata_slots` | `src/discovery/validators/super.cpp:42` | metadata slots the geometry declares |
+| `partition_count` | `src/discovery/validators/super.cpp:56` | logical partitions the map lists |
+| `partitions` | `src/discovery/validators/super.cpp:71` | name:bytes:extent_count;... for every logical partition |
+| `tables_checksum` | `src/discovery/validators/super.cpp:77` | ok \| mismatch: the SHA-256 over the partition map itself, which is what decides whether the map is trusted |
+| `version` | `src/discovery/validators/super.cpp:55` | liblp metadata version as major.minor |
 
 ## validator `tar`
 
