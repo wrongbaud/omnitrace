@@ -289,8 +289,8 @@ class FakeReader final : public fs::FilesystemReader {
 // "payload" entry whose bytes the test supplies, reporting an extent the
 // validator could not know (a gzip finding has size 0).
 struct FakeContainerBehaviour {
-    std::string payload;          // bytes of the single entry
-    std::uint64_t stream_len = 0; // what info().size reports; 0 = unknown
+    std::string payload;           // bytes of the single entry
+    std::uint64_t stream_len = 0;  // what info().size reports; 0 = unknown
     bool open_fails = false;
 };
 
@@ -584,7 +584,6 @@ TEST(Analyze, ContainerWithReaderIsWalkedSizedAndDescendedInto) {
     ASSERT_FALSE(inner_nodes.empty());
     EXPECT_EQ(inner_nodes[0]->kind, NodeKind::Filesystem);
     EXPECT_EQ(inner_nodes[0]->format, "squashfs");
-
 }
 
 // A real gzip member is measured by the validator, so the finding has an
@@ -612,8 +611,8 @@ TEST(Analyze, RealCompressedStreamIsSizedByTheValidator) {
     const std::uint64_t start = 16u * 1024u;
     for (const Node& n : m.nodes()) {
         if (n.kind != NodeKind::Region) continue;
-        const bool overlaps = n.location.offset < start + gz.size() &&
-                              n.location.offset + n.location.length > start;
+        const bool overlaps =
+            n.location.offset < start + gz.size() && n.location.offset + n.location.length > start;
         EXPECT_FALSE(overlaps) << n.id << " @ " << n.location.offset;
     }
 }
@@ -780,8 +779,8 @@ TEST(Analyze, NestedImageInsideExtractedFileIsAnalysed) {
     EXPECT_EQ(m.children_of(nested_fs->id).size(), 3u);
     ASSERT_EQ(listings.size(), 2u);
     EXPECT_EQ(listings[1].first, nested_fs->id);
-    EXPECT_TRUE(fsys::exists(out.path / "filesystems" / nested_fs->id / "files" / "etc" /
-                             "passwd"));
+    EXPECT_TRUE(
+        fsys::exists(out.path / "filesystems" / nested_fs->id / "files" / "etc" / "passwd"));
     // One level only: the inner filesystem's own nested.img is not re-emitted.
     EXPECT_EQ(m.count(NodeKind::Filesystem), 2u);
 }
@@ -1940,6 +1939,31 @@ TEST(Analyze, CorrectedViewOverTheCarveLimitIsSkippedAndSaysSo) {
 }
 
 // ------------------------------------------------------ the extraction budget
+
+// The budget the evidence asks for and the space the machine has are two
+// different questions, and until the automotive Android unit lun0 run nothing asked the second: a
+// 116 GiB UFS LUN produced a 467 GiB budget on a filesystem with 330 GB free.
+TEST(Analyze, DiskHeadroomLeavesTheFilesystemRoomToWork) {
+    // 5% is held back, so a budget can never be the whole disk.
+    EXPECT_EQ(disk_headroom(100ull << 30), (100ull << 30) - (5ull << 30));
+    EXPECT_LT(disk_headroom(330ull << 30), 330ull << 30);
+
+    // Below 5 GiB free the 256 MiB floor is the reserve, not the percentage,
+    // so a small disk is not left with a few megabytes.
+    EXPECT_EQ(disk_headroom(1ull << 30), (1ull << 30) - (256ull << 20));
+    EXPECT_EQ(disk_headroom(512ull << 20), (512ull << 20) - (256ull << 20));
+
+    // Nothing usable is nothing claimed, at any size, without underflowing.
+    EXPECT_EQ(disk_headroom(256ull << 20), 0u);
+    EXPECT_EQ(disk_headroom(1), 0u);
+    EXPECT_EQ(disk_headroom(0), 0u);
+
+    // The case that motivated it: the lun0 budget does not fit and is cut.
+    const std::uint64_t lun0_budget = 467ull << 30;
+    const std::uint64_t free_space = 330ull << 30;
+    EXPECT_LT(disk_headroom(free_space), lun0_budget);
+    EXPECT_GT(disk_headroom(free_space), 300ull << 30) << "and not cut to uselessness";
+}
 
 // A fixed byte budget cannot serve evidence that ranges from a 2 MiB SPI part
 // to a 16 GiB eMMC dump. The full-corpus run showed what that costs: the

@@ -94,7 +94,7 @@ src/discovery/Recurse.cpp:
   block_size: block size reported by the filesystem reader (FilesystemInfo::block_size)
   boot: "true on an MBR entry with the 0x80 active flag"
   bytes: bytes the reader emitted for this filesystem (WalkResult::bytes)
-  carve_skipped: "max-carve-bytes when the node was not carved because it exceeds --max-carve-bytes"
+  carve_skipped: "why a node was not carved: max-carve-bytes when it exceeds --max-carve-bytes, disk-space when the output filesystem has no room for it"
   carved_in: "partitions/<file> that already contains this find (it starts at the partition's first byte)"
   carved_path: "partitions/<file> holding exactly location.offset .. offset+length; node digests are that file's"
   category: signature category of the finding (filesystem, container, compressed, partition-table, kernel, bootloader, crypto, other)

@@ -21,6 +21,10 @@ analyze-limit-depth:
   meaning: nesting went deeper than Limits::max_depth, so that branch was not analysed
   action: re-run with a larger --max-depth if the nested content matters
 
+analyze-limit-disk:
+  meaning: the extraction budget was larger than the output filesystem's free space and was cut to fit
+  action: free space, pass a different --out, or set --max-bytes to a figure that fits; the run continues and stops at the reduced budget with sink-limit-bytes
+
 analyze-limit-files:
   meaning: the run-wide --max-files budget was spent before this filesystem, so it was not walked
   action: re-run with a larger --max-files or --no-extract for an inventory
@@ -76,6 +80,10 @@ bzip2-truncated-header:
 carve-dir-failed:
   meaning: partitions/ could not be created; nothing was carved
   action: fix the host path or permissions and re-run
+
+carve-limit-disk:
+  meaning: the node was not carved because the output filesystem does not have room for it
+  action: free space or carve the range with dd from location.offset; carving has no run-wide byte budget, so the disk is what bounds it
 
 carve-limit-bytes:
   meaning: the node is larger than --max-carve-bytes and was not written

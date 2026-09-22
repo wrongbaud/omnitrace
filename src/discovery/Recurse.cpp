@@ -15,6 +15,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <system_error>
 
@@ -26,7 +27,37 @@
 
 namespace omnitrace::discovery {
 
+// The budget is a policy about evidence; the disk is a fact about the machine.
+// Nothing connected the two, so the ratio default -- which exists so a large
+// image is not truncated by a number chosen for a 2 MiB SPI part -- asked for
+// 467 GiB of extraction from a 116 GiB UFS LUN onto a filesystem with 330 GB
+// free. Filling the disk is worse than truncating: the run dies partway, the
+// case is unusable, and so is the machine until someone clears space.
+std::uint64_t disk_headroom(std::uint64_t available) {
+    constexpr std::uint64_t kMinReserve = 256ull << 20;
+    const std::uint64_t reserve = std::max(kMinReserve, available / 20);
+    return available > reserve ? available - reserve : 0;
+}
+
 namespace {
+
+// Bytes free on the filesystem that holds `dir`, or nullopt when it cannot be
+// asked -- a path that does not exist yet, a Source with no filesystem behind
+// it, a platform that refuses. Unknown means unguarded: a guard that fired on
+// a failed query would refuse to run where it cannot measure.
+std::optional<std::uint64_t> available_bytes(const std::filesystem::path& dir) {
+    std::error_code ec;
+    std::filesystem::path probe = dir;
+    while (!probe.empty() && !std::filesystem::exists(probe, ec)) {
+        const std::filesystem::path up = probe.parent_path();
+        if (up == probe) break;
+        probe = up;
+    }
+    if (probe.empty()) return std::nullopt;
+    const std::filesystem::space_info info = std::filesystem::space(probe, ec);
+    if (ec || info.available == static_cast<std::uintmax_t>(-1)) return std::nullopt;
+    return static_cast<std::uint64_t>(info.available);
+}
 
 // ------------------------------------------------------------------ helpers
 
@@ -550,11 +581,10 @@ void descend_all(Ctx& c, const std::vector<Descend>& nested, const std::string& 
                  std::size_t depth) {
     if (nested.empty()) return;
     if (depth + 1 > c.opts.limits.max_depth) {
-        c.out.diagnostics.push_back({Severity::Warning, "analyze-limit-depth",
-                                     "nesting deeper than max_depth (" +
-                                         dec(c.opts.limits.max_depth) + ") under " + owner_id +
-                                         "; " + dec(nested.size()) +
-                                         " extracted file(s) were not re-scanned"});
+        c.out.diagnostics.push_back(
+            {Severity::Warning, "analyze-limit-depth",
+             "nesting deeper than max_depth (" + dec(c.opts.limits.max_depth) + ") under " +
+                 owner_id + "; " + dec(nested.size()) + " extracted file(s) were not re-scanned"});
         return;
     }
     for (const Descend& d : nested) descend_into_file(c, d, depth);
@@ -710,9 +740,8 @@ void process_container(Ctx& c, const Span& span, const Finding& f, const std::st
         // got a short window and failed with "decompress-corrupt" after the
         // validator had read it fine. Everything else is given exactly the
         // extent its validator claimed.
-        const Span c_span = (f.size != 0 && f.category != "compressed")
-                                ? span.sub(f.offset, f.size)
-                                : span.sub(f.offset);
+        const Span c_span = (f.size != 0 && f.category != "compressed") ? span.sub(f.offset, f.size)
+                                                                        : span.sub(f.offset);
         if (Status st = reader->open(c_span); !st) {
             set_coverage(c, f.format, "partial",
                          "open failed at " + hex(span.absolute(f.offset)) + ": " + st.error);
@@ -1163,8 +1192,7 @@ void analyze_span(Ctx& c, const Span& span, const std::string& parent_id, std::s
         // The reader may have given the node the extent the validator could
         // not (see `resolved` above).
         if (const Node* n = c.out.find(id); n != nullptr && n->location.length != 0) {
-            const std::uint64_t end =
-                std::min(sat_add(f.offset, n->location.length), span.size());
+            const std::uint64_t end = std::min(sat_add(f.offset, n->location.length), span.size());
             if (end > f.offset) resolved.push_back({f.offset, end});
         }
     }
@@ -1369,6 +1397,23 @@ void carve_all(Ctx& c, const Span& whole) {
             n->diagnostics.push_back({Severity::Warning, "carve-limit-bytes", why});
             n->attrs["carve_skipped"] = "max-carve-bytes";
             continue;
+        }
+        // Carving has no run-wide byte budget -- `max_carve_bytes` is per
+        // file -- so the disk is the only thing bounding it. 47 partitions of
+        // a UFS LUN come to 116 GiB and every one of them is under the 4 GiB
+        // per-file default. The query is re-run per node rather than once,
+        // because each carve is what changes the answer.
+        if (const std::optional<std::uint64_t> now = available_bytes(dir)) {
+            if (n->location.length > disk_headroom(*now)) {
+                const std::string why = name + " skipped: " + dec(n->location.length) +
+                                        " bytes with only " + dec(*now) +
+                                        " free on the output "
+                                        "filesystem";
+                carve_partial(c, why);
+                n->diagnostics.push_back({Severity::Warning, "carve-limit-disk", why});
+                n->attrs["carve_skipped"] = "disk-space";
+                continue;
+            }
         }
         Digests d;
         bool short_read = false;
@@ -1618,6 +1663,28 @@ Status analyze(const std::shared_ptr<const Source>& image, const std::string& ev
     AnalyzeOptions scaled = opts;
     scaled.limits.max_bytes = extraction_budget(opts.limits, image->size());
 
+    // ...then to the disk, which is the harder limit of the two. Reported
+    // before anything is written, because an examiner choosing a budget wants
+    // to hear it now and not from a half-finished case.
+    std::optional<std::uint64_t> free_bytes;
+    if (opts.extract && !opts.out_dir.empty()) {
+        free_bytes = available_bytes(opts.out_dir);
+        if (free_bytes) {
+            const std::uint64_t room = disk_headroom(*free_bytes);
+            if (scaled.limits.max_bytes > room) {
+                out.diagnostics.push_back(
+                    {Severity::Warning, "analyze-limit-disk",
+                     "the extraction budget of " + dec(scaled.limits.max_bytes) +
+                         " bytes is more than the output filesystem can take (" + dec(*free_bytes) +
+                         " bytes free), so it was cut to " + dec(room) +
+                         "; extraction will stop there with sink-limit-bytes rather than fill "
+                         "the disk. Free space, choose another --out, or lower --max-bytes to "
+                         "a figure you mean"});
+                scaled.limits.max_bytes = room;
+            }
+        }
+    }
+
     const Digests digests = hash_span(Span::whole(image));
 
     Evidence ev;
@@ -1694,7 +1761,8 @@ Status analyze(const std::shared_ptr<const Source>& image, const std::string& ev
     // manifest describes, so it is written before anything is found in it.
     if (!transform.empty()) {
         if (Node* n = out.find(image_id)) {
-            const std::string rel = write_corrected_view(scaled, whole, evidence_path, transform, *n);
+            const std::string rel =
+                write_corrected_view(scaled, whole, evidence_path, transform, *n);
             if (!rel.empty())
                 for (Coverage& row : out.coverage)
                     if (row.format == "word-swap") row.detail += "; view written to " + rel;

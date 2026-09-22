@@ -67,12 +67,12 @@
 #include <utility>
 #include <vector>
 
+#include "omnitrace/containers/Container.h"
 #include "omnitrace/core/Limits.h"
 #include "omnitrace/core/Manifest.h"
 #include "omnitrace/core/Sink.h"
 #include "omnitrace/core/Source.h"
 #include "omnitrace/core/Status.h"
-#include "omnitrace/containers/Container.h"
 #include "omnitrace/discovery/Signature.h"
 #include "omnitrace/filesystems/Filesystem.h"
 
@@ -147,7 +147,7 @@ struct AnalyzeOptions {
     ReaderLookup open_reader;  ///< Reader factory. Empty: every filesystem is "unsupported".
     ContainerLookup
         open_container;  ///< Container reader factory. Empty: every container is "unsupported".
-    Scanner scanner;  ///< Scanner override (tests). Empty: the builtin signatures with `scan`.
+    Scanner scanner;     ///< Scanner override (tests). Empty: the builtin signatures with `scan`.
     ImageViewHook image_view;  ///< See `ImageViewHook`. Empty: automatic word-swap detection.
     Carve carve =
         Carve::All;  ///< Carving into `<out_dir>/partitions/`; ignored when `out_dir` is empty.
@@ -171,6 +171,15 @@ struct AnalyzeOptions {
 /// arithmetic -- a caller assembling its own pipeline wants the same answer,
 /// and it is the one place the "budget tracks the evidence" rule lives.
 std::uint64_t extraction_budget(const Limits& lim, std::uint64_t image_size);
+
+/// How many bytes a run may write to a filesystem with `available` bytes free,
+/// leaving it room to keep working: `available` less 5% of itself, and never
+/// less than 256 MiB of headroom. Returns 0 when there is not even that.
+///
+/// Pure, so the policy can be tested without a full disk. `analyze()` asks the
+/// output filesystem for `available` and clamps both write paths to the
+/// result: the extraction budget up front, and each carve as it comes.
+std::uint64_t disk_headroom(std::uint64_t available);
 
 // One (filesystem node id, entries) pair per walked filesystem, in node order.
 /// One (filesystem node id, entries) pair per walked filesystem, in node
