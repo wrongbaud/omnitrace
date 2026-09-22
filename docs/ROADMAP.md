@@ -78,23 +78,21 @@ now claims the bytes its verified members account for, gated on the header
 checksums, so the router-wrt image's OpenWrt package inside a CRC-failed gzip is
 extracted instead of lost. See the section above.
 
-1. **Recover a compressed stream that decoded partially.** The same shape one
-   layer down, and now reachable because of the `tar` fix: the recovered
-   `data.tar.gz` is a truncated gzip that yields 2,837,007 bytes before it
-   ends, and `decompress-truncated` leaves it `extent: unknown` so all of it
-   is discarded. The question is the same one the `tar` fix answered — whether
-   a decoder that produced real output may emit what it accounted for — but
-   the answer has to hold for every stream format at once, and the guard
-   against thousands of accidental `1f 8b 08` runs in speech data is that
-   those decode to nothing.
-2. **Phase 2 continued**: platform analyzers (§5.4) and artifact extractors
+That family is now closed. A compressed stream the data ran out underneath is
+recovered too (`compress::stream_ran_out`), so the router-wrt chain resolves to the
+router's OpenSSL libraries five levels down. The pattern the four share is
+worth carrying to the next format: **when a magic is too weak to trust, a
+checksum or an exhausted input is what earns an extent** — and the rule must
+live where both the validator and the reader can call it, or they drift.
+
+1. **Phase 2 continued**: platform analyzers (§5.4) and artifact extractors
    (§5.5), then `omnitrace report` (§7). The rules engine and the YAML packs
    under `rules/` are done. Note that §7's stated port path is stale: v1's
    `src/omnitrace/reporting/` does not exist, and the code to port is
    `analysis/report_generator.py` (875 lines) plus `app/services/
    report_service.py` and `static/report/omnisonde-report.html` in the
    omnisonde tree.
-3. **Phase 4**: web UI, only after the CLI and library are released (decision
+2. **Phase 4**: web UI, only after the CLI and library are released (decision
    `core-before-ui`).
 
 ## Good first improvements
