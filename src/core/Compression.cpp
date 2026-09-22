@@ -10,10 +10,10 @@
 #include <cstring>
 #include <limits>
 
+#include <bzlib.h>
 #include <lz4.h>
 #include <lz4frame.h>
 #include <lzma.h>
-#include <bzlib.h>
 #include <zlib.h>
 #include <zstd.h>
 #include <zstd_errors.h>
@@ -608,8 +608,7 @@ Status copy_through(std::span<const std::uint8_t> in, std::vector<std::uint8_t>&
 // Only the wrapped stream formats can report it; for the block codecs the
 // whole input is the unit, so it stays at in.size().
 Status decompress_impl(Codec c, std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
-                       std::uint64_t max_out, bool exact,
-                       std::uint64_t* consumed = nullptr) {
+                       std::uint64_t max_out, bool exact, std::uint64_t* consumed = nullptr) {
     out.clear();
     if (consumed != nullptr) *consumed = in.size();
     switch (c) {
@@ -686,6 +685,11 @@ Status stream_length(Codec c, std::span<const std::uint8_t> in, std::uint64_t ma
     }
 }
 
+bool stream_ran_out(std::string_view error, std::uint64_t consumed, std::uint64_t produced,
+                    std::uint64_t avail) {
+    return error == kTruncated && consumed == avail && produced > 0;
+}
+
 std::string stream_check(Codec c, std::span<const std::uint8_t> in) {
     switch (c) {
         case Codec::Gzip:
@@ -757,7 +761,6 @@ Status decompress_exact(Codec c, std::span<const std::uint8_t> in, std::vector<s
     return Status::success();
 }
 
-
 Status decompress_raw(std::span<const RawFilter> chain, std::span<const std::uint8_t> in,
                       std::vector<std::uint8_t>& out, std::size_t expected) {
     out.clear();
@@ -787,8 +790,8 @@ Status decompress_raw(std::span<const RawFilter> chain, std::span<const std::uin
             &filters[i], nullptr, chain[i].props.empty() ? nullptr : chain[i].props.data(),
             chain[i].props.size());
         if (rc == LZMA_OPTIONS_ERROR)
-            return Status::fail("decompress-unsupported: filter id " +
-                                std::to_string(chain[i].id) + " is not one this build has");
+            return Status::fail("decompress-unsupported: filter id " + std::to_string(chain[i].id) +
+                                " is not one this build has");
         if (rc != LZMA_OK)
             return Status::fail("decompress-props: filter id " + std::to_string(chain[i].id) +
                                 " rejected its " + std::to_string(chain[i].props.size()) +

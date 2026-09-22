@@ -30,6 +30,36 @@ costs one 64 KiB window. A measured stream gets `size`, the attribute
 end keeps size 0, records `compressed-stream-unmeasured` and claims no bytes,
 which is the pre-measurement behaviour.
 
+### A stream the data ran out underneath
+
+There is one exception, and `compress::stream_ran_out` is the whole of it: a
+decode that consumed **every available byte** and still wanted more did not
+break, the data ended. What it produced is real, and nothing follows it that
+could be anything else, because it used everything. That earns an extent, and
+the reader emits the partial payload marked `truncated` with
+`checksum: unchecked` — the same place a payload cut short by `max_file_bytes`
+lands, for the same reason.
+
+The rule is three conditions and was measured, not reasoned:
+
+| condition | why |
+|---|---|
+| `decompress-truncated`, not `-corrupt` | all 195 unmeasurable hits in the corpus are corrupt, 181 of them accidental `1f 8b 08` runs in the QNX image's speech data |
+| `consumed == avail` | tested rather than inferred: the lzma and lz4 decoders also report a *stall* as truncated with input still in hand |
+| `produced > 0` | a header in the last bytes of a region would otherwise claim them for nothing |
+
+**How much decoded is deliberately not a condition.** A stray gzip header
+inside already-compressed data yields megabytes of garbage — one in the router-wrt
+image produces 3,774,806 bytes before it breaks — so output volume is evidence
+of nothing. Only whether the *input* ran out distinguishes the two.
+
+It lives in `core` because the validator and the reader must not answer it
+differently; a reader more permissive than its validator turns a guess into
+bytes on disk (see `romfs`). The router-wrt image is the case it exists for: a
+truncated gzip holding 2,837,007 bytes of tar, from which `libcrypto.so.1.0.0`
+(1.8 MB, MIPS ELF), `libssl.so.1.0.0` and `openssl.cnf` are recovered. Before
+this they were discarded whole.
+
 The walk is bounded from the TOML, never from a constant in the validator:
 `max_ratio` (1000) caps the payload as a multiple of the input still available,
 so a small stream claiming to expand forever is abandoned, and `max_payload`
@@ -228,9 +258,11 @@ signature.
 | `zstd-truncated-header` | warning | fewer than 5 bytes; magic tier |
 | `zstd-bad-frame-header` | warning | reserved bits set; magic tier |
 | `compressed-stream-unmeasured` | info | the decoder could not follow the stream to an end, so the finding has no extent |
+| `compressed-stream-truncated` | warning | the stream runs to the end of the data without finishing; what decoded is claimed and extracted, the payload is incomplete |
 | `compressed-stream-checksum-mismatch` | warning | the stream decoded to its end and then disagreed with its own checksum; it is still sized and read |
 | `container-decompress-failed` | error | the reader could not decode the stream; no payload emitted |
 | `container-checksum-mismatch` | error | the payload does not match the checksum the stream records over it; it is emitted anyway |
+| `container-stream-truncated` | warning | the data ran out mid-stream; the bytes that did decode are emitted, marked truncated and `unchecked` |
 | `container-limit-file-bytes` | warning | the payload exceeds `--max-file-bytes` and was cut there |
 | `container-sink-error` | warning | the Sink refused the payload |
 

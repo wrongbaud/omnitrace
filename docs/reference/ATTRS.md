@@ -95,9 +95,9 @@ Source: `src/containers/stream/StreamReader.cpp` (3 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `checksum_kind` | `src/containers/stream/StreamReader.cpp:79` | the check the stream records over its own payload (crc32, adler32, crc64, sha256, xxh32, xxh64 or none) |
-| `payload_bytes` | `src/containers/stream/StreamReader.cpp:77` | bytes the stream decoded to |
-| `stream_bytes` | `src/containers/stream/StreamReader.cpp:76` | bytes of the input the decoder consumed |
+| `checksum_kind` | `src/containers/stream/StreamReader.cpp:80` | the check the stream records over its own payload (crc32, adler32, crc64, sha256, xxh32, xxh64 or none) |
+| `payload_bytes` | `src/containers/stream/StreamReader.cpp:78` | bytes the stream decoded to |
+| `stream_bytes` | `src/containers/stream/StreamReader.cpp:77` | bytes of the input the decoder consumed |
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -272,9 +272,9 @@ Source: `src/discovery/validators/common.h` (3 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `checksum` | `src/discovery/validators/common.h:213` | mismatch when the payload decoded to its end and then disagreed with the check the stream records over it |
-| `extent` | `src/discovery/validators/common.h:207` | unknown when the stream could not be decoded to an end; the finding claims no bytes and no reader is asked to open it |
-| `payload_bytes` | `src/discovery/validators/common.h:218` | bytes the stream decodes to, measured without keeping them |
+| `checksum` | `src/discovery/validators/common.h:239` | mismatch when the payload decoded to its end and then disagreed with the check the stream records over it |
+| `extent` | `src/discovery/validators/common.h:235` | unknown when the stream could not be decoded to an end; the finding claims no bytes and no reader is asked to open it |
+| `payload_bytes` | `src/discovery/validators/common.h:254` | bytes the stream decodes to, measured without keeping them |
 
 ## validator `cpio`
 

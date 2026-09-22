@@ -41,6 +41,7 @@ constexpr const char* kCodeDecompressFailed = "container-decompress-failed";
 constexpr const char* kCodeLimitFileBytes = "container-limit-file-bytes";
 constexpr const char* kCodeSinkError = "container-sink-error";
 constexpr const char* kCodeChecksumMismatch = "container-checksum-mismatch";
+constexpr const char* kCodeTruncatedStream = "container-stream-truncated";
 
 }  // namespace
 
@@ -108,15 +109,37 @@ Status StreamReader::walk(Sink& sink, const WalkOptions& opts, WalkResult& out) 
     consumed_ = consumed;
     produced_ = payload.size();
 
+    // The stream ended because the data did: every available byte decoded and
+    // more was expected. The validator applies the same test before it gives
+    // this reader an extent at all, and it is repeated here rather than
+    // assumed, because a reader more permissive than its validator turns a
+    // guess into bytes on disk (see the romfs reader). `consumed == size` is
+    // what separates it from a stray magic that broke mid-data with input to
+    // spare -- across the corpus every one of the 195 unmeasurable hits is the
+    // latter.
+    const bool ran_out =
+        !st && compress::stream_ran_out(st.error, consumed, payload.size(), mapped->size());
+
     bool mismatch = false;
     if (!st) {
         // A capped stream is a truncated payload, not a failed walk: what was
         // decoded before the cap is real evidence and is still emitted. So is
         // a payload that decoded whole and then disagreed with its own
         // checksum -- those bytes are all there, they are just not the bytes
-        // that were compressed, and dropping them would hide the damage.
-        // Every other decode error means there is no payload to emit.
-        if (st.error == "decompress-checksum-mismatch") {
+        // that were compressed, and dropping them would hide the damage. And
+        // so is one the data ran out underneath, which is the same situation
+        // as the cap with a different cause. Every other decode error means
+        // there is no payload to emit.
+        if (ran_out) {
+            truncated_ = true;
+            out.truncated = true;
+            out.diagnostics.push_back(
+                {Severity::Warning, kCodeTruncatedStream,
+                 "the " + format_ + " stream runs to the end of the data without finishing; the " +
+                     std::to_string(payload.size()) +
+                     " bytes that did decode are emitted, the rest of the payload is not in this "
+                     "image"});
+        } else if (st.error == "decompress-checksum-mismatch") {
             mismatch = true;
             const std::string kind = check_kind_.empty() ? "checksum" : check_kind_;
             out.diagnostics.push_back(
@@ -153,9 +176,9 @@ Status StreamReader::walk(Sink& sink, const WalkOptions& opts, WalkResult& out) 
         if (emit) emit = sink.end_file(r);
     }
     if (!emit) {
-        out.diagnostics.push_back({Severity::Warning, kCodeSinkError,
-                                   "'" + std::string(kPayloadName) + "' (" + format_ +
-                                       "): " + emit.error});
+        out.diagnostics.push_back(
+            {Severity::Warning, kCodeSinkError,
+             "'" + std::string(kPayloadName) + "' (" + format_ + "): " + emit.error});
         return Status::success();  // nothing recovered, but the walk itself held
     }
     if (truncated_) r.truncated = true;

@@ -139,8 +139,7 @@ TEST(StreamContainer, PayloadOverTheCapIsCutAndMarked) {
     EXPECT_TRUE(r.entries_out[0].truncated);
     EXPECT_LE(r.entries_out[0].meta.size, 1024u);
     bool saw = false;
-    for (const Diagnostic& d : r.diagnostics)
-        saw = saw || d.code == "container-limit-file-bytes";
+    for (const Diagnostic& d : r.diagnostics) saw = saw || d.code == "container-limit-file-bytes";
     EXPECT_TRUE(saw);
     // The trailer was never reached, so there is nothing to claim about it.
     EXPECT_EQ(r.entries_out[0].meta.extra.at("checksum"), "unchecked");
@@ -206,11 +205,73 @@ TEST(StreamContainer, NoExtractStillListsThePayload) {
     EXPECT_EQ(reader->info().size, img.size());
 }
 
-// A stream whose header promises far more than the input holds must fail
-// rather than allocate; the cap in the decoder is what bounds it.
-TEST(StreamContainer, TruncatedStreamIsRefusedNotAllocated) {
-    Bytes img = gzip_of(text(std::string(100000, 'w')));
+// A stream the data runs out underneath is not a failed walk. What decoded
+// before the end is real evidence and is emitted, marked truncated and
+// `unchecked`, the same place a payload cut short by the cap lands.
+//
+// This test used to assert the opposite -- that such a stream yields nothing.
+// The concern it was written for was allocation, not evidence: a header
+// promising far more than the input holds must not be believed. That concern
+// is unchanged and is still the decoder's cap, asserted below; discarding what
+// decoded was never what bounded it. The router-wrt image is what changed the
+// answer: a truncated gzip there holds 2837007 bytes of tar with the router's
+// OpenSSL libraries in it.
+TEST(StreamContainer, TruncatedStreamEmitsWhatDecodedAndStaysBounded) {
+    const Bytes raw = text(std::string(100000, 'w'));
+    Bytes img = gzip_of(raw);
     img.resize(img.size() / 2);
+
+    std::shared_ptr<const Source> keep;
+    auto reader = make("gzip");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    ListingSink sink(true, Limits{});
+    fs::WalkResult r;
+    ASSERT_TRUE(reader->walk(sink, fs::WalkOptions{}, r));
+
+    ASSERT_EQ(r.entries_out.size(), 1u);
+    const EntryResult& e = r.entries_out[0];
+    EXPECT_GT(e.meta.size, 0u) << "the bytes that did decode are the point";
+    EXPECT_LT(e.meta.size, raw.size()) << "and the payload is incomplete, not whole";
+    EXPECT_TRUE(e.truncated);
+    EXPECT_TRUE(r.truncated);
+    // Never checked against anything: the trailer the check lives in was not
+    // in the data. "unchecked" and not "mismatch" -- incomplete, not damaged.
+    EXPECT_EQ(e.meta.extra.at("checksum"), "unchecked");
+    bool saw = false;
+    for (const Diagnostic& d : r.diagnostics)
+        saw = saw || (d.code == "container-stream-truncated" && d.severity == Severity::Warning);
+    EXPECT_TRUE(saw);
+
+    // The original intent, still held: a header claiming 100000 bytes does not
+    // get to allocate them. The cap bounds the payload.
+    Limits lim;
+    lim.max_file_bytes = 4096;
+    auto capped = make("gzip");
+    ASSERT_TRUE(capped->open(span_of(img, keep)));
+    ListingSink sink2(true, lim);
+    fs::WalkOptions opts;
+    opts.limits = lim;
+    fs::WalkResult r2;
+    ASSERT_TRUE(capped->walk(sink2, opts, r2));
+    ASSERT_EQ(r2.entries_out.size(), 1u);
+    EXPECT_LE(r2.entries_out[0].meta.size, 4096u);
+}
+
+// The guard the rule rests on, stated as its own test: a stream that broke
+// mid-data with input still to spare yields nothing, however much garbage it
+// managed to decode first. Across the corpus every one of the 195 hits the
+// validator cannot measure is this case -- 181 of them accidental gzip headers
+// in the QNX image's speech data -- and one in the router-wrt image produces 3774806
+// bytes before it breaks, so "it decoded a lot" is not evidence of anything.
+TEST(StreamContainer, CorruptStreamWithInputToSpareYieldsNothing) {
+    // Wreck the deflate data outright, the way the existing corrupt-stream
+    // test does, and leave plenty of input behind it. Flipping a single byte
+    // is not enough: deflate rides over it and only the CRC notices, which is
+    // a different case with a different answer.
+    Bytes img = gzip_of(text(std::string(100000, 'w')));
+    std::fill(img.begin() + 12, img.end() - 8, 0x5A);
+    img.insert(img.end(), 4096, 0x5A);
+
     std::shared_ptr<const Source> keep;
     auto reader = make("gzip");
     ASSERT_TRUE(reader->open(span_of(img, keep)));

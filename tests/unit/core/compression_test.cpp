@@ -1023,3 +1023,40 @@ TEST(Compression, ACheckThatFailsIsNotTheSameAsCorruptData) {
 
 }  // namespace
 }  // namespace omnitrace::compress
+
+// `stream_ran_out` is the rule that decides whether an unfinished stream still
+// earns an extent and a payload. It lives in core and is tested here directly
+// because the two callers -- the compressed-stream validator and StreamReader
+// -- must not answer it differently, and because two of its three conditions
+// are otherwise unreachable from a hand-built gzip: inflate_zlib only reports
+// `truncated` when the input is already exhausted, so `consumed == avail`
+// holds there by construction. The lzma and lz4 decoders do not have that
+// property -- they report a stall as truncated with input still in hand -- and
+// this is what stops that becoming a claim on bytes.
+TEST(Compression, StreamRanOutIsTruncatedPlusExhaustedPlusOutput) {
+    using omnitrace::compress::stream_ran_out;
+
+    // The case it exists for: every byte decoded, more was wanted, output real.
+    EXPECT_TRUE(stream_ran_out("decompress-truncated", 998327, 2837007, 998327));
+
+    // Broke mid-data with input to spare. This is every one of the 195
+    // unmeasurable hits in the corpus, and how much it managed to decode first
+    // is not a defence -- one in the router-wrt image reaches 3774806 bytes.
+    EXPECT_FALSE(stream_ran_out("decompress-corrupt", 419097, 1431318, 28341795));
+    EXPECT_FALSE(stream_ran_out("decompress-corrupt", 998327, 2837007, 998327))
+        << "corrupt is corrupt even when it happens to have eaten everything";
+
+    // Truncated but with input left: the lzma/lz4 stall. Claiming here would
+    // take bytes that something else may own.
+    EXPECT_FALSE(stream_ran_out("decompress-truncated", 4096, 65536, 1048576));
+
+    // Nothing came out, so there is nothing to recover -- a header in the last
+    // few bytes of a region.
+    EXPECT_FALSE(stream_ran_out("decompress-truncated", 20, 0, 20));
+
+    // The other failures are not this rule's business.
+    EXPECT_FALSE(stream_ran_out("decompress-cap", 100, 100, 100));
+    EXPECT_FALSE(stream_ran_out("decompress-checksum-mismatch", 100, 100, 100));
+    EXPECT_FALSE(stream_ran_out("decompress-unsupported", 100, 100, 100));
+    EXPECT_FALSE(stream_ran_out("", 100, 100, 100));
+}

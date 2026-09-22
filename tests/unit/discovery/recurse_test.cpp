@@ -658,6 +658,37 @@ TEST(Analyze, UnmeasurableCompressedStreamStaysUnsized) {
     EXPECT_TRUE(has_diag(gzn->diagnostics, "compressed-stream-unmeasured"));
 }
 
+// The other side of that rule. A stream the data runs out underneath *is*
+// measured: it consumed every byte there was, so there is nothing after it
+// that could be anything else, and what decoded is real.
+//
+// The two tests together are the whole discriminator, and it was measured
+// rather than guessed. Across the corpus 195 compressed-stream hits cannot be
+// measured -- 181 of them accidental `1f 8b 08` runs in the QNX image's speech
+// data -- and every one fails with `decompress-corrupt` partway through its
+// input, like the test above. None runs out. The router-wrt image's OpenWrt package
+// does, and holds 2837007 bytes of tar with the router's OpenSSL libraries.
+TEST(Analyze, StreamThatRanOutOfDataIsSizedAndExtracted) {
+    const Bytes stream = gzip_of(Bytes(40000, 'D'));
+    Bytes b(16 * 1024, 0);
+    // Half a stream, and nothing behind it: the decode reaches the end of the
+    // data still wanting more.
+    b.insert(b.end(), stream.begin(),
+             stream.begin() + static_cast<std::ptrdiff_t>(stream.size() / 2));
+    AnalyzeOptions opts;
+    opts.extract = false;
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "img.bin", opts, m, listings));
+    const Node* gzn = node_at(m, NodeKind::Container, 16 * 1024, "gzip");
+    ASSERT_NE(gzn, nullptr);
+    EXPECT_GT(gzn->location.length, 0u) << "it claims the bytes it consumed";
+    EXPECT_EQ(gzn->location.length, b.size() - 16 * 1024) << "which is all of them";
+    EXPECT_TRUE(has_diag(gzn->diagnostics, "compressed-stream-truncated"));
+    EXPECT_FALSE(has_diag(gzn->diagnostics, "compressed-stream-unmeasured"));
+    EXPECT_EQ(gzn->attrs.at("checksum"), "unchecked");
+}
+
 // A container reader that refuses the bytes is a partial coverage row and a
 // diagnostic on the node, like a filesystem reader that refuses to open.
 TEST(Analyze, ContainerReaderThatRefusesToOpen) {

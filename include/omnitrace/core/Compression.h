@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "omnitrace/core/Status.h"
@@ -33,20 +34,7 @@ namespace omnitrace::compress {
 /// auto-detects an LZ4 frame, the legacy `02 21 4C 18` format or a raw block;
 /// `Lz4Legacy` accepts the legacy format or a raw block; `Lzo1x` and `Rtime`
 /// are the in-tree decoders used by SquashFS-LZO and JFFS2.
-enum class Codec {
-    None,
-    Zlib,
-    Deflate,
-    Gzip,
-    Xz,
-    Lzma,
-    Bzip2,
-    Lz4,
-    Lz4Legacy,
-    Zstd,
-    Lzo1x,
-    Rtime
-};
+enum class Codec { None, Zlib, Deflate, Gzip, Xz, Lzma, Bzip2, Lz4, Lz4Legacy, Zstd, Lzo1x, Rtime };
 /// "none", "zlib", "deflate", "gzip", "xz", "lzma", "bzip2", "lz4",
 /// "lz4-legacy", "zstd", "lzo1x", "rtime"; "unknown" otherwise.
 const char* codec_name(Codec c);
@@ -99,6 +87,39 @@ std::string stream_check(Codec c, std::span<const std::uint8_t> in);
 Status stream_length(Codec c, std::span<const std::uint8_t> in, std::uint64_t max_out,
                      std::uint64_t& consumed, std::uint64_t& produced);
 
+/// Did this decode stop because the *data* ran out, rather than because the
+/// stream broke?
+///
+/// `error` is the failing `Status::error` from `stream_length` or
+/// `decompress_stream`, `consumed`/`produced` its measurements, `avail` the
+/// bytes that were offered. True means every available byte decoded and the
+/// decoder still wanted more: what came out is real, and nothing follows it
+/// that could be something else, because it used everything.
+///
+/// This is the line between a stream an image cut short and a magic that
+/// landed in unrelated bytes, and it decides whether either layer will claim
+/// an extent or emit a payload. It is one function because the validator and
+/// the reader must not answer it differently — a reader more permissive than
+/// its validator turns a guess into bytes on disk.
+///
+/// The three conditions, each measured against the corpus rather than assumed:
+///
+/// * **`decompress-truncated`, not `decompress-corrupt`.** All 195 hits the
+///   corpus cannot measure fail as corrupt, 181 of them accidental `1f 8b 08`
+///   runs in the QNX image's speech data.
+/// * **`consumed == avail`.** Tested rather than inferred, because the lzma
+///   and lz4 decoders also report a stall as truncated without having
+///   exhausted their input.
+/// * **`produced > 0`.** A header in the last bytes of a region would
+///   otherwise claim them for nothing.
+///
+/// How *much* came out is deliberately not a condition: a stray gzip header
+/// inside compressed data happily yields megabytes of garbage (one in the router-wrt
+/// image produces 3774806 bytes before it breaks), so output volume is
+/// evidence of nothing.
+bool stream_ran_out(std::string_view error, std::uint64_t consumed, std::uint64_t produced,
+                    std::uint64_t avail);
+
 // Raw-block variants used by filesystems (SquashFS/UBIFS blocks, JFFS2 nodes):
 // exact expected output size, fail if the stream produces more or less.
 /// Block variant for filesystems that know the decompressed size (SquashFS
@@ -113,8 +134,8 @@ Status decompress_exact(Codec c, std::span<const std::uint8_t> in, std::vector<s
 /// records a filter: a liblzma filter id and the properties bytes the
 /// container stored for it.
 struct RawFilter {
-    std::uint64_t id = 0;              ///< `LZMA_FILTER_*`.
-    std::vector<std::uint8_t> props;   ///< As stored; liblzma decodes them.
+    std::uint64_t id = 0;             ///< `LZMA_FILTER_*`.
+    std::vector<std::uint8_t> props;  ///< As stored; liblzma decodes them.
 };
 
 /// Filter ids, so callers need not include `lzma.h`. These are liblzma's own

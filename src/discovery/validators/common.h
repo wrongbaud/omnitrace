@@ -170,8 +170,8 @@ inline std::uint64_t sat_mul(std::uint64_t a, std::uint64_t b) {
 // is the absolute ceiling. When the walk does not reach the end the finding
 // keeps size 0 and says why, which is exactly the pre-measurement behaviour.
 inline std::uint64_t compressed_stream_length(Finding& f, const Span& span, std::uint64_t start,
-                                             ::omnitrace::compress::Codec codec,
-                                             const Signature& sig) {
+                                              ::omnitrace::compress::Codec codec,
+                                              const Signature& sig) {
     const std::uint64_t avail = remaining(span, start);
     if (avail == 0) return 0;
     const std::uint64_t ratio = extra_u64(sig, "max_ratio").value_or(1000);
@@ -200,12 +200,48 @@ inline std::uint64_t compressed_stream_length(Finding& f, const Span& span, std:
     // stream behind an "unidentified" region, which is the opposite of what
     // an examiner wants. Only a decode that never reached an end is unmeasured.
     const bool bad_check = !st && st.error == "decompress-checksum-mismatch";
-    if (!st && !bad_check) {
+
+    // A stream that ran out of data is not the same as one that broke. When
+    // the decoder consumed every byte available and still wanted more, the
+    // data ended mid-stream: the bytes it did decode are real, and there is
+    // nothing after them that could be anything else, because it used them
+    // all. That is worth an extent even though no end marker was reached.
+    //
+    // The distinction is what makes it safe, and it was measured rather than
+    // assumed. Across the corpus 195 hits cannot be measured -- 184 gzip, 10
+    // xz, 1 zstd, of which 181 are the accidental `1f 8b 08` runs in the QNX
+    // image's speech data -- and every one of them fails with
+    // `decompress-corrupt` after consuming a fraction of what was there
+    // (65765 of 18099546, and so on). None would be recovered here. The one
+    // case that is, the router-wrt image's OpenWrt package, consumed 998327 of
+    // 998327 and produced 2837007 bytes holding a 13-member tar.
+    //
+    // A false positive decoding *little* is not the discriminator and must not
+    // be used as one: a stray gzip header inside already-compressed data
+    // happily yields megabytes of garbage (one in the router-wrt image produces
+    // 3774806 bytes before it breaks). How much came out says nothing; whether
+    // the input ran out says everything.
+    //
+    // `consumed == avail` is tested rather than inferred from the status,
+    // because the lzma and lz4 decoders also report a stall as `truncated`
+    // without having exhausted their input. `produced > 0` keeps a header in
+    // the last few bytes of a region from claiming those bytes for nothing.
+    const bool ran_out =
+        !st && ::omnitrace::compress::stream_ran_out(st.error, consumed, produced, avail);
+    if (!st && !bad_check && !ran_out) {
         diag(f, Severity::Info, "compressed-stream-unmeasured",
              "the " + f.format + " stream does not decode to an end (" + st.error +
                  "); its extent is unknown and it claims no bytes");
         f.attrs["extent"] = "unknown";
         return 0;
+    }
+    if (ran_out) {
+        f.attrs["checksum"] = "unchecked";
+        diag(f, Severity::Warning, "compressed-stream-truncated",
+             "the " + f.format + " stream runs to the end of the data without finishing: all " +
+                 dec(consumed) + " available bytes decoded to " + dec(produced) +
+                 " bytes and more were expected. What decoded is real and is extracted; the rest "
+                 "of the payload is not in this image");
     }
     if (bad_check) {
         std::string kind = ::omnitrace::compress::stream_check(codec, in);
