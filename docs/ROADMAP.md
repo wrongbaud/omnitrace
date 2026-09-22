@@ -15,12 +15,12 @@ treats it. It is generated from `signatures/*.toml`, the validators and the
 reader registries by `scripts/gen_docs.py` and checked by `scripts/check_docs.py`,
 so it cannot drift from the code the way a table written here would.
 
-Today that is 55 signatures over 39 format ids, 31 validators, 11 filesystem
+Today that is 56 signatures over 40 format ids, 32 validators, 11 filesystem
 readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`,
-`ubifs`, `yaffs2`, `cramfs`, `romfs`) and 17 container formats read by 11 readers: `gzip`,
+`ubifs`, `yaffs2`, `cramfs`, `romfs`) and 18 container formats read by 12 readers: `gzip`,
 `bzip2`, `xz`, `lzma`, `lz4` and `zstd` (one `StreamReader`), `lzop`, `tar`,
 `cpio`, `zip`, `7z`, `uimage`, `fit`, `ubi`, `android-boot` and
-`android-vendor-boot` (one reader), and `android-sparse`. **Every *container*
+`android-vendor-boot` (one reader), `android-sparse` and `android-super`. **Every *container*
 format with a signature has a reader**, and since the full-corpus run flagged
 the last two gaps, so does every filesystem: `cramfs` and `romfs` are read
 now. `--history` is recovered by the ext, JFFS2, QNX6, UBIFS and
@@ -71,19 +71,29 @@ describe bytes that exist on no disk anywhere.
 
 ## Next, in order
 
-Items 1-4 of the original list are done: the ext4, JFFS2, QNX6 and QNX IFS
-readers, and both halves of the container work (readers plus the payload
-recursion). See the section above.
+Everything previously listed here is done: the ext4, JFFS2, QNX6 and QNX IFS
+readers, both halves of the container work (readers plus the payload
+recursion), and the unterminated-`tar` item — an archive with no end marker
+now claims the bytes its verified members account for, gated on the header
+checksums, so the router-wrt image's OpenWrt package inside a CRC-failed gzip is
+extracted instead of lost. See the section above.
 
-1. **Walk an archive that has no end marker but real members.** A damaged
-   `tar` reports `tar-no-end-marker`, keeps `extent: unknown` and is therefore
-   never handed to its reader, so the members it *did* parse are lost. The
-   Router-wrt image has one inside a CRC-failed gzip: two members, 998331 bytes,
-   none extracted. The `extent: unknown` rule is right in general; the
-   question is whether a reader that counted members should be allowed to
-   emit them over the bytes it accounted for.
-2. **Phase 2**: artifact extractors, YAML rule packs under `rules/`,
-   `omnitrace report`. `DEVELOPMENT_PLAN.md` §5.4 to §7.
+1. **Recover a compressed stream that decoded partially.** The same shape one
+   layer down, and now reachable because of the `tar` fix: the recovered
+   `data.tar.gz` is a truncated gzip that yields 2,837,007 bytes before it
+   ends, and `decompress-truncated` leaves it `extent: unknown` so all of it
+   is discarded. The question is the same one the `tar` fix answered — whether
+   a decoder that produced real output may emit what it accounted for — but
+   the answer has to hold for every stream format at once, and the guard
+   against thousands of accidental `1f 8b 08` runs in speech data is that
+   those decode to nothing.
+2. **Phase 2 continued**: platform analyzers (§5.4) and artifact extractors
+   (§5.5), then `omnitrace report` (§7). The rules engine and the YAML packs
+   under `rules/` are done. Note that §7's stated port path is stale: v1's
+   `src/omnitrace/reporting/` does not exist, and the code to port is
+   `analysis/report_generator.py` (875 lines) plus `app/services/
+   report_service.py` and `static/report/omnisonde-report.html` in the
+   omnisonde tree.
 3. **Phase 4**: web UI, only after the CLI and library are released (decision
    `core-before-ui`).
 
