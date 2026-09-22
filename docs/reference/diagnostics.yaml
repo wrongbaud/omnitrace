@@ -873,6 +873,18 @@ platform-release-disagrees:
   meaning: two release files give different answers for the same key
   action: both are reported with their sources; a vendor rebuild that edits one and not the other looks like this
 
+platform-qnx-insecure-service:
+  meaning: etc/inetd.conf enables a clear-text network service (telnet, rsh, ftp), or the qconn remote debug agent is present
+  action: the message names the service and the user it runs as; qconn gives unauthenticated control of a running target
+
+platform-qnx-no-security-policy:
+  meaning: no QNX security policy files or tooling were found on the image
+  action: informational; QNX 7 can confine every process with one, and this image does not
+
+platform-shadow-absent:
+  meaning: accounts defer to a shadow file (`x`) and no shadow file is present in the image
+  action: the secrets are in a file this extraction does not have; check whether the partition holding it was extracted
+
 platform-shadow-unreadable:
   meaning: etc/shadow is listed but its bytes could not be read back
   action: account password state is unknown; check whether extraction hit a limit

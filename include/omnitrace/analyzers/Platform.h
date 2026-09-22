@@ -130,6 +130,13 @@ class Tree {
     std::size_t size() const;
 
    private:
+    /// Follow symlinks and return where `path` ends up, with the entry there
+    /// when the listing has one. A resolved path with no entry still names a
+    /// directory when entries live under it.
+    std::string resolve(std::string_view path, const EntryResult** out) const;
+    /// Does any entry live under `dir`?
+    bool has_children(const std::string& dir) const;
+
     struct Entry {
         const EntryResult* e = nullptr;
     };

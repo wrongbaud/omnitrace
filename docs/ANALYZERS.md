@@ -59,9 +59,14 @@ tree, and no amount of marker counting fixes that.
 | analyzer | rank | state |
 |---|---|---|
 | Linux | 1 | implemented |
+| QNX | 2 | implemented |
 | Android | 2 | not yet |
-| QNX | 2 | not yet |
 | RTOS | 0 | not yet |
+
+QNX outranking Linux is not theoretical. A QNX root carries `etc/passwd`,
+`etc/group`, `etc/shadow`, `proc/` and `usr/lib`, so the Linux analyzer scores
+**five** markers on the automotive Android unit's IFS images and would report an infotainment
+unit as Linux.
 
 ## Linux
 
@@ -96,6 +101,50 @@ authenticates with **no password**. All three are in the corpus:
 **The hash itself is never copied into the report.** What matters is that an
 account has one and how well it resists cracking; a report that quoted hashes
 would be a credential store. Read it from the named file if it is needed.
+
+## QNX
+
+Markers are things only a QNX *system* has: `proc/boot` (where the IFS is
+mounted), `etc/system/config`, `qconn`, the secpol tooling, and QNX's
+resource-manager naming — `devb-*` block drivers, `devc-*` character drivers,
+`io-*` stacks. Nothing on Linux is called `devb-umass` or `io-pkt`. At least
+one of those is required before anything is claimed.
+
+**`.boot` is deliberately not a marker.** Every QNX6 *filesystem* has an empty
+`.boot` directory at its root — it is where the boot file lives — so it says
+the partition is QNX6, which discovery already reports as the format, and
+nothing about whether a system is on it. Using it claimed five pure data
+partitions in the corpus (`deviceInfo/DID/keymgr-store`, `bt/dbus/IPC/mdnsd`)
+as QNX systems, each on that single marker with an empty fact table.
+
+What it reports:
+
+| keys | from |
+|---|---|
+| `build.id`, `build.timestamp`, `build.product`, `build.secure_boot`, `build.soc`, `build.vendor.*` | the integrator's build manifest — QNX itself has no `os-release` |
+| `users.*`, `user.<name>.password` | `etc/passwd`/`shadow`, **or `proc/boot/passwd`** |
+| `service.<name>`, `services.inetd` | `etc/inetd.conf`, with the user each service runs as |
+| `security.secpol`, `security.secpol_files`, `security.chroot` | `proc/boot/secpol*`, `etc/secpolgenerate.cfg` |
+
+**Accounts can live in the boot image.** The automotive QNX unit in the QNX corpus has
+`proc/boot/passwd`, `proc/boot/group` and an entirely empty `/etc`; looking
+only at `etc/passwd` reported nothing at all about a 945-entry system.
+
+**QNX's hash format is not crypt(3).** It writes `@S@<base64>@<base64>`. A
+crypt-only reader calls that "unrecognised", which would report a *hashed*
+root account as having no usable password — the opposite of the truth. That is
+why `hash_kind` lives in `src/analyzers/Common.h` and not in either analyzer.
+
+## How accounts are reported
+
+An account gets its own row only when it has a **real hash** or an **empty
+password** — the two states an examiner acts on. Every other state is counted
+(`users.password_locked`, `users.password_invalid`, …), because the automotive QNX unit boot
+image has 286 accounts and 286 rows reading `in-shadow` is not a report.
+
+Counts come from the authoritative file: `shadow` when there is one, `passwd`
+otherwise. The same count key means different things in the two files, so
+emitting from both makes them collide.
 
 ## Adding an analyzer
 

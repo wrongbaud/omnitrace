@@ -136,6 +136,41 @@ Fs openwrt(const stdfs::path& root, const std::string& shadow) {
     return fs;
 }
 
+// A QNX Neutrino root of the shape the automotive Android unit VCU's IFS images have. Every marker
+// here was read off that unit: /proc/boot with the security policy in it, the
+// devb-/devc-/io- resource managers, ksh and slogger2, and the two
+// passwd-shaped files QNX ships.
+Fs qnx(const stdfs::path& root) {
+    Fs fs(root);
+    fs.dir("etc").dir("etc/system").dir("etc/system/config").dir("bin").dir("sbin");
+    fs.dir("proc").dir("proc/boot").dir(".boot").dir("lib64").dir("usr").dir("usr/lib");
+    // Shared with Linux -- which is the point: these alone would make the
+    // Linux analyzer claim the tree.
+    fs.file("etc/passwd",
+            "root:x:0:0:Superuser:/root:/bin/sh\n"
+            "sshd:x:6:6:sshd:/var/chroot/sshd:/bin/false\n"
+            "startupmgr::11:11:IFS loader and launcher:/:/bin/false\n");
+    fs.file("etc/group", "root::0:\n");
+    // QNX's own hash format, which is not crypt(3).
+    fs.file("etc/shadow", "root:@S@inACiyeyNEuiog==@YTkzNzhkMjBm:1707215459:0:0:0:0:0:0\n");
+    fs.file("etc/nopasswd", "root::0:0:Superuser:/root:/bin/sh\nuser::100:100:FTP User:/bin/sh\n");
+    fs.file("etc/inetd.conf",
+            "ftp        stream tcp nowait root  /usr/sbin/ftpd    in.ftpd -l\n"
+            "shell      stream tcp nowait root  /usr/sbin/rshd    in.rshd\n"
+            "telnet     stream tcp nowait root  /usr/sbin/telnetd in.telnetd\n"
+            "ssh        stream tcp nowait root  /usr/sbin/sshd    sshd -i\n");
+    fs.file("Buildinfo.txt",
+            "BUILD_ID=9\nBUILD_TIMESTAMP=2024-09-30 04:59:27 UTC\n"
+            "TARGET_PRODUCT=burmese_orange\nTARGET_BUILD_VARIANT=user\nSECURE_BOOT=true\n"
+            "QC_PRODUCT=Snapdragon_Auto.HQX.3.1.4.1\nGM.Platform=GB\n");
+    fs.file("bin/ksh").file("bin/slogger2").file("bin/on").file("bin/secpolgenerate");
+    fs.file("sbin/devb-umass").file("sbin/devc-serusb_dcd").file("sbin/io-usb-otg");
+    fs.file("sbin/chkqnx6fs").file("lib64/libslog2.so.1").file("lib64/libsecpol.so");
+    fs.file("proc/boot/secpollaunch-ham_t.cfg").file("proc/boot/libsecpol.so.1");
+    fs.file("etc/secpolgenerate.cfg", "#type ais_server_t unrestricted\n");
+    return fs;
+}
+
 }  // namespace
 
 // ------------------------------------------------------------------- Tree
@@ -269,13 +304,19 @@ TEST(PlatformLinux, TheSameFieldMeansDifferentThingsInPasswdAndShadow) {
     Report r;
     a->describe(fs.tree(), r);
 
+    // An empty password gets a row of its own: it is one of the two states an
+    // examiner acts on.
     ASSERT_NE(fact(r, "user.root.password"), nullptr);
     EXPECT_EQ(fact(r, "user.root.password")->value, "empty");
-    ASSERT_NE(fact(r, "user.dnsmasq.password"), nullptr);
-    EXPECT_EQ(fact(r, "user.dnsmasq.password")->value, "invalid")
-        << "'x' means 'see shadow' in passwd, but in shadow it is a dead field";
+    // A dead field is counted, not rowed -- 286 rows reading the same thing is
+    // not a report. `x` means "see shadow" in passwd but nothing in shadow.
+    EXPECT_EQ(fact(r, "user.dnsmasq.password"), nullptr);
+    ASSERT_NE(fact(r, "users.password_invalid"), nullptr);
+    EXPECT_EQ(fact(r, "users.password_invalid")->value, "1");
     ASSERT_NE(fact(r, "users.with_password"), nullptr);
     EXPECT_EQ(fact(r, "users.with_password")->value, "0");
+    ASSERT_NE(fact(r, "users.no_password"), nullptr);
+    EXPECT_EQ(fact(r, "users.no_password")->value, "1");
 
     // A login with no password is the most actionable thing on the system and
     // does not belong in a table row.
@@ -297,7 +338,16 @@ TEST(PlatformLinux, AHashInPasswdIsWorthSayingOutLoud) {
         from_passwd = from_passwd || (f.key == "user.root.password" && f.value == "md5" &&
                                       f.source == "etc/passwd");
     EXPECT_TRUE(from_passwd);
-    EXPECT_TRUE(has_code(r.diagnostics, "platform-account-weak-hash"));
+    // Both findings, not one: the hash is crackable *and* it is in the
+    // world-readable file. Chaining these lost the second one.
+    bool world_readable = false, crackable = false;
+    for (const Diagnostic& d : r.diagnostics) {
+        if (d.code != "platform-account-weak-hash") continue;
+        world_readable = world_readable || d.message.find("world-readable") != std::string::npos;
+        crackable = crackable || d.message.find("cracks quickly") != std::string::npos;
+    }
+    EXPECT_TRUE(world_readable);
+    EXPECT_TRUE(crackable);
 }
 
 TEST(PlatformLinux, AgreeingFilesAreNotReportedTwiceButDisagreeingOnesAre) {
@@ -333,4 +383,130 @@ TEST(PlatformLinux, ReportsNothingItCannotRead) {
     EXPECT_EQ(fact(r, "user.root.password"), nullptr);
     // init.d is a listing, not a read, so it survives.
     ASSERT_NE(fact(r, "init.count"), nullptr);
+}
+
+// --------------------------------------------------------------------- QNX
+
+// The reason Analyzer::rank exists. A QNX root carries etc/passwd, etc/group,
+// etc/shadow, proc/ and usr/lib, so the Linux analyzer scores on it and would
+// report a QNX infotainment unit as Linux. Measured on the automotive Android unit before the
+// QNX model existed: five Linux markers matched.
+TEST(PlatformQnx, OutranksLinuxOnATreeBothClaim) {
+    const TempDir tmp;
+    const Fs fs = qnx(tmp.path());
+    auto lin = AnalyzerRegistry::instance().create(Platform::Linux);
+    auto qn = AnalyzerRegistry::instance().create(Platform::Qnx);
+    ASSERT_NE(qn, nullptr) << "the QNX analyzer must be registered and linked in";
+    EXPECT_GT(lin->detect(fs.tree()), 0u) << "Linux really does match a QNX tree";
+    EXPECT_GT(qn->rank(), lin->rank()) << "and rank, not score, is what settles it";
+
+    const FilesystemEntries filesystems{{"n000001", fs.entries()}};
+    Survey s;
+    ASSERT_TRUE(survey(filesystems, s));
+    ASSERT_EQ(s.reports.size(), 1u);
+    EXPECT_EQ(s.reports[0].platform, Platform::Qnx);
+}
+
+TEST(PlatformQnx, ReadsTheIntegratorBuildManifest) {
+    // QNX carries no os-release; what a shipped unit has is the integrator's
+    // build file, and it is the most identifying thing on the system.
+    const TempDir tmp;
+    const Fs fs = qnx(tmp.path());
+    auto a = AnalyzerRegistry::instance().create(Platform::Qnx);
+    Report r;
+    a->describe(fs.tree(), r);
+    ASSERT_NE(fact(r, "build.product"), nullptr);
+    EXPECT_EQ(fact(r, "build.product")->value, "burmese_orange");
+    ASSERT_NE(fact(r, "build.secure_boot"), nullptr);
+    EXPECT_EQ(fact(r, "build.secure_boot")->value, "true");
+    ASSERT_NE(fact(r, "build.soc"), nullptr);
+    EXPECT_EQ(fact(r, "build.soc")->value, "Snapdragon_Auto.HQX.3.1.4.1");
+    // A vendor key with a dot in it is passed through rather than dropped.
+    ASSERT_NE(fact(r, "build.vendor.GM_Platform"), nullptr);
+    EXPECT_EQ(fact(r, "build.vendor.GM_Platform")->value, "GB");
+}
+
+TEST(PlatformQnx, KnowsTheQnxHashFormatIsNotCrypt) {
+    // @S@<base64>@<base64> is QNX's own. A crypt-only reader calls it
+    // "unrecognised", which would report a hashed root account as having no
+    // usable password -- the opposite of the truth.
+    const TempDir tmp;
+    const Fs fs = qnx(tmp.path());
+    auto a = AnalyzerRegistry::instance().create(Platform::Qnx);
+    Report r;
+    a->describe(fs.tree(), r);
+    bool named = false;
+    for (const Fact& f : r.facts)
+        named = named || (f.key == "user.root.password" && f.value == "qnx-strong" &&
+                          f.source == std::string("etc/shadow"));
+    EXPECT_TRUE(named);
+    ASSERT_NE(fact(r, "users.with_password"), nullptr);
+    EXPECT_EQ(fact(r, "users.with_password")->value, "1");
+}
+
+TEST(PlatformQnx, TheNopasswdFileIsReportedAsWhatItIs) {
+    // QNX ships a second passwd-shaped file for accounts that need no
+    // password. On the automotive Android unit it holds `root::0:0:Superuser`, and the
+    // diagnostic has to name that file rather than etc/passwd.
+    const TempDir tmp;
+    const Fs fs = qnx(tmp.path());
+    auto a = AnalyzerRegistry::instance().create(Platform::Qnx);
+    Report r;
+    a->describe(fs.tree(), r);
+    bool from_nopasswd = false;
+    for (const Diagnostic& d : r.diagnostics)
+        from_nopasswd = from_nopasswd || (d.code == "platform-account-no-password" &&
+                                          d.message.find("etc/nopasswd") != std::string::npos);
+    EXPECT_TRUE(from_nopasswd);
+}
+
+TEST(PlatformQnx, ClearTextNetworkServicesAreAWarningNotATableRow) {
+    const TempDir tmp;
+    const Fs fs = qnx(tmp.path());
+    auto a = AnalyzerRegistry::instance().create(Platform::Qnx);
+    Report r;
+    a->describe(fs.tree(), r);
+
+    // Who each service runs as is the half that matters.
+    ASSERT_NE(fact(r, "service.telnet"), nullptr);
+    EXPECT_EQ(fact(r, "service.telnet")->value, "root");
+    unsigned insecure = 0;
+    for (const Diagnostic& d : r.diagnostics)
+        if (d.code == "platform-qnx-insecure-service") ++insecure;
+    EXPECT_EQ(insecure, 3u) << "ftp, shell (rsh) and telnet; ssh is not one of them";
+}
+
+TEST(PlatformQnx, ReportsWhetherProcessesAreConfined) {
+    const TempDir tmp;
+    const Fs with = qnx(tmp.path());
+    auto a = AnalyzerRegistry::instance().create(Platform::Qnx);
+    Report r;
+    a->describe(with.tree(), r);
+    ASSERT_NE(fact(r, "security.secpol_files"), nullptr);
+    EXPECT_EQ(fact(r, "security.secpol_files")->value, "1");
+    EXPECT_FALSE(has_code(r.diagnostics, "platform-qnx-no-security-policy"));
+
+    // A QNX image with no policy at all says so.
+    Fs bare(tmp.path() / "bare");
+    bare.dir("proc").dir("proc/boot").dir("bin").dir("sbin");
+    bare.file("bin/ksh").file("bin/slogger2");
+    bare.file("sbin/devb-umass").file("sbin/io-usb-otg");
+    Report r2;
+    a->describe(bare.tree(), r2);
+    EXPECT_TRUE(has_code(r2.diagnostics, "platform-qnx-no-security-policy"));
+}
+
+TEST(PlatformQnx, ResourceManagersAloneIdentifyIt) {
+    // devb- block drivers, devc- character drivers and io- stacks are named
+    // that way on QNX and nowhere else; a tree with nothing but those is still
+    // recognisable.
+    Fs fs;
+    fs.dir("sbin").file("sbin/devb-umass").file("sbin/io-pkt-v6-hc").file("sbin/devc-ser8250");
+    auto a = AnalyzerRegistry::instance().create(Platform::Qnx);
+    EXPECT_GT(a->detect(fs.tree()), 0u);
+
+    // And a Linux sbin does not accidentally look like one.
+    Fs lin;
+    lin.dir("sbin").file("sbin/init").file("sbin/ifconfig").file("sbin/iptables");
+    EXPECT_EQ(a->detect(lin.tree()), 0u);
 }

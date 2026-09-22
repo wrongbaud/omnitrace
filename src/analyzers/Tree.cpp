@@ -103,19 +103,41 @@ std::size_t Tree::size() const {
     return by_path_.size();
 }
 
-const EntryResult* Tree::find(std::string_view path) const {
+// The path `path` ends at after following any symlinks, and the entry there
+// if the listing has one. A resolved path with no entry is not an error: a
+// directory can exist purely because entries live under it.
+std::string Tree::resolve(std::string_view path, const EntryResult** out) const {
     std::string cur(strip_slashes(path));
+    if (out != nullptr) *out = nullptr;
     for (int hop = 0; hop < kMaxLinkHops; ++hop) {
         const auto it = by_path_.find(cur);
-        if (it == by_path_.end()) return nullptr;
+        if (it == by_path_.end()) return cur;  // resolved, but nothing recorded there
         const EntryResult* e = it->second.e;
-        if (e->meta.kind != EntryKind::Symlink) return e;
-        if (e->meta.link_target.empty()) return nullptr;
+        if (e->meta.kind != EntryKind::Symlink) {
+            if (out != nullptr) *out = e;
+            return cur;
+        }
+        if (e->meta.link_target.empty()) return {};
         std::string next = join_link(cur, e->meta.link_target);
-        if (next.empty() || next == cur) return nullptr;
+        if (next.empty() || next == cur) return {};
         cur = std::move(next);
     }
-    return nullptr;  // a link loop, or a chain deeper than any real one
+    return {};  // a link loop, or a chain deeper than any real one
+}
+
+// Does any entry live under `dir`? An ordered map makes this one lookup: the
+// first key at or after "dir/" either starts with it or there is nothing there.
+bool Tree::has_children(const std::string& dir) const {
+    if (dir.empty()) return !by_path_.empty();
+    const std::string prefix = dir + "/";
+    const auto it = by_path_.lower_bound(prefix);
+    return it != by_path_.end() && it->first.compare(0, prefix.size(), prefix) == 0;
+}
+
+const EntryResult* Tree::find(std::string_view path) const {
+    const EntryResult* e = nullptr;
+    resolve(path, &e);
+    return e;
 }
 
 bool Tree::has_file(std::string_view path) const {
@@ -123,9 +145,18 @@ bool Tree::has_file(std::string_view path) const {
     return e != nullptr && e->meta.kind == EntryKind::Regular;
 }
 
+// A directory the listing records, *or* one that exists because entries live
+// under it. Readers are not obliged to emit an entry per path component --
+// some formats do not store them, and some readers emit only what the format
+// has. The QNX corpus image is the case: a real system root there lists
+// `proc/boot/ksh` and 95 siblings with no `proc/boot` entry at all, so a
+// directory test that trusted the listing alone reported no QNX system on an
+// image full of them.
 bool Tree::has_dir(std::string_view path) const {
-    const EntryResult* e = find(path);
-    return e != nullptr && e->meta.kind == EntryKind::Directory;
+    const EntryResult* e = nullptr;
+    const std::string at = resolve(path, &e);
+    if (e != nullptr) return e->meta.kind == EntryKind::Directory;
+    return !at.empty() && has_children(at);
 }
 
 std::string Tree::first_of(const std::vector<std::string>& paths) const {
@@ -148,8 +179,12 @@ std::optional<std::string> Tree::read(std::string_view path, std::size_t max) co
 
 std::vector<std::string> Tree::list_dir(std::string_view dir) const {
     std::vector<std::string> out;
-    const std::string base(strip_slashes(dir));
-    if (!base.empty() && !has_dir(base)) return out;
+    // Through symlinks, and over implied directories too: `list_dir` and
+    // `has_dir` have to agree about what a directory is.
+    const EntryResult* e = nullptr;
+    const std::string base = resolve(dir, &e);
+    if (base.empty() && !dir.empty()) return out;
+    if (e != nullptr && e->meta.kind != EntryKind::Directory) return out;
     const std::string prefix = base.empty() ? std::string{} : base + "/";
     for (auto it = by_path_.lower_bound(prefix); it != by_path_.end(); ++it) {
         if (it->first.compare(0, prefix.size(), prefix) != 0) break;

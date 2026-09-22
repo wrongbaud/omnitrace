@@ -9,9 +9,11 @@
 namespace omnitrace::analyzers::detail {
 
 void omnitrace_analyzer_anchor_linux();
+void omnitrace_analyzer_anchor_qnx();
 
 void link_builtin_analyzers() {
     omnitrace_analyzer_anchor_linux();
+    omnitrace_analyzer_anchor_qnx();
 }
 
 }  // namespace omnitrace::analyzers::detail
