@@ -13,6 +13,8 @@ DIR/
 ├── manifest.yaml             # alias of INFO.yaml: a symlink on POSIX, a byte copy on Windows
 ├── INFO.md                   # summary + partition map + "Partitions carved" table + coverage (rendered from INFO.yaml)
 ├── summary.md, partitions.md # compatibility renderings (INFO.md supersedes them)
+├── platform.yaml / .md       # what kind of system each extracted filesystem is, and what it says about itself (docs/ANALYZERS.md)
+├── artifacts.yaml / .md      # search-pack hits over every extracted file and unclaimed region (docs/RULES.md); absent with --no-rules
 ├── flash/
 │   ├── SOURCE.yaml           # path, size, md5/sha1/sha256, acquired_at of the evidence; `copy:` when --copy-image; `corrected:` when the analysis ran on a corrected view
 │   ├── <image>               # only with --copy-image (verified by hash after the copy)

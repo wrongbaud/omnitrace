@@ -36,6 +36,7 @@
 #include "omnitrace/filesystems/Filesystem.h"
 #include "omnitrace/output/Markdown.h"
 #include "omnitrace/output/Yaml.h"
+#include "omnitrace/analyzers/Platform.h"
 #include "omnitrace/rules/Sweep.h"
 
 #ifndef OMNITRACE_VERSION
@@ -456,6 +457,16 @@ void cmd_analyze(const AnalyzeArgs& a) {
         if (!m.evidence.empty())
             write_text(flash / "SOURCE.yaml",
                        source_yaml(m.evidence.back(), copied, corrected_view_of(m), out));
+        // What kind of system each extracted filesystem is. Before the
+        // rules, because a platform report is the context an examiner reads
+        // the hits in.
+        analyzers::Survey survey;
+        if (const Status st = analyzers::survey(listings, survey); !st) fail(st.error);
+        write_text(out / "platform.yaml", analyzers::platform_to_yaml(survey));
+        write_text(out / "platform.md", analyzers::platform_to_markdown(survey));
+        spdlog::info("platforms: {} of {} filesystem(s) recognised", survey.reports.size(),
+                     survey.trees_examined);
+
         if (!a.no_rules) run_rules(a, m, listings, file, out);
     } else {
         write_text(out / "manifest.yaml", yaml);

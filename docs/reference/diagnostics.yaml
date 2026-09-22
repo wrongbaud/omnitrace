@@ -857,6 +857,30 @@ qnx-ifs-unsupported-compression:
   meaning: flags1 selects a compression code other than zlib, lzo, ucl or lz4
   action: carve the image; the compressed payload needs a decoder this build lacks
 
+platform-account-no-password:
+  meaning: an account's password field is empty, so it authenticates with no password at all
+  action: the most actionable thing on a system; confirm in the named file and check whether the service that uses the account is reachable
+
+platform-account-weak-hash:
+  meaning: a password hash is md5 or descrypt (crackable), or sits in world-readable etc/passwd instead of etc/shadow
+  action: the message says which; the hash itself is deliberately not reported, so read it from the named file if it is needed
+
+platform-linux-no-release:
+  meaning: no os-release, lsb-release or openwrt_release, so the system does not name its own distribution
+  action: informational; the version has to come from a banner, a kernel string or a binary instead
+
+platform-release-disagrees:
+  meaning: two release files give different answers for the same key
+  action: both are reported with their sources; a vendor rebuild that edits one and not the other looks like this
+
+platform-shadow-unreadable:
+  meaning: etc/shadow is listed but its bytes could not be read back
+  action: account password state is unknown; check whether extraction hit a limit
+
+platform-unrecognised:
+  meaning: an extracted filesystem matched no platform model
+  action: a finding in itself - a data partition has no platform, and a system this build does not model is worth knowing about
+
 qnx6-bad-root-pointer:
   meaning: a root-node pointer of the superblock (inode table, bitmap or longfile tree) lies beyond num_blocks
   action: the superblock is damaged or the geometry is wrong; the tier stays structural and the reader will report the tree as corrupt

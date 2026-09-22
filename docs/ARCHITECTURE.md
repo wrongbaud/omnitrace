@@ -11,9 +11,19 @@ see [EXTENDING.md](EXTENDING.md).
 
 ```
 apps/cli  →  output, discovery, containers, images, filesystems  →  core
+          →  analyzers, rules  →  core, output
 ```
 
 `core` depends on nothing in the project. Nothing depends on `apps/cli`.
+
+`analyzers` and `rules` are **post-analysis** layers and depend on neither
+`discovery` nor any reader. They take what the extraction produced — a set of
+`(node id, entries)` pairs, and for `rules` a Span over the image — and
+nothing about how it was produced. That is what lets a finished case be
+re-analysed or re-swept without re-extracting it, and it is checkable: the
+only `omnitrace::` symbols `libomnitrace_analyzers.a` leaves undefined are its
+own and `output::`. A `discovery::` type in either layer's interface would be
+a review finding.
 `filesystems`, `containers` and `images` depend on `core` and `discovery`
 only (for `Finding`/`Signature`), never on each other. Recursion across
 layers is orchestrated in `discovery/Recurse` (`analyze()`), which takes

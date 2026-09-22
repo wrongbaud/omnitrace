@@ -2,7 +2,7 @@ file(GLOB_RECURSE _cli_srcs CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
 add_executable(omnitrace ${_cli_srcs})
 target_link_libraries(omnitrace PRIVATE
   omnitrace::core omnitrace::output omnitrace::discovery omnitrace::containers
-  omnitrace::images omnitrace::filesystems omnitrace::rules CLI11::CLI11 spdlog::spdlog
+  omnitrace::images omnitrace::filesystems omnitrace::analyzers omnitrace::rules CLI11::CLI11 spdlog::spdlog
   omnitrace_warnings)
 target_compile_definitions(omnitrace PRIVATE OMNITRACE_VERSION="${PROJECT_VERSION}")
 if(OMNITRACE_STATIC AND NOT MSVC AND NOT APPLE)
