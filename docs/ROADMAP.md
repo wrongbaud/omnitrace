@@ -85,15 +85,36 @@ worth carrying to the next format: **when a magic is too weak to trust, a
 checksum or an exhausted input is what earns an extent** — and the rule must
 live where both the validator and the reader can call it, or they drift.
 
-1. **Phase 2 continued**: platform analyzers (§5.4) and artifact extractors
-   (§5.5), then `omnitrace report` (§7). The rules engine and the YAML packs
-   under `rules/` are done. Note that §7's stated port path is stale: v1's
-   `src/omnitrace/reporting/` does not exist, and the code to port is
-   `analysis/report_generator.py` (875 lines) plus `app/services/
-   report_service.py` and `static/report/omnisonde-report.html` in the
-   omnisonde tree.
-2. **Phase 4**: web UI, only after the CLI and library are released (decision
-   `core-before-ui`).
+**Phase 2 is complete.** The rules engine and packs, the platform analyzers
+(§5.4), a first artifact extractor (§5.5) and the report (§7) are all in. A
+case directory now carries `INFO.yaml`, `platform.yaml`, `certificates.yaml`,
+`artifacts.yaml` and `report.html`/`report.md`, and the report re-hashes the
+evidence before rendering and says in its first section whether it still
+matches.
+
+Three things were left deliberately, each written up where the code is:
+
+1. **A `listing.yaml` reader**, which is the single highest-value next piece.
+   `analyzers`, `artifacts` and `report` were all built to take what the
+   extraction produced and nothing about how — the layers depend on `core`
+   (and `output`) only, so a finished case can in principle be re-examined
+   without re-extracting it. Nothing exercises that yet, because turning a
+   case directory back into entries needs this reader. It would make
+   `omnitrace report` rebuild all seven sections instead of four, give
+   `analyzers` and `artifacts` a standalone entry point, and make the
+   decoupling load-bearing rather than latent.
+2. **The Android analyzer has never seen a real Android tree** (§5.4). Its
+   markers come from documented AOSP layout; the automotive Android unit's `la_super` is the
+   image to check it against. `docs/ANALYZERS.md` says which parts are
+   guesses.
+3. **More extractors** (§5.5): SQLite, logs with a normalised timeline, ELF
+   metadata. Certificates were done first because the corpus had 131 of them
+   and the rest of §5.5's list overlaps what the rules packs and analyzers
+   already do.
+
+Then **Phase 3** (fuzzing, a performance pass, Windows and macOS packaging,
+release) and **Phase 4**: web UI, only after the CLI and library are released
+(decision `core-before-ui`).
 
 ## Good first improvements
 
