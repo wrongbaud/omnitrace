@@ -1,7 +1,99 @@
 // Common.cpp — helpers shared by the platform analyzers. See Common.h.
 #include "Common.h"
 
+#include <nlohmann/json.hpp>
+
 namespace omnitrace::analyzers::common {
+
+namespace {
+
+// A SAX handler that keeps only the top level: scalar members as strings and
+// the element count of array members. It never builds a document, so a 100 KB
+// manifest costs the few dozen strings it actually reports, and it refuses a
+// document deeper than the limit rather than recursing into it.
+class TopLevelSax {
+   public:
+    TopLevelSax(JsonManifest& out, unsigned max_depth) : out_(out), max_depth_(max_depth) {}
+
+    bool null() { return scalar("null"); }
+    bool boolean(bool v) { return scalar(v ? "true" : "false"); }
+    bool number_integer(std::int64_t v) { return scalar(std::to_string(v)); }
+    bool number_unsigned(std::uint64_t v) { return scalar(std::to_string(v)); }
+    bool number_float(double /*unused*/, const std::string& s) { return scalar(s); }
+    bool string(std::string& v) { return scalar(v); }
+    bool binary(std::vector<std::uint8_t>& /*unused*/) { return scalar("<binary>"); }
+
+    bool start_object(std::size_t /*unused*/) { return descend(); }
+    bool start_array(std::size_t /*unused*/) {
+        // A top-level array member is counted, not read: the automotive QNX unit manifest's
+        // `component` array has 181 entries of twelve fields each.
+        if (depth_ == 1 && !key_.empty() && counting_.empty()) {
+            counting_ = key_;
+            counted_ = 0;
+        }
+        return descend();
+    }
+    bool end_object() { return ascend(); }
+    bool end_array() {
+        if (depth_ == 2 && !counting_.empty()) {
+            out_.arrays[counting_] = counted_;
+            counting_.clear();
+        }
+        return ascend();
+    }
+    bool key(std::string& k) {
+        if (depth_ == 1) key_ = k;
+        return true;
+    }
+    bool parse_error(std::size_t /*unused*/, const std::string& /*unused*/,
+                     const nlohmann::json::exception& /*unused*/) {
+        return false;
+    }
+
+   private:
+    // Returning false stops the parse, which is how the depth limit is
+    // enforced: refuse the document rather than recurse into it.
+    bool descend() {
+        count_element();
+        ++depth_;
+        return depth_ <= max_depth_;
+    }
+    bool ascend() {
+        if (depth_ != 0) --depth_;
+        return true;
+    }
+    bool scalar(std::string v) {
+        count_element();
+        if (depth_ == 1 && !key_.empty() && counting_.empty()) out_.scalars[key_] = std::move(v);
+        return true;
+    }
+    // One more element of the top-level array currently being counted.
+    void count_element() {
+        if (!counting_.empty() && depth_ == 2) ++counted_;
+    }
+
+    JsonManifest& out_;
+    unsigned max_depth_;
+    unsigned depth_ = 0;
+    std::string key_;
+    std::string counting_;  // non-empty while inside a top-level array
+    std::size_t counted_ = 0;
+};
+
+}  // namespace
+
+JsonManifest read_json_manifest(const std::string& text, unsigned max_depth) {
+    JsonManifest out;
+    if (text.empty() || max_depth == 0) return out;
+    TopLevelSax sax(out, max_depth);
+    out.ok = nlohmann::json::sax_parse(text, &sax, nlohmann::json::input_format_t::json,
+                                       /*strict=*/false);
+    if (!out.ok) {
+        out.scalars.clear();
+        out.arrays.clear();
+    }
+    return out;
+}
 
 void for_each_line(const std::string& text, const std::function<void(std::string_view)>& fn) {
     std::size_t pos = 0;

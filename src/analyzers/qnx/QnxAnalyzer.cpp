@@ -28,6 +28,8 @@ using common::for_each_line;
 constexpr const char* kCodeInsecureService = "platform-qnx-insecure-service";
 constexpr const char* kCodeNoSecpol = "platform-qnx-no-security-policy";
 constexpr const char* kCodeNoShadow = "platform-shadow-absent";
+constexpr const char* kCodeBadManifest = "platform-manifest-unreadable";
+constexpr const char* kCodeEngineeringBuild = "platform-engineering-build";
 
 // QNX names its resource managers by role: devb- block drivers, devc-
 // character drivers, io- stacks (io-pkt, io-usb-otg, io-hid, io-audio). A
@@ -98,6 +100,7 @@ class QnxAnalyzer final : public Analyzer {
     // identifying file on the system: product, build id, timestamp, and
     // whether secure boot was on.
     static void describe_build(const Tree& t, Report& r) {
+        describe_build_json(t, r);
         const std::string path = t.first_of({"Buildinfo.txt", "etc/Buildinfo.txt", "build.txt"});
         if (path.empty()) return;
         const auto text = t.read(path, 64 * 1024);
@@ -124,6 +127,56 @@ class QnxAnalyzer final : public Analyzer {
             std::string leaf = k;
             std::replace(leaf.begin(), leaf.end(), '.', '_');
             add(r, "build.vendor." + leaf, v, path);
+        }
+    }
+
+    // one automotive vendor ships the same thing as a JSON manifest rather than the other automotive vendor's
+    // KEY=VALUE file. On the SYNC unit in the QNX corpus it is a symlink from
+    // the tree root to /fs/os/artifact.json -- an absolute target, which Tree
+    // roots at the filesystem rather than the host -- and it is the most
+    // identifying file on the image: part number, the SYNC version in the
+    // group id, the Jenkins build, the git commit, and a bill of materials.
+    static void describe_build_json(const Tree& t, Report& r) {
+        const std::string path =
+            t.first_of({"artifact.json", "fs/os/artifact.json", "etc/artifact.json"});
+        if (path.empty()) return;
+        const auto text = t.read(path, 4U << 20);
+        if (!text) return;
+        const common::JsonManifest m = common::read_json_manifest(*text);
+        if (!m.ok) {
+            r.diagnostics.push_back({Severity::Info, kCodeBadManifest,
+                                     path + " is present but is not readable as a flat JSON "
+                                            "manifest; it was not used"});
+            return;
+        }
+        for (const auto& [from, to] : {std::pair{"FPN", "build.part_number"},
+                                       {"artifact_version", "build.id"},
+                                       {"FD02", "build.product"},
+                                       {"build_guid", "build.guid"},
+                                       {"build_method", "build.method"},
+                                       {"git_commit", "build.git_commit"},
+                                       {"groupid", "build.group"},
+                                       {"jenkins_build", "build.jenkins"},
+                                       {"nexus_version", "build.nexus_version"},
+                                       {"file", "build.image"},
+                                       {"schema_version", "build.manifest_schema"}}) {
+            const auto it = m.scalars.find(from);
+            if (it != m.scalars.end()) add(r, to, it->second, path);
+        }
+        // A bill of materials is reported as a count and a pointer to the
+        // file. 181 components of twelve fields each is 2172 facts, which is
+        // not a report; listing them belongs to an artifact extractor.
+        const auto comp = m.arrays.find("component");
+        if (comp != m.arrays.end()) add(r, "build.components", std::to_string(comp->second), path);
+
+        // An engineering image on a shipped unit is a finding.
+        const auto eng = m.scalars.find("engineering_use_only");
+        if (eng != m.scalars.end()) {
+            add(r, "build.engineering_only", eng->second, path);
+            if (eng->second != "NO" && eng->second != "false" && eng->second != "0")
+                r.diagnostics.push_back({Severity::Warning, kCodeEngineeringBuild,
+                                         path + " says engineering_use_only=" + eng->second +
+                                             ": this is not a production image"});
         }
     }
 

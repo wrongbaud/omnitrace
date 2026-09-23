@@ -121,7 +121,8 @@ What it reports:
 
 | keys | from |
 |---|---|
-| `build.id`, `build.timestamp`, `build.product`, `build.secure_boot`, `build.soc`, `build.vendor.*` | the integrator's build manifest — QNX itself has no `os-release` |
+| `build.id`, `build.timestamp`, `build.product`, `build.secure_boot`, `build.soc`, `build.vendor.*` | the other automotive vendor's `Buildinfo.txt` — QNX itself has no `os-release` |
+| `build.part_number`, `build.group`, `build.jenkins`, `build.git_commit`, `build.guid`, `build.components` | one automotive vendor's `artifact.json` |
 | `users.*`, `user.<name>.password` | `etc/passwd`/`shadow`, **or `proc/boot/passwd`** |
 | `service.<name>`, `services.inetd` | `etc/inetd.conf`, with the user each service runs as |
 | `security.secpol`, `security.secpol_files`, `security.chroot` | `proc/boot/secpol*`, `etc/secpolgenerate.cfg` |
@@ -167,6 +168,30 @@ firmware, and calling both "android" loses the distinction that matters most.
 `os.security_patch` is reported and never judged: deciding whether a patch
 level is "old" needs a clock, and the library does not read one outside
 `core/Clock`.
+
+### Build manifests
+
+QNX carries no `os-release`, so what identifies a shipped unit is the
+integrator's own manifest — and integrators do not agree on a format. The other automotive vendor
+writes `Buildinfo.txt` as `KEY=VALUE`; One automotive vendor writes `artifact.json`, reached on
+the corpus unit through a symlink from the tree root to the **absolute** path
+`/fs/os/artifact.json`, which `Tree` roots at the filesystem rather than the
+host. Both are read, and each fact names the file it came from.
+
+The JSON reader keeps **only the top level**: scalar members as strings, and
+the element *count* of array members. Two reasons, both about evidence rather
+than convenience:
+
+* **A bill of materials is counted, not listed.** The automotive QNX unit manifest's
+  `component` array has 181 entries of twelve fields each. 2,172 facts is not
+  a report; `build.components` says the list is there and names the file.
+  Enumerating it is artifact-extractor work.
+* **It is parsed through a SAX handler with a depth limit**, never into a
+  document. A recursive-descent parse of deeply nested JSON is a stack
+  overflow rather than a parse error, and a manifest is a flat record — 32
+  levels is already generous. A document past the limit is refused whole,
+  yielding nothing rather than a partial read, and says so with
+  `platform-manifest-unreadable`.
 
 ## How accounts are reported
 

@@ -82,6 +82,28 @@ struct PasswordTally {
 PasswordTally describe_password_file(const Tree& t, Report& r, const std::string& path,
                                      bool is_shadow);
 
+/// A JSON build manifest, read flat.
+///
+/// Only the top level is kept: scalar members as strings, and the element
+/// count of any array member. That is deliberate -- an automotive QNX unit's
+/// `artifact.json` carries 181 components with twelve fields each, and 2172
+/// facts is not a report. The count says a bill of materials is there and the
+/// file is named so it can be opened.
+struct JsonManifest {
+    bool ok = false;  ///< False when the text is not JSON, or is past a limit.
+    std::map<std::string, std::string> scalars;
+    std::map<std::string, std::size_t> arrays;  ///< Member name -> element count.
+};
+
+/// Read the top level of a JSON object.
+///
+/// Parsed through a SAX handler with a depth limit rather than into a
+/// document, because evidence is attacker-controlled: a recursive-descent
+/// parse of deeply nested JSON is a stack overflow, and materialising the
+/// document costs many times the file. `max_depth` past 32 is refused, not
+/// truncated -- a manifest is a flat record and anything deeper is not one.
+JsonManifest read_json_manifest(const std::string& text, unsigned max_depth = 32);
+
 /// State the tally as facts: how many accounts have a real hash, how many
 /// authenticate with none, and how many are in each other state. This is what
 /// replaces a row per account on a system that has hundreds.

@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "../../../src/analyzers/Common.h"
 #include "omnitrace/analyzers/Platform.h"
 
 using namespace omnitrace;
@@ -652,4 +653,148 @@ TEST(PlatformLinux, DirectoriesAloneAreNotASystem) {
     fs.dir("proc").dir("sys").dir("usr/lib").dir("var/log").file("etc/hosts");
     auto a = AnalyzerRegistry::instance().create(Platform::Linux);
     EXPECT_EQ(a->detect(fs.tree()), 0u);
+}
+
+// ----------------------------------------------------- JSON build manifests
+//
+// one automotive vendor ships as JSON what the other automotive vendor ships as KEY=VALUE. The reader keeps only the top
+// level and is SAX-based, because evidence is attacker-controlled: building a
+// document costs many times the file, and a recursive parse of deeply nested
+// JSON is a stack overflow rather than a parse error.
+
+TEST(JsonManifest, ReadsTopLevelScalarsAndCountsArrays) {
+    // The shape of the automotive QNX unit's artifact.json, cut down: scalars at
+    // the top, and a `component` array that really has 181 entries of twelve
+    // fields each.
+    const std::string text = R"({
+        "FPN": "XXXX-00X000-XX",
+        "artifact_version": "23206_PRODUCT.959",
+        "schema_version": 4,
+        "engineering_use_only": "NO",
+        "component": [
+            {"name": "Audio-sources", "git_commit_id": "dc27ada", "version": "v4.0.28"},
+            {"name": "Bluetooth-headers", "git_commit_id": "cd9ff35", "version": "v1.8.0"}
+        ]
+    })";
+    const auto m = common::read_json_manifest(text);
+    ASSERT_TRUE(m.ok);
+    EXPECT_EQ(m.scalars.at("FPN"), "XXXX-00X000-XX");
+    EXPECT_EQ(m.scalars.at("schema_version"), "4") << "numbers come back as text";
+    EXPECT_EQ(m.scalars.at("engineering_use_only"), "NO");
+    // The array is counted, not read. 181 components of twelve fields is 2172
+    // facts, which is not a report.
+    ASSERT_EQ(m.arrays.count("component"), 1u);
+    EXPECT_EQ(m.arrays.at("component"), 2u);
+    // Nothing from inside the array leaks into the top level.
+    EXPECT_EQ(m.scalars.count("name"), 0u);
+    EXPECT_EQ(m.scalars.count("git_commit_id"), 0u);
+}
+
+TEST(JsonManifest, CountsArraysOfScalarsAndEmptyOnes) {
+    const auto m = common::read_json_manifest(
+        R"({"tags": ["a", "b", "c"], "none": [], "nested": [[1,2],[3]], "k": "v"})");
+    ASSERT_TRUE(m.ok);
+    EXPECT_EQ(m.arrays.at("tags"), 3u);
+    EXPECT_EQ(m.arrays.at("none"), 0u);
+    EXPECT_EQ(m.arrays.at("nested"), 2u) << "elements of the top-level array, not of its children";
+    EXPECT_EQ(m.scalars.at("k"), "v");
+}
+
+TEST(JsonManifest, NestedObjectsDoNotBecomeTopLevelFacts) {
+    const auto m = common::read_json_manifest(
+        R"({"top": "yes", "inner": {"top": "no", "deep": {"top": "also no"}}})");
+    ASSERT_TRUE(m.ok);
+    EXPECT_EQ(m.scalars.at("top"), "yes");
+    EXPECT_EQ(m.scalars.count("deep"), 0u);
+    EXPECT_EQ(m.scalars.count("inner"), 0u) << "an object member is not a scalar";
+}
+
+TEST(JsonManifest, DeeplyNestedInputIsRefusedRatherThanRecursedInto) {
+    // The reason this is SAX with a depth limit and not a document parse: a
+    // recursive-descent parser handed this overflows the stack, which is not a
+    // parse error an examiner can act on.
+    std::string deep;
+    for (int i = 0; i < 20000; ++i) deep += "{\"a\":";
+    deep += "1";
+    for (int i = 0; i < 20000; ++i) deep += "}";
+    const auto m = common::read_json_manifest(deep);
+    EXPECT_FALSE(m.ok);
+    EXPECT_TRUE(m.scalars.empty()) << "a refused document yields nothing, not a partial read";
+
+    // And the limit is where it says it is, not merely somewhere: nesting is
+    // accepted up to max_depth and refused past it. Without this the test
+    // above would pass even if the guard fired for an unrelated reason.
+    const auto nest = [](int levels) {
+        std::string t = "{\"k\":\"v\"";
+        for (int i = 1; i < levels; ++i) t = "{\"a\":" + t + "}";
+        return t + "}";
+    };
+    EXPECT_TRUE(common::read_json_manifest(nest(4), 4).ok);
+    EXPECT_FALSE(common::read_json_manifest(nest(6), 4).ok);
+    EXPECT_FALSE(common::read_json_manifest(nest(2), 0).ok) << "a zero limit accepts nothing";
+}
+
+TEST(JsonManifest, MalformedAndNonJsonInputYieldNothing) {
+    for (const char* bad :
+         {"", "not json at all", "{", "{\"a\": }", "[1,2,3]", "\x00\x01\x02 binary"}) {
+        const auto m = common::read_json_manifest(bad);
+        EXPECT_TRUE(m.scalars.empty()) << "input: " << bad;
+        EXPECT_TRUE(m.arrays.empty()) << "input: " << bad;
+    }
+    // A bare array is valid JSON but not a manifest: no top-level members.
+    const auto arr = common::read_json_manifest("[1,2,3]");
+    EXPECT_TRUE(arr.scalars.empty());
+}
+
+TEST(PlatformQnx, ReadsAJsonBuildManifestToo) {
+    // The automotive QNX unit in the QNX corpus carries artifact.json where the automotive Android unit
+    // unit carries Buildinfo.txt, and the root entry is a symlink to the
+    // absolute path /fs/os/artifact.json -- which Tree roots at the filesystem
+    // rather than the host.
+    const TempDir tmp;
+    Fs fs = qnx(tmp.path());
+    fs.dir("fs").dir("fs/os");
+    fs.file("fs/os/artifact.json",
+            R"({"FPN":"XXXX-00X000-XX","artifact_version":"23206_PRODUCT.959",
+                "groupid":"com.vendor.app.launch-APP-v1.8.7",
+                "jenkins_build":"Sync4-launch-signing-OS-Image-Build-959",
+                "engineering_use_only":"NO","file":"qnx-ifs-recovery",
+                "component":[{"name":"a"},{"name":"b"},{"name":"c"}]})");
+    fs.link("artifact.json", "/fs/os/artifact.json");
+
+    auto a = AnalyzerRegistry::instance().create(Platform::Qnx);
+    Report r;
+    a->describe(fs.tree(), r);
+    ASSERT_NE(fact(r, "build.part_number"), nullptr);
+    EXPECT_EQ(fact(r, "build.part_number")->value, "XXXX-00X000-XX");
+    EXPECT_EQ(fact(r, "build.part_number")->source, "artifact.json")
+        << "named as the examiner would open it, through the link";
+    ASSERT_NE(fact(r, "build.group"), nullptr);
+    EXPECT_EQ(fact(r, "build.group")->value, "com.vendor.app.launch-APP-v1.8.7");
+    ASSERT_NE(fact(r, "build.components"), nullptr);
+    EXPECT_EQ(fact(r, "build.components")->value, "3");
+    EXPECT_FALSE(has_code(r.diagnostics, "platform-engineering-build"));
+}
+
+TEST(PlatformQnx, AnEngineeringImageOnAUnitIsAFinding) {
+    const TempDir tmp;
+    Fs fs = qnx(tmp.path());
+    fs.file("artifact.json", R"({"FPN":"X","engineering_use_only":"YES"})");
+    auto a = AnalyzerRegistry::instance().create(Platform::Qnx);
+    Report r;
+    a->describe(fs.tree(), r);
+    EXPECT_TRUE(has_code(r.diagnostics, "platform-engineering-build"));
+}
+
+TEST(PlatformQnx, AManifestThatIsNotJsonSaysSoAndCarriesOn) {
+    const TempDir tmp;
+    Fs fs = qnx(tmp.path());
+    fs.file("artifact.json", "<?xml version=\"1.0\"?><artifact/>");
+    auto a = AnalyzerRegistry::instance().create(Platform::Qnx);
+    Report r;
+    a->describe(fs.tree(), r);
+    EXPECT_TRUE(has_code(r.diagnostics, "platform-manifest-unreadable"));
+    // The rest of the report is unaffected: one bad file is not a reason to
+    // abandon the others.
+    ASSERT_NE(fact(r, "users.count"), nullptr);
 }

@@ -877,6 +877,14 @@ platform-android-unverified-boot:
   meaning: ro.boot.verifiedbootstate is not `green`, so the boot chain was not fully verified
   action: `orange` means the bootloader is unlocked and the image may not be the vendor's; treat the whole system partition as untrusted
 
+platform-engineering-build:
+  meaning: a build manifest says the image is for engineering use only
+  action: a production unit should not be running one; check the build type and signing keys beside it
+
+platform-manifest-unreadable:
+  meaning: a build manifest file is present but could not be read as a flat JSON document
+  action: informational; the rest of the report is unaffected. Open the named file - it may be a format this build does not know, or deeper than the parser's limit
+
 platform-linux-no-release:
   meaning: no os-release, lsb-release or openwrt_release, so the system does not name its own distribution
   action: informational; the version has to come from a banner, a kernel string or a binary instead
