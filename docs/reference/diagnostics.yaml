@@ -865,6 +865,18 @@ platform-account-weak-hash:
   meaning: a password hash is md5 or descrypt (crackable), or sits in world-readable etc/passwd instead of etc/shadow
   action: the message says which; the hash itself is deliberately not reported, so read it from the named file if it is needed
 
+platform-android-debuggable:
+  meaning: ro.debuggable=1, so this is an engineering build - adb runs as root and any app can be debugged
+  action: a significant finding on a shipped device; check ro.build.type and ro.build.tags beside it
+
+platform-android-insecure:
+  meaning: ro.secure=0, so adbd does not drop privileges on this build
+  action: as above; together with ro.debuggable=1 it means unrestricted shell access over adb
+
+platform-android-unverified-boot:
+  meaning: ro.boot.verifiedbootstate is not `green`, so the boot chain was not fully verified
+  action: `orange` means the bootloader is unlocked and the image may not be the vendor's; treat the whole system partition as untrusted
+
 platform-linux-no-release:
   meaning: no os-release, lsb-release or openwrt_release, so the system does not name its own distribution
   action: informational; the version has to come from a banner, a kernel string or a binary instead

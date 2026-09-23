@@ -60,7 +60,7 @@ tree, and no amount of marker counting fixes that.
 |---|---|---|
 | Linux | 1 | implemented |
 | QNX | 2 | implemented |
-| Android | 2 | not yet |
+| Android | 2 | implemented — **never run against a real Android image** |
 | RTOS | 0 | not yet |
 
 QNX outranking Linux is not theoretical. A QNX root carries `etc/passwd`,
@@ -134,6 +134,39 @@ only at `etc/passwd` reported nothing at all about a 945-entry system.
 crypt-only reader calls that "unrecognised", which would report a *hashed*
 root account as having no usable password — the opposite of the truth. That is
 why `hash_kind` lives in `src/analyzers/Common.h` and not in either analyzer.
+
+## Android
+
+> **This model has never seen a real Android tree.** Every marker and fact key
+> comes from the documented AOSP layout, not from evidence: the only Android
+> image this project can reach is the automotive Android unit's `la_super`, whose drive was
+> disconnected before it was written, and no corpus image contains Android
+> (`ro.build.fingerprint`, `ro.build.version.release` and
+> `ro.product.manufacturer` score zero across all of them). The QNX model,
+> which *was* aimed at evidence, had six things corrected by the corpus that
+> its fixtures could not catch. Treat this as a first draft to be checked
+> against `la_super`, not as something shown to work.
+
+Strong markers are `build.prop` (at the tree root *or* under `system/`, since
+system-as-root moved it), `bin/app_process*`, `framework/framework.jar`,
+`etc/permissions/`, `priv-app/`, `apex/`, and `system/packages.xml`. At least
+one is required.
+
+**A device is several partitions, not one filesystem.** `system`, `vendor`,
+`product`, `system_ext`, `data` and the boot ramdisk arrive separately and say
+different things, so the model reports `android.partition` — user data is not
+firmware, and calling both "android" loses the distinction that matters most.
+
+| keys | from |
+|---|---|
+| `os.fingerprint`, `os.version`, `os.sdk`, `os.security_patch` | `build.prop` |
+| `device.model`, `device.manufacturer`, `device.brand`, `device.abi`, `device.soc` | `build.prop` |
+| `security.debuggable`, `security.secure`, `security.verified_boot` | `build.prop` |
+| `users.count`, `apps.packages_xml`, `apps.data_dirs` | a `data` partition |
+
+`os.security_patch` is reported and never judged: deciding whether a patch
+level is "old" needs a clock, and the library does not read one outside
+`core/Clock`.
 
 ## How accounts are reported
 

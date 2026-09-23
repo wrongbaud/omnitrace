@@ -10,10 +10,12 @@ namespace omnitrace::analyzers::detail {
 
 void omnitrace_analyzer_anchor_linux();
 void omnitrace_analyzer_anchor_qnx();
+void omnitrace_analyzer_anchor_android();
 
 void link_builtin_analyzers() {
     omnitrace_analyzer_anchor_linux();
     omnitrace_analyzer_anchor_qnx();
+    omnitrace_analyzer_anchor_android();
 }
 
 }  // namespace omnitrace::analyzers::detail

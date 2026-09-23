@@ -34,21 +34,30 @@ class LinuxAnalyzer final : public Analyzer {
     unsigned rank() const override { return 1; }
 
     unsigned detect(const Tree& t) const override {
-        unsigned score = 0;
-        // Each of these is something a Linux root has and a QNX IFS, a FAT
-        // data partition or a firmware blob does not.
-        for (const char* p : {"etc/passwd", "etc/inittab", "etc/fstab", "etc/group", "etc/hostname",
-                              "etc/resolv.conf", "etc/shadow"})
-            if (t.has_file(p)) ++score;
-        for (const char* p : {"bin/busybox", "sbin/init", "bin/sh", "usr/bin/env", "lib/ld.so.1"})
-            if (t.has_file(p)) ++score;
-        for (const char* p : {"etc/init.d", "etc/rc.d", "proc", "sys", "usr/lib", "var/log"})
-            if (t.has_dir(p)) ++score;
+        // At least one thing that is a Linux *system*, not merely a directory
+        // a Linux system also has. The QNX model needed this rule and so does
+        // this one: `proc/` and `usr/lib` alone describe half the partitions
+        // on a device, and claiming a tree on one of them buries the images
+        // that really are systems.
+        unsigned strong = 0;
+        for (const char* p : {"etc/passwd", "etc/inittab", "etc/fstab", "etc/shadow", "bin/busybox",
+                              "sbin/init", "bin/sh"})
+            if (t.has_file(p)) ++strong;
+        for (const char* p : {"etc/init.d", "etc/rc.d", "etc/systemd/system"})
+            if (t.has_dir(p)) ++strong;
         if (!t.first_of({"etc/os-release", "usr/lib/os-release", "etc/openwrt_release",
                          "etc/lsb-release"})
                  .empty())
-            score += 2;
-        return score;
+            strong += 2;
+        if (strong == 0) return 0;
+
+        unsigned support = 0;
+        for (const char* p : {"etc/group", "etc/hostname", "etc/resolv.conf", "usr/bin/env",
+                              "lib/ld.so.1", "etc/hosts"})
+            if (t.has_file(p)) ++support;
+        for (const char* p : {"proc", "sys", "usr/lib", "var/log", "etc/network", "usr/bin"})
+            if (t.has_dir(p)) ++support;
+        return strong * 2 + support;
     }
 
     void describe(const Tree& t, Report& r) const override {

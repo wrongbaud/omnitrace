@@ -171,6 +171,35 @@ Fs qnx(const stdfs::path& root) {
     return fs;
 }
 
+// An Android `system` partition of the documented shape. Marked here as it is
+// in the analyzer: this is built from AOSP documentation, not from a real
+// Android image, because none was reachable when it was written.
+Fs android_system(const stdfs::path& root) {
+    Fs fs(root);
+    fs.dir("bin").dir("etc").dir("etc/permissions").dir("framework").dir("app").dir("priv-app");
+    fs.dir("lib64").dir("etc/init").dir("etc/selinux").dir("apex");
+    fs.file(
+        "build.prop",
+        "ro.build.fingerprint=google/coral/coral:13/TQ3A.230805.001/10316531:user/release-keys\n"
+        "ro.build.version.release=13\n"
+        "ro.build.version.sdk=33\n"
+        "ro.build.version.security_patch=2023-08-05\n"
+        "ro.build.type=user\n"
+        "ro.build.tags=release-keys\n"
+        "ro.product.model=Pixel 4 XL\n"
+        "ro.product.manufacturer=Google\n"
+        "ro.product.brand=google\n"
+        "ro.product.cpu.abi=arm64-v8a\n"
+        "ro.debuggable=0\n"
+        "ro.secure=1\n");
+    fs.file("bin/app_process64").file("bin/toybox");
+    fs.file("framework/framework.jar");
+    fs.file("etc/selinux/plat_sepolicy.cil");
+    // Shared with Linux, which is the point: these make the Linux model match.
+    fs.file("bin/sh");
+    return fs;
+}
+
 }  // namespace
 
 // ------------------------------------------------------------------- Tree
@@ -509,4 +538,118 @@ TEST(PlatformQnx, ResourceManagersAloneIdentifyIt) {
     Fs lin;
     lin.dir("sbin").file("sbin/init").file("sbin/ifconfig").file("sbin/iptables");
     EXPECT_EQ(a->detect(lin.tree()), 0u);
+}
+
+// ----------------------------------------------------------------- Android
+//
+// Built against the documented Android layout, not against evidence: no
+// Android image was reachable when these were written. They pin the model's
+// own logic -- precedence, partition role, the security properties -- and not
+// that the markers match a real device. See the AndroidAnalyzer file comment.
+
+TEST(PlatformAndroid, OutranksLinuxBecauseAndroidIsLinux) {
+    const TempDir tmp;
+    const Fs fs = android_system(tmp.path());
+    auto lin = AnalyzerRegistry::instance().create(Platform::Linux);
+    auto droid = AnalyzerRegistry::instance().create(Platform::Android);
+    ASSERT_NE(droid, nullptr) << "the Android analyzer must be registered and linked in";
+    EXPECT_GT(droid->rank(), lin->rank());
+
+    const FilesystemEntries filesystems{{"n000001", fs.entries()}};
+    Survey s;
+    ASSERT_TRUE(survey(filesystems, s));
+    ASSERT_EQ(s.reports.size(), 1u);
+    EXPECT_EQ(s.reports[0].platform, Platform::Android);
+}
+
+TEST(PlatformAndroid, ReadsTheBuildProperties) {
+    const TempDir tmp;
+    const Fs fs = android_system(tmp.path());
+    auto a = AnalyzerRegistry::instance().create(Platform::Android);
+    Report r;
+    a->describe(fs.tree(), r);
+    ASSERT_NE(fact(r, "os.version"), nullptr);
+    EXPECT_EQ(fact(r, "os.version")->value, "13");
+    ASSERT_NE(fact(r, "os.sdk"), nullptr);
+    EXPECT_EQ(fact(r, "os.sdk")->value, "33");
+    // How far behind the device is on patches is a fact an examiner acts on;
+    // it is reported, never judged, because the library does not read a clock.
+    ASSERT_NE(fact(r, "os.security_patch"), nullptr);
+    EXPECT_EQ(fact(r, "os.security_patch")->value, "2023-08-05");
+    ASSERT_NE(fact(r, "device.model"), nullptr);
+    EXPECT_EQ(fact(r, "device.model")->value, "Pixel 4 XL");
+    ASSERT_NE(fact(r, "os.pretty_name"), nullptr);
+    EXPECT_EQ(fact(r, "os.pretty_name")->value, "google Pixel 4 XL (Android 13)");
+    ASSERT_NE(fact(r, "android.partition"), nullptr);
+    EXPECT_EQ(fact(r, "android.partition")->value, "system");
+}
+
+TEST(PlatformAndroid, ALockedReleaseBuildRaisesNothing) {
+    const TempDir tmp;
+    const Fs fs = android_system(tmp.path());
+    auto a = AnalyzerRegistry::instance().create(Platform::Android);
+    Report r;
+    a->describe(fs.tree(), r);
+    EXPECT_FALSE(has_code(r.diagnostics, "platform-android-debuggable"));
+    EXPECT_FALSE(has_code(r.diagnostics, "platform-android-insecure"));
+}
+
+TEST(PlatformAndroid, AnEngineeringBuildSaysSo) {
+    const TempDir tmp;
+    Fs fs = android_system(tmp.path());
+    fs.file("build.prop",
+            "ro.product.model=Test\nro.debuggable=1\nro.secure=0\n"
+            "ro.boot.verifiedbootstate=orange\n");
+    auto a = AnalyzerRegistry::instance().create(Platform::Android);
+    Report r;
+    a->describe(fs.tree(), r);
+    // These three decide whether an examiner can simply ask the device.
+    EXPECT_TRUE(has_code(r.diagnostics, "platform-android-debuggable"));
+    EXPECT_TRUE(has_code(r.diagnostics, "platform-android-insecure"));
+    EXPECT_TRUE(has_code(r.diagnostics, "platform-android-unverified-boot"));
+}
+
+TEST(PlatformAndroid, TellsOnePartitionFromAnother) {
+    // A device is several partitions and they are not interchangeable: user
+    // data is not firmware, and a report that called both "android" would lose
+    // the distinction an examiner cares about most.
+    auto a = AnalyzerRegistry::instance().create(Platform::Android);
+    const TempDir tmp;
+
+    Fs data(tmp.path() / "data");
+    data.dir("system").dir("data").dir("data/com.example").dir("misc/wifi");
+    data.file("system/packages.xml", "<packages/>").file("system/users/userlist.xml", "<users/>");
+    data.dir("system/users").dir("system/users/0").dir("system/users/10");
+    Report rd;
+    ASSERT_GT(a->detect(data.tree()), 0u);
+    a->describe(data.tree(), rd);
+    ASSERT_NE(fact(rd, "android.partition"), nullptr);
+    EXPECT_EQ(fact(rd, "android.partition")->value, "data");
+    ASSERT_NE(fact(rd, "users.count"), nullptr);
+    EXPECT_EQ(fact(rd, "users.count")->value, "2") << "two numbered profile directories";
+
+    Fs vendor(tmp.path() / "vendor");
+    vendor.dir("lib/hw").dir("firmware").dir("etc/permissions");
+    vendor.file("vendor/build.prop", "ro.product.model=V\n");
+    Report rv;
+    a->describe(vendor.tree(), rv);
+    ASSERT_NE(fact(rv, "android.partition"), nullptr);
+    EXPECT_EQ(fact(rv, "android.partition")->value, "vendor");
+}
+
+TEST(PlatformAndroid, ATreeWithOneWeakMarkerIsNotAndroid) {
+    // The rule the QNX model had to learn: `app/` and `etc/` are not Android.
+    Fs fs;
+    fs.dir("app").dir("etc").dir("framework").file("bin/sh");
+    auto a = AnalyzerRegistry::instance().create(Platform::Android);
+    EXPECT_EQ(a->detect(fs.tree()), 0u);
+}
+
+// The Linux model gained the same threshold. A tree that merely has the
+// directories a Linux system also has is not a Linux system.
+TEST(PlatformLinux, DirectoriesAloneAreNotASystem) {
+    Fs fs;
+    fs.dir("proc").dir("sys").dir("usr/lib").dir("var/log").file("etc/hosts");
+    auto a = AnalyzerRegistry::instance().create(Platform::Linux);
+    EXPECT_EQ(a->detect(fs.tree()), 0u);
 }
