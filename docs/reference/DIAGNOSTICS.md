@@ -17,7 +17,7 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 `INFO.yaml` uses). A code listed with two severities is emitted at both;
 `where` names every site, `message` is the literal with runtime parts as `...`.
 
-368 diagnostic codes, 73 status codes.
+374 diagnostic codes, 73 status codes.
 
 ## Diagnostics
 
@@ -37,6 +37,12 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 | `android-boot-empty` | warning | `src/discovery/validators/android_boot.cpp:203` | kernel_size and ramdisk_size are both zero | kernel_size and ramdisk_size are both zero | the header carries no payload; look for the real boot image elsewhere |
 | `android-boot-truncated` | warning | `src/discovery/validators/android_boot.cpp:97`, `src/discovery/validators/android_boot.cpp:211` | declared sections (... bytes) extend past the available data | the page-aligned sections extend past the available data; size clamped | the dump or partition is short; expect a partial kernel or ramdisk |
 | `android-boot-truncated-header` | warning | `src/discovery/validators/android_boot.cpp:65`, `src/discovery/validators/android_boot.cpp:117`, `src/discovery/validators/android_boot.cpp:135` (+1 more) | fewer than 2112 bytes available for the vendor boot header | fewer bytes than the header needs after the magic | magic-tier hit at the end of the data; usually noise |
+| `artifact-certificate-expired` | warning | `src/artifacts/certificates/CertificateExtractor.cpp:164` | '...': ...subject... is not valid after ...not_after... | a certificate's notAfter is before its notBefore, so it was never valid at any time | judged from the certificate's own dates only - the library does not read a clock, so "expired now" is the examiner's call against the record's not_after |
+| `artifact-certificate-unparsable` | info | `src/artifacts/certificates/CertificateExtractor.cpp:198` | '...' looks like PEM but holds no certificate, key or parameters this build can read | a file looks like PEM but holds no certificate, key or parameters this build can read | informational; open the named file. DER, PKCS#12 and JKS are not read yet |
+| `artifact-file-unreadable` | warning | `src/artifacts/Collect.cpp:91` | '...' was extracted but could not be read back for artifact extraction | an extracted file could not be read back for artifact extraction | it was extracted but is not parsed; check whether a limit truncated the run |
+| `artifact-limit-reached` | warning | `src/artifacts/Collect.cpp:115` | the extractors reached max_artifacts (...) and stopped | the extractors hit max_artifacts and stopped | raise the limit, or narrow what is extracted |
+| `artifact-private-key-present` | warning | `src/artifacts/certificates/CertificateExtractor.cpp:279` | '...' holds an unencrypted ... private key; whatever it authenticates can be impersonated | a file holds an unencrypted private key | whatever it authenticates can be impersonated. The key itself is deliberately not recorded - read the named file if it is needed |
+| `artifact-weak-key` | info | `src/artifacts/certificates/CertificateExtractor.cpp:283` | '...': the ... key is ... bits | an RSA, DSA or DH key is shorter than 2048 bits | informational; noted beside the key's own record |
 | `bzip2-truncated-header` | warning | `src/discovery/validators/bzip2.cpp:37` | fewer than 4 bytes available for the header | fewer than 4 bytes were available for the bzip2 header | magic-tier hit at the end of the data; nothing was lost |
 | `carve-dir-failed` | error | `src/discovery/Recurse.cpp:1356` | ... | partitions/ could not be created; nothing was carved | fix the host path or permissions and re-run |
 | `carve-limit-bytes` | warning | `src/discovery/Recurse.cpp:1403` | ... | the node is larger than --max-carve-bytes and was not written | re-run with a larger --max-carve-bytes or carve the range with dd from location.offset |

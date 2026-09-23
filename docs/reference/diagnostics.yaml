@@ -81,6 +81,30 @@ carve-dir-failed:
   meaning: partitions/ could not be created; nothing was carved
   action: fix the host path or permissions and re-run
 
+artifact-certificate-expired:
+  meaning: a certificate's notAfter is before its notBefore, so it was never valid at any time
+  action: judged from the certificate's own dates only - the library does not read a clock, so "expired now" is the examiner's call against the record's not_after
+
+artifact-certificate-unparsable:
+  meaning: a file looks like PEM but holds no certificate, key or parameters this build can read
+  action: informational; open the named file. DER, PKCS#12 and JKS are not read yet
+
+artifact-file-unreadable:
+  meaning: an extracted file could not be read back for artifact extraction
+  action: it was extracted but is not parsed; check whether a limit truncated the run
+
+artifact-limit-reached:
+  meaning: the extractors hit max_artifacts and stopped
+  action: raise the limit, or narrow what is extracted
+
+artifact-private-key-present:
+  meaning: a file holds an unencrypted private key
+  action: whatever it authenticates can be impersonated. The key itself is deliberately not recorded - read the named file if it is needed
+
+artifact-weak-key:
+  meaning: an RSA, DSA or DH key is shorter than 2048 bits
+  action: informational; noted beside the key's own record
+
 carve-limit-disk:
   meaning: the node was not carved because the output filesystem does not have room for it
   action: free space or carve the range with dd from location.offset; carving has no run-wide byte budget, so the disk is what bounds it

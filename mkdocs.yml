@@ -98,6 +98,7 @@ nav:
           - Word-swapped images: formats/word-swap.md
           - Entropy: formats/entropy.md
       - Platform analyzers: ANALYZERS.md
+      - Artifact extractors: ARTIFACTS.md
       - Search rules: RULES.md
   - Background:
       - Competitive landscape: COMPETITIVE_LANDSCAPE.md

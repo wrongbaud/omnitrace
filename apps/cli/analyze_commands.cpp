@@ -24,6 +24,8 @@
 #include <nlohmann/json.hpp>
 
 #include "commands.h"
+#include "omnitrace/analyzers/Platform.h"
+#include "omnitrace/artifacts/Artifact.h"
 #include "omnitrace/containers/Container.h"
 #include "omnitrace/core/Clock.h"
 #include "omnitrace/core/Hash.h"
@@ -36,7 +38,6 @@
 #include "omnitrace/filesystems/Filesystem.h"
 #include "omnitrace/output/Markdown.h"
 #include "omnitrace/output/Yaml.h"
-#include "omnitrace/analyzers/Platform.h"
 #include "omnitrace/rules/Sweep.h"
 
 #ifndef OMNITRACE_VERSION
@@ -466,6 +467,16 @@ void cmd_analyze(const AnalyzeArgs& a) {
         write_text(out / "platform.md", analyzers::platform_to_markdown(survey));
         spdlog::info("platforms: {} of {} filesystem(s) recognised", survey.reports.size(),
                      survey.trees_examined);
+
+        // Files a parser recognises, turned into named records. After the
+        // platform report and before the search packs: what a file *is*
+        // frames the hits found inside it.
+        artifacts::Collection extracted;
+        if (const Status st = artifacts::collect(listings, {}, extracted); !st) fail(st.error);
+        write_text(out / "certificates.yaml", artifacts::to_yaml(extracted));
+        write_text(out / "certificates.md", artifacts::to_markdown(extracted));
+        spdlog::info("artifacts: {} record(s) from {} parsed file(s)", extracted.artifacts.size(),
+                     extracted.files_examined);
 
         if (!a.no_rules) run_rules(a, m, listings, file, out);
     } else {
