@@ -102,14 +102,14 @@ with a meaning and an action. `analyze` will not fill the disk it writes to.
 | 3 — Hardening and release | not started |
 | 4 — Web UI | not started, and deliberately after a release (`core-before-ui`) |
 
-**Phase 1's parity criterion has now been measured** over 33 images (20
-fixtures, 13 corpus, including a 3.8 GB and a 7.8 GB eMMC), counting distinct
-regular-file contents by sha256:
+**Phase 1's parity criterion is measured and met**, over all 35 images — 20
+fixtures and the whole 15-image corpus, up to a 15.7 GB eMMC — counting
+distinct regular-file contents by sha256:
 
 | baseline | pooled | verdict |
 |---|---:|---|
-| moria 0.2.1 | **99.9 %** | met — every one of the 30 images is at or above 95 % |
-| unblob 26.6.4 | **99.6 %** | met — 65.7 % when first measured, see below |
+| moria 0.2.1 | **99.9 %** | met — 31 of 32 images at or above 95 % |
+| unblob 26.6.4 | **99.5 %** | met — 65.7 % when first measured, see below |
 | ground truth (`expected.yaml`) | **100.0 %** | every file of every fixture, 179 of 179 |
 
 It did exactly what it was supposed to do: it found real gaps nobody had
@@ -136,18 +136,22 @@ no digests at all, so they could not be matched against a known-file set; they
 are now carved. That image went from 16.8 % to 91.6 % of unblob.
 `docs/PARITY.md` has the method, the numbers and the evidence.
 
-Two of the four multi-gigabyte corpus images are in that number — the 7.8 GB
-Auto-emmc eMMC is 99.7 % of unblob and 100.0 % of moria, the 3.8 GB auto-ivi is
-93.4 % and 100.0 % — and `qnx` (15.7 GB) and `audio` (7.8 GB) are outstanding.
+Every corpus image is in that number. The 7.8 GB auto-emmc eMMC is 99.7 % of
+unblob and 100.0 % of moria, the 7.8 GB audio 98.4 % and 100.0 %, the 3.8 GB
+Auto-ivi 99.8 % and 100.0 %. The 15.7 GB QNX unit scores 50 % of unblob, which
+is the one figure not to read as a score: neither baseline reads QNX6 or
+QNX-IFS, so OmniTrace recovers **23,833** contents there against unblob's 8
+and moria's 11, and "50 %" is four of eight (`docs/PARITY.md` §7).
 
 ## Next, in order
 
-1. **Finish the parity measurement** on the two corpus images still outside
-   it, `qnx` (15.7 GB) and `audio` (7.8 GB). Everything else is measured:
-   ground truth is exact, every named format gap is closed, and the carving
-   decision is made, so what is left of the unblob difference is 141 contents
-   out of 31,951 — four of the five images below 95 % are the history
-   fixtures, which are 100 % of ground truth.
+1. **Decompress the streams inside a QNX filesystem that the baselines do.**
+   The only piece of named work the finished measurement leaves: three gzip
+   payloads and one LZMA payload that unblob and moria decompress out of the
+   middle of the QNX unit's filesystems, which OmniTrace extracts the files of
+   but does not decompress (`docs/PARITY.md` §7). Everything else in the
+   difference is a recorded policy choice or a history fixture that is already
+   100 % of ground truth.
 
 2. **Finish the parity measurement** on the two remaining multi-gigabyte
    corpus images, `qnx` (15.7 GB) and `audio` (7.8 GB). Four tools over that

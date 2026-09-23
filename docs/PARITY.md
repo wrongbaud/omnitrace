@@ -4,15 +4,15 @@ Phase 1's exit criterion is "parity ≥ 95 % files recovered vs unblob and
 moria on fixtures and corpus". It had never been run. This page is the
 measurement, how to reproduce it, and what it found.
 
-**Result, over 33 images** (20 fixtures, 13 corpus, including a 3.8 GB and a
-7.8 GB eMMC), counting distinct regular-file contents by sha256:
+**Result, over all 35 images** — 20 fixtures and the whole 15-image corpus,
+up to a 15.7 GB eMMC — counting distinct regular-file contents by sha256:
 
 | baseline | pooled | per-image mean | images ≥ 95 % | verdict |
 |---|---:|---:|---:|---|
-| **moria** 0.2.1 | **99.9 %** | 99.9 % | 30 / 30 | **criterion met** |
+| **moria** 0.2.1 | **99.9 %** | 98.7 % | 31 / 32 | **criterion met** |
 | **ground truth** (`expected.yaml`) | **100.0 %** | 100.0 % | 19 / 19 | every file of every fixture |
-| **unblob** 26.6.4 | **99.6 %** | 97.8 % | 25 / 30 | **criterion met** |
-| binwalk 3.1.0 | 14.9 % | 64.4 % | 8 / 15 | not a like-for-like baseline (§6) |
+| **unblob** 26.6.4 | **99.5 %** | 96.4 % | 26 / 32 | **criterion met** |
+| binwalk 3.1.0 | 16.0 % | 66.8 % | 9 / 17 | not a like-for-like baseline (§6) |
 
 The unblob figure was **65.7 %** when this was first measured, and ground
 truth **94.4 %**. Closing §2 (SquashFS v1–v3) took one image from 0.1 % to
@@ -21,11 +21,11 @@ truth **94.4 %**. Closing §2 (SquashFS v1–v3) took one image from 0.1 % to
 structure inside a payload) took the dongle dongle from 16.8 % to 91.6 %.
 Pooled against unblob: 65.7 % → 99.6 %.
 
-The two largest images are the best evidence that this scales: the 7.8 GB
-Auto-emmc eMMC is **99.7 % of unblob and 100.0 % of moria**, and the 3.8 GB
-Auto-ivi eMMC is **93.4 % of unblob and 100.0 % of moria** — 17,352 of 17,352
-contents, exactly. Only two of moria's 30 images fall below 95 %, and both are
-the FAT fixtures.
+The large images are the evidence that this scales: the 7.8 GB auto-emmc eMMC is
+**99.7 % of unblob and 100.0 % of moria**, the 7.8 GB audio **98.4 % and
+100.0 %**, and the 3.8 GB auto-ivi **99.8 % and 100.0 %**. The one image below
+95 % of moria is the 15.7 GB QNX unit, and it is the case where the ratio
+stops meaning anything — §7.
 
 Three images (`auto-ivi MX25L165D.bin`, camera v4 and v5) yield **no
 files from any of the four tools** — the two camera images are vendor-signed by
@@ -225,21 +225,56 @@ Its 14.9 % is a statement about this host's binwalk installation, not about
 either tool. It is kept in the table because binwalk's *identification* is
 still a useful cross-check.
 
+### 7. A ratio needs a denominator: the QNX unit
+
+The 15.7 GB QNX infotainment image is the worst score in the set — **50.0 % of
+unblob, 63.6 % of moria** — and it is the one number here that should not be
+read as a score at all.
+
+| tool | distinct regular-file contents |
+|---|---:|
+| **OmniTrace** | **23,833** |
+| moria 0.2.1 | 11 |
+| unblob 26.6.4 | 8 |
+
+Neither baseline reads QNX6 or QNX-IFS, so neither gets into the filesystems
+that hold the unit's 31,454 files; what they recover is a handful of
+compressed streams they found by scanning raw bytes. "50 % of unblob" means
+four of unblob's eight, and it is arithmetic on a denominator of eight.
+
+The four are real, though, and worth naming: three gzip payloads and one LZMA
+payload that unblob and moria decompress out of the middle of the QNX
+filesystems (unblob finds them at raw offsets around 6 GB). OmniTrace reads
+those filesystems properly and extracts the files, but does not appear to
+decompress these particular streams. That is a small, specific gap in the
+nested pass rather than a missing reader, and it is the one thing this image
+says to look at.
+
+The same shape, less extremely, is why the per-image **mean** is reported
+beside the pooled figure. Pooling weights an image by how much is in it, which
+is right for "how much of the data did we recover"; the mean weights every
+image alike, which is what catches an image going wrong.
+
 ## Standing
 
 | criterion | state |
 |---|---|
-| ≥ 95 % vs moria | **met** — 99.9 % pooled, and every one of the 30 images is at or above 95 % |
-| ≥ 95 % vs unblob | **met** — 99.6 % pooled, up from 65.7 % as first measured |
+| ≥ 95 % vs moria | **met** — 99.9 % pooled; 31 of 32 images at or above 95 %, the exception being the QNX unit of §7 |
+| ≥ 95 % vs unblob | **met** — 99.5 % pooled, up from 65.7 % as first measured |
 | fixtures vs ground truth | **100 %** — 179 of 179 contents, every file of every fixture |
-| large corpus images | 2 of 4 run (3.8 GB auto-ivi, 7.8 GB auto-emmc); `qnx` (15.7 GB) and `audio` (7.8 GB) outstanding |
+| corpus coverage | **complete** — all 15 corpus images and all 20 fixtures |
 
 **Phase 1's exit criterion is met against both baselines, the fixtures are
-exact, every named format gap is closed, and the one open decision is made.**
+exact, every named format gap is closed, the one open decision is made, and
+every image in the corpus has been measured.** The criterion is closed.
 
-What is left is 141 contents out of 31,951, and it is not a gap to close: four
-of the five images below 95 % of unblob are the history fixtures of §5, where
-unblob's jefferson resurrects deleted nodes into the live tree and OmniTrace
-records them as deleted — all of them are **100 % of ground truth**. The
-fifth is the dongle dongle at 91.6 %, the remainder of §3's carving
-difference.
+What is left is 153 contents out of 32,467. Of the six images below 95 % of
+unblob, three are the history fixtures of §5, where unblob's jefferson
+resurrects deleted nodes into the live tree and OmniTrace records them as
+deleted — all **100 % of ground truth**; one is `ubi.img` for the same
+reason; one is the dongle dongle at 91.6 %, the remainder of §3's carving
+difference; and one is the QNX unit of §7, where the denominator is eight.
+
+The only thing in that list that names work to do is §7's four compressed
+streams: three gzip and one LZMA payload that both baselines decompress out of
+the middle of the QNX filesystems and OmniTrace does not.
