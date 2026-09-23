@@ -7,6 +7,35 @@ across every extracted file and every region no signature claimed.
 The set is deliberately the examiner's to extend. A pack is a YAML file, the
 built-in ones are compiled into the binary, and `--rules <file>` adds more.
 
+## The rtos pack: why this is a pack and not an analyzer
+
+The platform analyzers take a `Tree` — a path namespace. An RTOS or bare-metal
+image has no filesystem, so there is nothing for an analyzer to look at, and
+`rules::sweep` already searches every region no signature claimed. That is
+exactly where this firmware lives, so the RTOS work is a search pack.
+
+**Every rule is anchored on a version or a copyright, never on the bare product
+name.** The corpus contains the trap that makes this necessary: a U-Boot
+image-type table listing `FreeRTOS`, `VxWorks`, `RTEMS` and every other OS it
+can boot. That table is not evidence that any of them is present, and a pack
+matching bare names would report an RTOS on an ordinary Linux camera.
+
+Two things the corpus corrected in the first draft:
+
+* **`bad magic` had to go.** It is an ordinary error string in busybox,
+  openssl and libcrypto, and fired nine times on a router with no bootloader
+  in it at all.
+* **`\W` as a word separator matches NUL**, so `image\x00\x00\x00invalid`
+  matched across two unrelated entries of a string table. The separator is
+  printable punctuation and space only — boot code writes `[CRC Check Fail]`,
+  not `CRC\0Check\0Fail`.
+
+`gcc-banner` and `arm-eabi-toolchain` are `scope: [regions]`. Every ELF in a
+filesystem carries the GCC banner in `.comment`, so in a walked tree they fire
+once per binary — 307 times on one corpus image — and say nothing the file
+itself does not. In an unidentified blob the banner is often the only thing
+that says anything at all.
+
 ## A pack
 
 ```yaml

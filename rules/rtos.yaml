@@ -1,0 +1,209 @@
+pack: rtos
+version: 1
+description: >
+  Version banners and toolchain strings that identify a real-time or
+  bare-metal system. These belong in a search pack rather than a platform
+  analyzer because the thing they run on is a blob: an RTOS image has no
+  filesystem, so there is no path namespace for an analyzer to look at, and
+  `rules::sweep` already searches every region no signature claimed. That is
+  exactly where this firmware lives.
+
+  Every rule here is anchored on a version or a copyright, never on the bare
+  product name. "mbed", "CMSIS" and "Nucleus" are ordinary English or common
+  substrings, and a pack that matched them would fire on any binary that
+  happened to contain them -- the corpus has one such trap already, a U-Boot
+  image-type table listing FreeRTOS, VxWorks and every other OS it can boot,
+  which is not evidence that any of them is present.
+
+  Severity is low throughout: knowing what a firmware image is orients an
+  examination, it does not incriminate anything.
+
+rules:
+  - id: freertos-version
+    category: platform
+    kind: regex
+    # "FreeRTOS V10.4.3" is what the kernel's version string looks like;
+    # tasks.c embeds it as tskKERNEL_VERSION_NUMBER.
+    pattern: 'FreeRTOS[ -]?V?(\d+\.\d+\.\d+)'
+    severity: low
+    description: FreeRTOS kernel version banner
+
+  - id: freertos-copyright
+    category: platform
+    kind: regex
+    pattern: '(?i)copyright[^\n\r]{0,40}(?:Amazon\.com|Real Time Engineers)[^\n\r]{0,40}FreeRTOS'
+    severity: low
+    description: FreeRTOS copyright string, which a stripped build often keeps when the version is gone
+
+  - id: zephyr-version
+    category: platform
+    kind: regex
+    # "Zephyr OS build v3.2.0-rc1" / "Zephyr version 2.7.0"
+    pattern: 'Zephyr (?:OS build|version|kernel)[ v]{0,2}(\d+\.\d+\.\d+)'
+    severity: low
+    description: Zephyr RTOS version banner
+
+  - id: threadx-version
+    category: platform
+    kind: regex
+    # Azure RTOS ThreadX: "ThreadX ARM Cortex-M4/GNU Version 6.1.9"
+    pattern: 'ThreadX[^\n\r]{0,48}?Version (\d+\.\d+(?:\.\d+)?)'
+    severity: low
+    description: ThreadX (Azure RTOS) version banner
+
+  - id: threadx-vendor
+    category: platform
+    kind: regex
+    pattern: '(?i)copyright[^\n\r]{0,40}(?:Express Logic|Microsoft Corporation)[^\n\r]{0,30}(?:ThreadX|Azure RTOS)'
+    severity: low
+    description: ThreadX copyright string
+
+  - id: vxworks-version
+    category: platform
+    kind: regex
+    # The boot banner is "VxWorks 6.9" / "VxWorks (for ...) version 5.5.1".
+    # A bare "VxWorks" is not enough: U-Boot's image-type table lists it.
+    pattern: 'VxWorks[^\n\r]{0,40}?(?:version )?(\d+\.\d+(?:\.\d+)?)'
+    severity: low
+    description: VxWorks version banner; the bare product name is not matched because bootloader tables list it
+
+  - id: nucleus-plus
+    category: platform
+    kind: regex
+    pattern: 'Nucleus (?:PLUS|RTOS|SE)[^\n\r]{0,30}?(\d+\.\d+)?'
+    severity: low
+    description: Mentor/Siemens Nucleus RTOS
+
+  - id: rt-thread-version
+    category: platform
+    kind: regex
+    pattern: 'RT-Thread(?: (?:version|v))? ?(\d+\.\d+\.\d+)'
+    severity: low
+    description: RT-Thread version banner
+
+  - id: micrium-ucos
+    category: platform
+    kind: regex
+    pattern: '(?:uC/OS-I{1,3}|Micrium)[^\n\r]{0,40}?(\d+\.\d+)'
+    severity: low
+    description: Micrium uC/OS-II or uC/OS-III
+
+  - id: mbed-os-version
+    category: platform
+    kind: regex
+    # Anchored on the release form: a bare "mbed" is a word.
+    pattern: 'mbed[- ]?OS[ v]{0,2}(\d+\.\d+\.\d+)'
+    severity: low
+    description: Arm Mbed OS version
+
+  - id: embos-version
+    category: platform
+    kind: regex
+    pattern: 'embOS[^\n\r]{0,24}?V(\d+\.\d+)'
+    severity: low
+    description: SEGGER embOS version
+
+  - id: contiki-version
+    category: platform
+    kind: regex
+    pattern: 'Contiki(?:-NG)?[ -](\d+\.\d+)'
+    severity: low
+    description: Contiki / Contiki-NG
+
+  # ---------------------------------------------------------------- SDKs
+  # A vendor SDK identifies the silicon and the build far more precisely than
+  # the kernel does, and bare-metal firmware that has no RTOS at all still has
+  # one of these.
+
+  - id: esp-idf-version
+    category: platform
+    kind: regex
+    pattern: '(?:ESP-IDF|esp-idf)[ -]v?(\d+\.\d+(?:\.\d+)?)'
+    severity: low
+    description: Espressif IoT Development Framework version (ESP32 / ESP8266)
+
+  - id: nordic-sdk
+    category: platform
+    kind: regex
+    pattern: 'nRF5?[ _]SDK[ v]{0,2}(\d+\.\d+)'
+    severity: low
+    description: Nordic Semiconductor nRF SDK version
+
+  - id: stm32-cube
+    category: platform
+    kind: regex
+    pattern: 'STM32Cube[A-Z0-9]{0,4}[ _]?[Vv]?(\d+\.\d+\.\d+)'
+    severity: low
+    description: STMicroelectronics STM32Cube firmware package
+
+  - id: cmsis-version
+    category: platform
+    kind: regex
+    # "CMSIS" alone is a common substring; require the RTOS/DSP qualifier.
+    pattern: 'CMSIS[- ](?:RTOS|DSP|NN)[ v]{0,2}(\d+\.\d+)'
+    severity: low
+    description: Arm CMSIS component version
+
+  # ------------------------------------------------------------ toolchain
+  # On a stripped bare-metal image the compiler banner is often the only thing
+  # that says anything about how it was built.
+
+  - id: gcc-banner
+    category: platform
+    kind: regex
+    pattern: 'GCC: \([^)\n\r]{1,60}\) (\d+\.\d+\.\d+)'
+    severity: low
+    # Regions only. Every ELF in a filesystem carries this in .comment, so in
+    # a walked tree it fires once per binary -- 307 times on the ipcam
+    # image -- and says nothing that the file itself does not. In an
+    # unidentified blob it is often the only thing that says anything at all.
+    scope: [regions]
+    description: GCC version banner left in .comment, which names the toolchain and often the vendor SDK
+
+  - id: arm-eabi-toolchain
+    category: platform
+    kind: regex
+    pattern: '(arm-(?:none|kernel)-eabi|riscv\d*-unknown-elf|xtensa-[a-z0-9]+-elf)'
+    severity: low
+    scope: [regions]  # as above: per-binary noise inside a walked tree
+    description: Cross-toolchain triple, which names the target architecture of a headerless image
+
+  # ----------------------------------------------------------- bootloaders
+  # Not an RTOS, but the same problem: a blob with no filesystem whose only
+  # identity is a banner.
+
+  - id: uboot-version
+    category: platform
+    kind: regex
+    pattern: 'U-Boot(?: SPL)? (\d{4}\.\d{2}(?:[-.][\w.-]{1,32})?)'
+    severity: low
+    description: Das U-Boot version banner, including the SPL
+
+  - id: barebox-version
+    category: platform
+    kind: regex
+    pattern: 'barebox-(\d{4}\.\d{2}\.\d+)'
+    severity: low
+    description: barebox bootloader version
+
+  - id: bootloader-failure-string
+    category: platform
+    kind: regex
+    # Bare-metal boot code says almost nothing about itself except what it
+    # prints when something goes wrong. The audio SPI dump in the corpus is
+    # exactly this: "Preload1 Image", "[CRC] Check Fail", "[VENDOR] Boot fail".
+    # Punctuation between the words, because that is how boot code writes
+    # them: the audio dump has "[CRC Check Fail]" and "[SNOR Boot fail!!!]",
+    # not the contiguous phrases a first draft of this pattern assumed.
+    #
+    # The separator is printable punctuation and space only. `\W` also matches
+    # NUL, which bridged two unrelated entries of a string table on the router
+    # image and produced "image\x00\x00\x00invalid" -- a match spanning
+    # strings that have nothing to do with each other.
+    #
+    # "bad magic" was here and is gone: it is an ordinary error string in
+    # busybox, openssl and libcrypto, and matched nine times on a router that
+    # has no bootloader in it at all.
+    pattern: '(?i)\b(?:boot[ \]\[:._!-]{0,3}fail|crc[ \]\[:._!-]{0,3}check[ \]\[:._!-]{0,3}fail|preload\d?[ \]\[:._!-]{0,3}image)\b'
+    severity: low
+    description: Bare-metal boot-code diagnostic strings, often the only identity a bootloader blob has
