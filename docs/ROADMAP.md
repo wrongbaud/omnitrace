@@ -80,6 +80,12 @@ concatenated. Before rendering, every piece of evidence is **re-hashed** and
 the result stated in the first section. A mismatch is reported, not
 suppressed: every offset in a report refers to the bytes the case recorded.
 
+`omnitrace report <case>` re-examines a finished case rather than re-rendering
+the manifest: it reads every `listing.yaml` back and runs the analyzers and
+the extractors again over the recovered entries. That is the decoupling in §5
+and §7 being spent — those layers take entries and nothing about how the
+extraction happened, so a case directory alone is enough.
+
 ### Throughout
 
 Coverage rows state what was *not* done. 450 diagnostic codes, each catalogued
@@ -106,36 +112,26 @@ the only external check on whether the readers miss things nobody noticed.
 
 ## Next, in order
 
-1. **A `listing.yaml` reader.** The highest-value single piece. `analyzers`,
-   `artifacts` and `report` were all built to take what the extraction
-   produced and nothing about how — they depend on `core` and `output` only,
-   so a finished case can in principle be re-examined without re-extracting
-   it. Nothing exercises that, because turning a case directory back into
-   entries needs this reader. It would take `omnitrace report <case>` from
-   four sections to seven, give the analyzers and extractors a standalone
-   entry point, and make the decoupling load-bearing rather than latent.
-   One job, three payoffs.
-
-2. **Measure parity.** Close Phase 1's open criterion with a real number
+1. **Measure parity.** Close Phase 1's open criterion with a real number
    against unblob, binwalk and moria on the fixtures and the corpus.
 
-3. **Validate the Android analyzer against a real Android tree.** Its markers
+2. **Validate the Android analyzer against a real Android tree.** Its markers
    come from documented AOSP layout, not evidence; the automotive Android unit's `la_super`
    is the image to check them against. The QNX model *was* aimed at evidence
    and the corpus still corrected six things its fixtures could not, including
    a `Tree` bug that silently disabled its strongest marker.
    `docs/ANALYZERS.md` says which parts are guesses.
 
-4. **More artifact extractors** (§5.5): SQLite with freelist recovery, logs
+3. **More artifact extractors** (§5.5): SQLite with freelist recovery, logs
    with a normalised timeline, ELF metadata. Certificates came first because
    the corpus had 131 of them and most of the rest of §5.5 overlaps what the
    packs and analyzers already do — an extractor earns its place by *parsing*
    something, not by matching it.
 
-5. **Phase 3**: fuzzing per reader under ASan/UBSan, a performance pass on
+4. **Phase 3**: fuzzing per reader under ASan/UBSan, a performance pass on
    large images, signed release artifacts for all three platforms.
 
-6. **Phase 4**: web UI, only after the CLI and library are released.
+5. **Phase 4**: web UI, only after the CLI and library are released.
 
 ## Good first improvements
 

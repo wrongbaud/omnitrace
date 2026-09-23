@@ -17,7 +17,9 @@ key sitting in the same file**.
 Like the analyzers, this layer takes what the extraction produced and nothing
 about how it was produced — a list of `(node id, entries)` pairs, no Span, no
 Manifest, no `discovery::` type — so a finished case can be re-examined
-without re-extracting it.
+without re-extracting it. `omnitrace report <case>` does exactly that: it
+reads the listings back and runs the extractors again over the recovered
+entries (`docs/CASE_LAYOUT.md`, "Reading a case back").
 
 ## Two rules the output follows
 

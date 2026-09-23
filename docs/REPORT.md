@@ -66,15 +66,36 @@ found.
 
 ## `omnitrace report <case>`
 
-Reads `INFO.yaml` back and rebuilds the sections the manifest holds —
-Evidence, Structure, Coverage, Diagnostics — and runs the integrity check.
+Reads `INFO.yaml` and every `filesystems/<node>/listing.yaml` back, then
+**re-runs the analyzers and the extractors over the recovered entries** before
+rendering. A case directory is enough to re-examine; the evidence itself is
+read only to verify it.
 
-**The platform, artifact and search sections are not among them.** Recovering
-those needs readers for `platform.yaml`, `certificates.yaml` and
-`artifacts.yaml`, which do not exist yet; `analyze` writes the full report
-because it has all four results in hand. The subcommand earns its place on the
-integrity check alone: re-hashing evidence months later, against a case made
-then, is exactly the question to answer before relying on anything in it.
+That works because the post-analysis layers take a list of `(node id,
+entries)` pairs and nothing about how the extraction happened — the
+decoupling that `docs/ANALYZERS.md` argues for is what this subcommand spends.
+A case made on another machine, by an older build, or from evidence that is no
+longer attached still produces platforms and artifacts.
+
+**The search section is the one that is not rebuilt.** A sweep wants the image
+rather than the case, and re-reading a 16 GiB dump to re-find hits already
+written to `artifacts.yaml` is work for no gain.
+
+What a moved or gutted case does:
+
+| the case | what the report says |
+|---|---|
+| in place | everything, as `analyze` wrote it |
+| copied or moved | everything; the files beside each listing are read, and `case-relocated` says the recorded paths no longer match |
+| `files/` deleted | metadata-only facts (paths, counts, names); anything needing file contents is simply absent, never guessed |
+
+A recorded `host_path` outside the case directory is **never** followed. It
+belongs to another machine or another case, and following it produced a report
+about somebody else's bytes — which is the bug that rule exists to prevent.
+
+The integrity check runs either way, and is reason enough on its own:
+re-hashing evidence months later, against a case made then, is exactly the
+question to answer before relying on anything in it.
 
 ## Known gaps
 
@@ -82,9 +103,8 @@ then, is exactly the question to answer before relying on anything in it.
   stylesheet inverts the palette for paper.
 * **No figures.** §7's `Figure(base64)` block is not modelled; nothing in a
   firmware report needs one yet.
-* **The standalone path is partial**, as above. A `listing.yaml` reader would
-  close it and would also give the analyzers and extractors the standalone
-  path they were designed for.
+* **Search hits are not recovered.** `report` rebuilds six sections of seven;
+  the seventh needs an `artifacts.yaml` reader or a re-sweep of the image.
 * **No C ABI or pybind11 module.** §7 wants both so OmniSonde can adopt this;
   the layer is shaped for it (core-only, no exceptions across the boundary)
   but neither is written.

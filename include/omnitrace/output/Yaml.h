@@ -35,6 +35,32 @@ Status manifest_from_yaml(const std::string& text, Manifest& out);
 /// diagnostics; absent when empty or false).
 std::string listing_to_yaml(const std::string& fs_node_id, const std::vector<EntryResult>& entries);
 
+/// Read a listing.yaml back. Fails on a malformed document or a bad field;
+/// `node_id` and `entries` are untouched on failure.
+///
+/// The inverse of `listing_to_yaml`, and the piece that lets a finished case
+/// be re-examined without re-extracting it. The post-analysis layers
+/// (`analyzers`, `artifacts`, `report`) all take entries and nothing about how
+/// extraction happened, which is only useful if entries can be recovered from
+/// a case directory.
+Status listing_from_yaml(const std::string& text, std::string& node_id,
+                         std::vector<EntryResult>& entries);
+
+/// Every listing in a case directory, in a stable order: `filesystems/<id>/`
+/// first, then `containers/<id>/`, each sorted by node id.
+///
+/// `host_path` is rewritten to the file beside the listing whenever that file
+/// exists, *even if* the recorded path also exists: a case is routinely copied
+/// rather than moved, and believing the recorded path first reads the
+/// original's files while reporting on the copy. A recorded path outside
+/// `case_dir` is never followed -- it belongs to another case or another
+/// machine. An entry whose bytes are nowhere in this case comes back with
+/// `written = false` and an empty `host_path`, so a caller keeps the metadata
+/// and skips the content rather than reading somebody else's.
+Status load_case_listings(const std::string& case_dir,
+                          std::vector<std::pair<std::string, std::vector<EntryResult>>>& out,
+                          std::vector<Diagnostic>& diagnostics);
+
 // JSON Schema (draft 2020-12) for manifest.yaml, also written to docs/schema/manifest.schema.json.
 /// JSON Schema (draft 2020-12) for manifest.yaml. The checked-in copy is
 /// docs/schema/manifest.schema.json; a unit test keeps the two identical.

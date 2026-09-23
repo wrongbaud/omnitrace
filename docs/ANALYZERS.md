@@ -21,6 +21,26 @@ filesystem that nothing recognises is counted and reported
 (`platform-unrecognised`) rather than passed over — a data partition has no
 platform, and a system this build does not model is worth knowing about.
 
+## An analyzer never sees the extraction
+
+`survey()` takes a list of `(node id, entries)` pairs — `EntryResult` values
+and nothing else. No `Span`, no `Source`, no `Manifest`, no `discovery::`
+type; `src/analyzers/` depends on `core` and `output` and does not link
+against `discovery` at all.
+
+That is a deliberate constraint rather than an accident of ordering. An
+analyzer that reached back into the scan would answer questions about *how the
+bytes were found* when it is supposed to answer questions about *what the
+system is*, and the two drift apart the moment a filesystem arrives some other
+way — nested three levels down, carved by hand, or read back from a case made
+last year.
+
+`omnitrace report <case>` is what spends it. It reconstructs the entries from
+`filesystems/<node>/listing.yaml` and runs the same `survey()` over them, so a
+case directory alone is enough to re-derive every platform report without
+re-extracting anything (`docs/CASE_LAYOUT.md`, "Reading a case back"). The
+extractors in `src/artifacts/` take the same shape for the same reason.
+
 ## Every fact names its source
 
 A report is a set of `(key, value, source)` triples where `source` is the entry

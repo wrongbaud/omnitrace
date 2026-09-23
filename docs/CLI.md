@@ -20,6 +20,7 @@ omnitrace [-v] <command> [options]
   hash     <file>                      MD5 / SHA-1 / SHA-256 of an evidence file
   scan     <image> [--json]            format signatures found in the image
   analyze  <image> --out DIR [...]     the case directory (docs/CASE_LAYOUT.md)
+  report   <case>                      re-examine a finished case and re-render its report
   --version                            print the version
   -v, --verbose                        debug logging (goes to stderr)
 ```
@@ -267,3 +268,39 @@ carves `p1-dtb.bin` ... `p16-kpanic.bin` from the GPT labels, skips
 `p6-system.bin` (1.3 GiB) and the other entries above 64 MiB with a
 `carve / partial` coverage row, and lists `p7-home.bin` / `p11-appdata_ext.bin`
 as `ext4` in `mount.sh`.
+
+## `report <case>`
+
+Re-examines a finished case directory and rewrites `report.html` and
+`report.md` in it. The image is not re-scanned; `INFO.yaml` and every
+`filesystems/<node>/listing.yaml` are read back, and the analyzers and the
+artifact extractors are run again over the recovered entries.
+
+```sh
+omnitrace report case-router
+```
+
+```
+[info] re-examined 5 filesystem(s): 1 platform(s), 3 artifact record(s)
+[info] report: 6 section(s) written to case-router/report.html and report.md
+```
+
+Three things are worth knowing before relying on it:
+
+* **The evidence is re-hashed.** Every file `INFO.yaml` names is hashed again
+  and compared with what the case recorded, and the answer is the report's
+  first section. This is the reason the command exists independently of
+  `analyze`: it answers "is this case still about the bytes it says it is?"
+  months later. A mismatch does not suppress the report — it is stated in it.
+* **A moved case still works.** The files beside each listing are what get
+  read, so a case that has been copied, archived or restored elsewhere
+  re-examines correctly; `case-relocated` notes that the recorded paths no
+  longer match. A recorded path *outside* the case directory is never
+  followed.
+* **A case extracted with `--no-extract`, or one whose `files/` have been
+  deleted, still produces what the metadata supports** — paths, counts, names
+  — and simply omits anything that needs file contents.
+
+The search-hit section is the one thing not rebuilt: a sweep wants the image
+rather than the case, and the hits are already in `artifacts.yaml`.
+`docs/REPORT.md` covers the document model and the integrity gate.

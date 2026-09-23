@@ -16,9 +16,13 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <system_error>
@@ -1004,6 +1008,172 @@ std::string manifest_to_yaml(const Manifest& m) {
     emit_diagnostics(e, m.diagnostics);
     e << YAML::EndMap;
     return finish(e);
+}
+
+namespace {
+
+constexpr const char* kCodeListingUnreadable = "case-listing-unreadable";
+constexpr const char* kCodeRelocated = "case-relocated";
+
+std::string read_whole(const std::filesystem::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    if (!f) return {};
+    return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+
+// Is `p` inside `root`? A string prefix is not enough: `/cases/router2` is
+// not inside `/cases/router`, and the whole point of the test is that another
+// case's files are not this case's.
+bool under(const std::filesystem::path& p, const std::filesystem::path& root) {
+    const std::filesystem::path rel =
+        p.lexically_normal().lexically_relative(root.lexically_normal());
+    return !rel.empty() && *rel.begin() != "..";
+}
+
+// Where this entry's bytes actually are, if they are in this case at all.
+//
+// Two rules, and both were learned by watching the wrong thing happen.
+//
+// **The file beside the listing wins over the recorded host_path.** A case is
+// routinely *copied* rather than moved, and the copy's listings still name the
+// original's paths, which exist. Trusting host_path first reads the original
+// case's files while reporting on the copy -- silently, and the two can
+// differ, which is exactly the situation when an examiner compares a working
+// copy against an archived one.
+//
+// **A path outside the case directory is never this case's bytes.** A case is
+// self-contained (docs/CASE_LAYOUT.md). A host_path pointing elsewhere came
+// from another machine or another case, and following it produced records
+// from somebody else's files for a case whose own tree had been deleted.
+void rebase(EntryResult& r, const std::filesystem::path& files_dir,
+            const std::filesystem::path& case_root, bool& relocated) {
+    std::error_code ec;
+    if (!r.meta.path.empty()) {
+        const std::filesystem::path here = files_dir / r.meta.path;
+        if (std::filesystem::exists(here, ec)) {
+            if (!r.host_path.empty() && r.host_path != here.string()) relocated = true;
+            r.host_path = here.string();
+            return;
+        }
+    }
+    // Only a recorded path that is inside this case may be believed.
+    const std::filesystem::path recorded =
+        r.host_path.empty() ? std::filesystem::path{} : std::filesystem::path(r.host_path);
+    if (!recorded.empty() && under(recorded, case_root) && std::filesystem::exists(recorded, ec))
+        return;
+
+    r.host_path.clear();
+    r.written = false;
+}
+
+// filesystems/ before containers/, each sorted by node id, so two runs over
+// the same case produce the same order.
+void collect_dirs(const std::filesystem::path& base, std::vector<std::filesystem::path>& out) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(base, ec)) return;
+    std::vector<std::filesystem::path> found;
+    for (const auto& e : std::filesystem::directory_iterator(base, ec)) {
+        if (!e.is_directory()) continue;
+        if (std::filesystem::exists(e.path() / "listing.yaml", ec)) found.push_back(e.path());
+    }
+    std::sort(found.begin(), found.end());
+    out.insert(out.end(), found.begin(), found.end());
+}
+
+}  // namespace
+
+Status load_case_listings(const std::string& case_dir,
+                          std::vector<std::pair<std::string, std::vector<EntryResult>>>& out,
+                          std::vector<Diagnostic>& diagnostics) {
+    out.clear();
+    const std::filesystem::path dir(case_dir);
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec))
+        return Status::fail("case-not-a-directory: '" + case_dir + "'");
+
+    std::vector<std::filesystem::path> dirs;
+    collect_dirs(dir / "filesystems", dirs);
+    collect_dirs(dir / "containers", dirs);
+
+    std::uint64_t relocated_listings = 0;
+    for (const std::filesystem::path& d : dirs) {
+        const std::string text = read_whole(d / "listing.yaml");
+        if (text.empty()) {
+            diagnostics.push_back({Severity::Warning, kCodeListingUnreadable,
+                                   "'" + (d / "listing.yaml").string() +
+                                       "' is empty or could not be read; the entries it "
+                                       "describes are not part of this examination"});
+            continue;
+        }
+        std::string node_id;
+        std::vector<EntryResult> entries;
+        if (const Status st = listing_from_yaml(text, node_id, entries); !st) {
+            diagnostics.push_back({Severity::Warning, kCodeListingUnreadable,
+                                   "'" + (d / "listing.yaml").string() + "': " + st.error});
+            continue;
+        }
+        bool relocated = false;
+        for (EntryResult& r : entries) rebase(r, d / "files", dir, relocated);
+        if (relocated) ++relocated_listings;
+        out.emplace_back(node_id.empty() ? d.filename().string() : node_id, std::move(entries));
+    }
+
+    if (relocated_listings != 0)
+        diagnostics.push_back(
+            {Severity::Info, kCodeRelocated,
+             "the case has moved since it was written: " + dec(relocated_listings) +
+                 " listing(s) recorded host paths that are not where their files are now; the "
+                 "files beside each listing were read instead"});
+    return Status::success();
+}
+
+Status listing_from_yaml(const std::string& text, std::string& node_id,
+                         std::vector<EntryResult>& entries) {
+    YAML::Node root;
+    try {
+        root = YAML::Load(text);
+    } catch (const YAML::Exception& ex) {
+        return Status::fail(std::string("listing: yaml parse error: ") + ex.what());
+    } catch (const std::exception& ex) {
+        return Status::fail(std::string("listing: yaml parse error: ") + ex.what());
+    }
+    if (!root.IsMap()) return Status::fail("listing: document must be a map");
+
+    Ctx c{"listing", {}};
+    std::string id;
+    std::vector<EntryResult> read;
+    try {
+        if (!get_str(root, "filesystem", id, c, true)) return Status::fail(c.error);
+        YAML::Node items;
+        if (!get_seq(root, "entries", items, c)) return Status::fail(c.error);
+        if (items.IsDefined()) {
+            std::size_t i = 0;
+            for (const YAML::Node& item : items) {
+                if (!item.IsMap())
+                    return Status::fail("listing: entries item " + dec(i) + " must be a map");
+                Ctx sub{"listing entry " + dec(i), {}};
+                YAML::Node fm;
+                if (!get_map(item, "file", fm, sub)) return Status::fail(sub.error);
+                if (!fm.IsDefined())
+                    return Status::fail("listing: entries item " + dec(i) + " has no 'file'");
+                EntryResult r;
+                if (!read_file_meta(fm, r.meta, sub)) return Status::fail(sub.error);
+                if (!read_digests(item, r.digests, sub) ||
+                    !get_str(item, "host_path", r.host_path, sub) ||
+                    !get_bool(item, "written", r.written, sub) ||
+                    !get_bool(item, "truncated", r.truncated, sub) ||
+                    !read_diagnostics(item, r.diagnostics, sub))
+                    return Status::fail(sub.error);
+                read.push_back(std::move(r));
+                ++i;
+            }
+        }
+    } catch (const YAML::Exception& ex) {
+        return Status::fail(std::string("listing: yaml error: ") + ex.what());
+    }
+    node_id = std::move(id);
+    entries = std::move(read);
+    return Status::success();
 }
 
 Status manifest_from_yaml(const std::string& text, Manifest& out) {

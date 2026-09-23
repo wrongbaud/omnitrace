@@ -5,6 +5,11 @@
 #include <gtest/gtest.h>
 #include <yaml-cpp/yaml.h>
 
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <random>
 #include <string>
 
 #include "fixture.h"
@@ -420,6 +425,247 @@ TEST(Yaml, ListingEmpty) {
     EXPECT_EQ(root["filesystem"].Scalar(), "n000001");
     EXPECT_TRUE(root["entries"].IsSequence());
     EXPECT_EQ(root["entries"].size(), 0u);
+}
+
+// --------------------------------------------------- listing_from_yaml
+
+// The inverse has to be exact, because every post-analysis layer takes
+// entries and nothing else: what a round trip loses, a re-examination of a
+// case can never recover.
+TEST(Yaml, ListingRoundTripsEveryField) {
+    const std::vector<EntryResult> in = sample_entries();
+    std::string node_id;
+    std::vector<EntryResult> back;
+    ASSERT_TRUE(listing_from_yaml(listing_to_yaml("n000003", in), node_id, back));
+    EXPECT_EQ(node_id, "n000003");
+    ASSERT_EQ(back.size(), in.size());
+
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        const FileMeta& a = in[i].meta;
+        const FileMeta& b = back[i].meta;
+        EXPECT_EQ(a.path, b.path) << "entry " << i;
+        EXPECT_EQ(a.kind, b.kind) << "entry " << i;
+        EXPECT_EQ(a.mode, b.mode);
+        EXPECT_EQ(a.uid, b.uid);
+        EXPECT_EQ(a.gid, b.gid);
+        EXPECT_EQ(a.size, b.size);
+        EXPECT_EQ(a.mtime, b.mtime);
+        EXPECT_EQ(a.inode, b.inode);
+        EXPECT_EQ(a.nlink, b.nlink);
+        EXPECT_EQ(a.link_target, b.link_target);
+        // The flags the analyzers key on: a deleted or superseded entry is
+        // history, and a layer that could not tell would describe a machine
+        // that no longer existed.
+        EXPECT_EQ(a.deleted, b.deleted) << "entry " << i;
+        EXPECT_EQ(a.superseded, b.superseded) << "entry " << i;
+        EXPECT_EQ(a.version, b.version);
+        EXPECT_EQ(a.extra, b.extra);
+        EXPECT_EQ(in[i].host_path, back[i].host_path);
+        EXPECT_EQ(in[i].written, back[i].written);
+        EXPECT_EQ(in[i].truncated, back[i].truncated);
+        EXPECT_EQ(in[i].digests.sha256, back[i].digests.sha256);
+        EXPECT_EQ(in[i].diagnostics.size(), back[i].diagnostics.size());
+    }
+}
+
+TEST(Yaml, ListingRoundTripSurvivesHostileNames) {
+    // A path with a newline and a pipe in it round-trips: the writer quotes it
+    // and the reader gets the bytes back, not an approximation.
+    std::vector<EntryResult> in(1);
+    in[0].meta.path = "weird|name\nwith newline\ttab";
+    in[0].meta.kind = EntryKind::Regular;
+    in[0].meta.link_target = "../../etc/passwd";
+    in[0].meta.extra["note"] = "a: b\nc";
+    std::string id;
+    std::vector<EntryResult> back;
+    ASSERT_TRUE(listing_from_yaml(listing_to_yaml("n1", in), id, back));
+    ASSERT_EQ(back.size(), 1u);
+    EXPECT_EQ(back[0].meta.path, in[0].meta.path);
+    EXPECT_EQ(back[0].meta.link_target, in[0].meta.link_target);
+    EXPECT_EQ(back[0].meta.extra, in[0].meta.extra);
+}
+
+TEST(Yaml, ListingFromYamlRefusesRubbish) {
+    std::string id;
+    std::vector<EntryResult> e;
+    EXPECT_FALSE(listing_from_yaml("", id, e));
+    EXPECT_FALSE(listing_from_yaml("not a map", id, e));
+    EXPECT_FALSE(listing_from_yaml("entries: []", id, e)) << "no 'filesystem' key";
+    EXPECT_FALSE(listing_from_yaml("filesystem: n1\nentries: [1,2]", id, e))
+        << "an entry must be a map";
+    EXPECT_FALSE(listing_from_yaml("filesystem: n1\nentries:\n  - written: true", id, e))
+        << "an entry must have a 'file'";
+    EXPECT_FALSE(listing_from_yaml("filesystem: n1\nentries:\n  - file:\n      kind: wat", id, e))
+        << "an unknown kind is refused, not guessed";
+    // A refused document leaves the outputs untouched.
+    EXPECT_TRUE(id.empty());
+    EXPECT_TRUE(e.empty());
+}
+
+TEST(Yaml, ListingEmptyRoundTrips) {
+    std::string id;
+    std::vector<EntryResult> e;
+    ASSERT_TRUE(listing_from_yaml(listing_to_yaml("n000001", {}), id, e));
+    EXPECT_EQ(id, "n000001");
+    EXPECT_TRUE(e.empty());
+}
+
+// ------------------------------------------------- load_case_listings
+
+namespace {
+
+class CaseDir {
+   public:
+    CaseDir() {
+        std::error_code ec;
+        std::random_device rd;
+        static int n = 0;
+        std::filesystem::path base;
+        if (const char* env = std::getenv("OMNITRACE_TEST_TMPDIR"))
+            base = env;
+        else
+            base = std::filesystem::temp_directory_path();
+        path_ = base / ("omnitrace-case-" + std::to_string(rd()) + "-" + std::to_string(n++));
+        std::filesystem::remove_all(path_, ec);
+        std::filesystem::create_directories(path_, ec);
+    }
+    ~CaseDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path_, ec);
+    }
+    CaseDir(const CaseDir&) = delete;
+    CaseDir& operator=(const CaseDir&) = delete;
+    const std::filesystem::path& path() const { return path_; }
+
+    // One filesystem listing plus the file it describes.
+    void add(const std::string& node, const std::string& entry_path, const std::string& content,
+             const std::string& recorded_host_path) {
+        const std::filesystem::path d = path_ / "filesystems" / node;
+        std::filesystem::create_directories(d / "files", ec_);
+        std::ofstream(d / "files" / entry_path, std::ios::binary) << content;
+        std::vector<EntryResult> e(1);
+        e[0].meta.path = entry_path;
+        e[0].meta.kind = EntryKind::Regular;
+        e[0].meta.size = content.size();
+        e[0].host_path = recorded_host_path;
+        e[0].written = true;
+        std::ofstream(d / "listing.yaml", std::ios::binary) << listing_to_yaml(node, e);
+    }
+    void drop_files(const std::string& node) {
+        std::filesystem::remove_all(path_ / "filesystems" / node / "files", ec_);
+    }
+
+   private:
+    std::filesystem::path path_;
+    std::error_code ec_;
+};
+
+std::string slurp(const std::string& p) {
+    std::ifstream f(p, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+
+}  // namespace
+
+TEST(Yaml, LoadCaseListingsPrefersTheFileBesideTheListing) {
+    // A case is routinely *copied* rather than moved, and the copy's listings
+    // still name the original's paths -- which exist. Trusting the recorded
+    // host_path first reads the original's files while reporting on the copy,
+    // silently, and the two can differ.
+    CaseDir original;
+    original.add("n1", "marker.txt", "ORIGINAL", "");
+    CaseDir copy;
+    copy.add("n1", "marker.txt", "COPY",
+             (original.path() / "filesystems" / "n1" / "files" / "marker.txt").string());
+
+    std::vector<std::pair<std::string, std::vector<EntryResult>>> out;
+    std::vector<Diagnostic> diags;
+    ASSERT_TRUE(load_case_listings(copy.path().string(), out, diags));
+    ASSERT_EQ(out.size(), 1u);
+    ASSERT_EQ(out[0].second.size(), 1u);
+    EXPECT_EQ(slurp(out[0].second[0].host_path), "COPY")
+        << "the listing lives beside the files it describes";
+    bool said = false;
+    for (const Diagnostic& d : diags) said = said || d.code == "case-relocated";
+    EXPECT_TRUE(said) << "a moved case says so rather than looking identical to one that has not";
+}
+
+TEST(Yaml, LoadCaseListingsNeverLeavesTheCaseDirectory) {
+    // A case is self-contained. A host_path pointing outside it came from
+    // another machine or another case, and following it produced records from
+    // somebody else's files for a case whose own tree had been deleted.
+    CaseDir elsewhere;
+    elsewhere.add("n1", "marker.txt", "SOMEONE ELSE", "");
+    CaseDir gutted;
+    gutted.add("n1", "marker.txt", "MINE",
+               (elsewhere.path() / "filesystems" / "n1" / "files" / "marker.txt").string());
+    gutted.drop_files("n1");
+
+    std::vector<std::pair<std::string, std::vector<EntryResult>>> out;
+    std::vector<Diagnostic> diags;
+    ASSERT_TRUE(load_case_listings(gutted.path().string(), out, diags));
+    ASSERT_EQ(out.size(), 1u);
+    ASSERT_EQ(out[0].second.size(), 1u);
+    // The metadata survives; the bytes are declared absent rather than
+    // fetched from a path that is not this case.
+    EXPECT_EQ(out[0].second[0].meta.path, "marker.txt");
+    EXPECT_FALSE(out[0].second[0].written);
+    EXPECT_TRUE(out[0].second[0].host_path.empty());
+}
+
+TEST(Yaml, LoadCaseListingsDoesNotMistakeASiblingForThisCase) {
+    // The containment test is a path test, not a string test: a case directory
+    // named `<case>-copy` sits next to `<case>` and has it as a prefix, and
+    // reading the copy's files while reporting on the original is the same bug
+    // by another route.
+    CaseDir base;
+    const std::filesystem::path sibling = base.path().string() + "-copy";
+    std::error_code ec;
+    std::filesystem::create_directories(sibling / "filesystems" / "n1" / "files", ec);
+    std::ofstream(sibling / "filesystems" / "n1" / "files" / "marker.txt", std::ios::binary)
+        << "SIBLING";
+    base.add("n1", "marker.txt", "MINE",
+             (sibling / "filesystems" / "n1" / "files" / "marker.txt").string());
+    base.drop_files("n1");
+
+    std::vector<std::pair<std::string, std::vector<EntryResult>>> out;
+    std::vector<Diagnostic> diags;
+    ASSERT_TRUE(load_case_listings(base.path().string(), out, diags));
+    ASSERT_EQ(out.size(), 1u);
+    ASSERT_EQ(out[0].second.size(), 1u);
+    EXPECT_TRUE(out[0].second[0].host_path.empty()) << "the sibling is a different case";
+    std::filesystem::remove_all(sibling, ec);
+}
+
+TEST(Yaml, LoadCaseListingsIsOrderedAndSurvivesABadListing) {
+    CaseDir c;
+    c.add("n002", "b.txt", "b", "");
+    c.add("n001", "a.txt", "a", "");
+    // A listing that is not readable must not take the rest of the case down.
+    const std::filesystem::path bad = c.path() / "filesystems" / "n003";
+    std::error_code ec;
+    std::filesystem::create_directories(bad, ec);
+    std::ofstream(bad / "listing.yaml", std::ios::binary) << "entries: [oops";
+
+    std::vector<std::pair<std::string, std::vector<EntryResult>>> out;
+    std::vector<Diagnostic> diags;
+    ASSERT_TRUE(load_case_listings(c.path().string(), out, diags));
+    ASSERT_EQ(out.size(), 2u) << "the two good listings, the bad one skipped";
+    EXPECT_EQ(out[0].first, "n001") << "sorted, so two runs over a case agree";
+    EXPECT_EQ(out[1].first, "n002");
+    bool said = false;
+    for (const Diagnostic& d : diags) said = said || d.code == "case-listing-unreadable";
+    EXPECT_TRUE(said) << "and it says which one it could not read";
+}
+
+TEST(Yaml, LoadCaseListingsRefusesSomethingThatIsNotACase) {
+    std::vector<std::pair<std::string, std::vector<EntryResult>>> out;
+    std::vector<Diagnostic> diags;
+    EXPECT_FALSE(load_case_listings("/nonexistent/not/a/case", out, diags));
+    // A directory with no listings at all is empty, not an error.
+    const CaseDir empty;
+    EXPECT_TRUE(load_case_listings(empty.path().string(), out, diags));
+    EXPECT_TRUE(out.empty());
 }
 
 }  // namespace

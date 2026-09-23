@@ -588,15 +588,18 @@ namespace {
 
 // `omnitrace report <case>` — re-render a finished case.
 //
-// Reads INFO.yaml back and rebuilds the sections the manifest holds. The
-// platform, artifact and search sections are not among them: recovering those
-// needs readers for platform.yaml, certificates.yaml and artifacts.yaml, which
-// do not exist yet, so they are left out rather than emitted empty. `analyze`
-// writes the full report because it has all four results in hand.
+// Reads INFO.yaml and every listing.yaml back, then re-runs the analyzers and
+// the extractors over the recovered entries. That is the whole point of those
+// layers taking entries and nothing about how extraction happened: a case
+// directory is enough to re-examine, and none of the evidence is read again
+// except to verify it.
 //
-// It exists anyway because the integrity check is the point: re-hashing the
-// evidence months later, against a case made then, is exactly the question an
-// examiner needs answered before relying on anything in it.
+// The search packs are the one thing not re-run -- a sweep wants the image
+// rather than the case, and the hits are already in artifacts.yaml.
+//
+// The integrity check is why this is worth having even when nothing has
+// changed: re-hashing evidence months later, against a case made then, is the
+// question to answer before relying on anything in it.
 void run_report(const std::string& case_dir) {
     const std::filesystem::path dir(case_dir);
     const std::filesystem::path info = dir / "INFO.yaml";
@@ -611,13 +614,37 @@ void run_report(const std::string& case_dir) {
     Manifest m;
     if (const Status st = output::manifest_from_yaml(text, m); !st) fail(st.error);
 
+    // The listings are what make this more than a re-render of the manifest.
+    // The post-analysis layers take entries and nothing about how extraction
+    // happened, so recovering entries from the case recovers all of them.
+    std::vector<std::pair<std::string, std::vector<EntryResult>>> listings;
+    std::vector<Diagnostic> load_diags;
+    if (const Status st = output::load_case_listings(case_dir, listings, load_diags); !st)
+        fail(st.error);
+    for (const Diagnostic& d : load_diags) {
+        if (d.severity == Severity::Warning)
+            spdlog::warn("{}: {}", d.code, d.message);
+        else
+            spdlog::info("{}: {}", d.code, d.message);
+    }
+
+    analyzers::Survey survey;
+    if (const Status st = analyzers::survey(listings, survey); !st) fail(st.error);
+    artifacts::Collection extracted;
+    if (const Status st = artifacts::collect(listings, {}, extracted); !st) fail(st.error);
+    spdlog::info("re-examined {} filesystem(s): {} platform(s), {} artifact record(s)",
+                 listings.size(), survey.reports.size(), extracted.artifacts.size());
+
     std::vector<report::EvidenceRef> refs;
     for (const Evidence& ev : m.evidence)
         refs.push_back({ev.id, ev.path, ev.digests.sha256, ev.size});
     const report::IntegrityResult integrity = report::verify_evidence(refs);
 
+    // The search packs are not re-run: a sweep needs the image, not the case,
+    // and re-reading a 16 GiB dump to re-find hits already written to
+    // artifacts.yaml is work for no gain. Everything else is rebuilt.
     const report::Document doc =
-        cli::build_report(m, &integrity, nullptr, nullptr, nullptr, dir.filename().string());
+        cli::build_report(m, &integrity, &survey, &extracted, nullptr, dir.filename().string());
     write_text(dir / "report.html", report::to_html(doc));
     write_text(dir / "report.md", report::to_markdown(doc));
     if (!integrity.verified)

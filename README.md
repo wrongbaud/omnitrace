@@ -67,6 +67,11 @@ The coverage table is the honest part: a format the scanner recognises but canno
 - `partitions/<name>.bin`: one file per partition entry or nested find, hashed as it is written; `p6-system.bin` from a GPT label, `0x001c9245-squashfs.bin` for a find without a table entry.
 - `partitions/mount.sh`: a loop-mount script with `PARTITION_NAMES` and `PARTITION_TYPES` filled in.
 - `filesystems/<node-id>/listing.yaml`, `listing.md` and `files/`: the inventory (mode, uid/gid, timestamps, inode, digests) and the extracted tree of every filesystem with a reader.
+- `platform.yaml` / `.md`: what each filesystem says about itself — OpenWrt 18.06.1, ramips/mt76x8, seven accounts, root with an empty password ([docs/ANALYZERS.md](docs/ANALYZERS.md)).
+- `artifacts.yaml` / `.md`: search-pack hits, and `certificates.yaml` / `.md`: files a parser recognised, with what they are for and when they expire ([docs/RULES.md](docs/RULES.md), [docs/ARTIFACTS.md](docs/ARTIFACTS.md)).
+- `report.html` / `report.md`: the case as a report — evidence and its integrity, structure, platforms, artifacts, hits, coverage, diagnostics ([docs/REPORT.md](docs/REPORT.md)).
+
+`omnitrace report <case>` re-examines a finished case later: it reads the listings back, re-hashes the evidence against what the case recorded, and runs the analyzers and extractors again without re-scanning the image. A case that has been copied to another machine still works.
 
 The full contract is [docs/CASE_LAYOUT.md](docs/CASE_LAYOUT.md); the commands and flags are in [docs/CLI.md](docs/CLI.md).
 
