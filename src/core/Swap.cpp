@@ -122,6 +122,14 @@ const std::vector<BytePattern>& byte_patterns() {
         {"cramfs-le", {0x45, 0x3d, 0xcd, 0x28}, true, false},
         {"cramfs-be", {0x28, 0xcd, 0x3d, 0x45}, true, false},
         {"romfs", {'-', 'r', 'o', 'm', '1', 'f', 's', '-'}, true, true},
+        // FAT's type strings are eight bytes and sit at 54 or 82, well inside
+        // the first window. They are not at offset 0 and the format has no
+        // magic that is, so this is the only thing a FAT boot sector offers a
+        // scorer -- and it offers it in whichever view is the right one, since
+        // a word swap turns "FAT32   " into "T3FA  2 ".
+        {"fat32", {'F', 'A', 'T', '3', '2', ' ', ' ', ' '}, true, true},
+        {"fat16", {'F', 'A', 'T', '1', '6', ' ', ' ', ' '}, true, true},
+        {"fat12", {'F', 'A', 'T', '1', '2', ' ', ' ', ' '}, true, true},
         {"android-boot", {'A', 'N', 'D', 'R', 'O', 'I', 'D', '!'}, true, true},
         {"android-vendor-boot", {'V', 'N', 'D', 'R', 'B', 'O', 'O', 'T'}, true, true},
         {"android-sparse", {0x3a, 0xff, 0x26, 0xed}, true, true},

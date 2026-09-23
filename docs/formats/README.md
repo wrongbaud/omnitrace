@@ -30,6 +30,7 @@ encryption.
 | [ubifs.md](ubifs.md) | `ubifs` | `ubifs` (verified) | none | no; `mount.sh` nandsim comment |
 | [ubi.md](ubi.md) | `ubi` | `ubi` (verified) | none | no; volumes not rebuilt |
 | [ext.md](ext.md) | `ext`, reported as `ext2` / `ext3` / `ext4` | `ext` (verified) | none | no; `mount.sh` type `ext4` |
+| [fat.md](fat.md) | `fat`, reported as `fat12` / `fat16` / `fat32` | `fat` (consistent) | `FatReader` | yes: files, long names, deleted entries with `--history` |
 | [cramfs.md](cramfs.md) | `cramfs` | `cramfs` (verified) | none | no; `mount.sh` type `cramfs` |
 | [romfs.md](romfs.md) | `romfs` | `romfs` (verified) | none | no; `mount.sh` type `romfs` |
 | [partition-tables.md](partition-tables.md) | `mbr`, `gpt` | `mbr` (consistent), `gpt` (verified) | n.a. | entries carved to `partitions/` |

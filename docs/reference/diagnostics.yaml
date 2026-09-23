@@ -413,6 +413,86 @@ ext-xattr-corrupt:
   meaning: an extended-attribute block or in-inode xattr area has a bad magic, an entry running past its end, or a value outside the area; extra.xattrs holds what was parsed before it
   action: the attributes are damaged; compare with debugfs "ea_list <inode>"
 
+fat-bad-chain:
+  meaning: a cluster chain runs outside the data area, loops, or hits the bad-cluster mark
+  action: the file or directory is not readable past that point; the volume is damaged or the BPB geometry is wrong
+
+fat-bad-cluster-size:
+  meaning: sectors per cluster is not a power of two in [1, 128]
+  action: treat the match as a false positive; the type string landed on bytes that are not a BPB
+
+fat-bad-entry:
+  meaning: a directory entry names a cluster outside the data area, or its name holds a path separator
+  action: the entry is skipped; the rest of the directory is still read
+
+fat-bad-geometry:
+  meaning: the BPB's sector, FAT and root-directory counts cannot describe a volume
+  action: treat the match as a false positive, or check whether the boot sector was overwritten
+
+fat-bad-jump:
+  meaning: the volume does not begin with the jump instruction every FAT boot sector starts with
+  action: treat the match as a false positive: a type string inside a binary looks exactly like this
+
+fat-bad-media:
+  meaning: the media descriptor is not 0xF0 or 0xF8..0xFF
+  action: treat the match as a false positive; no formatter writes another value
+
+fat-bad-root:
+  meaning: the root directory the BPB describes cannot exist: FAT32 with no root cluster, or FAT12/16 with no fixed root
+  action: treat the match as a false positive, or check whether the boot sector was overwritten
+
+fat-bad-sector-size:
+  meaning: bytes per sector is not a power of two in [512, 4096]
+  action: treat the match as a false positive; the type string landed on bytes that are not a BPB
+
+fat-bad-superblock:
+  meaning: the reader was opened on bytes whose BPB it cannot use
+  action: contributor error or a stale finding; the node keeps the validator's result
+
+fat-deleted-unchained:
+  meaning: a deleted file larger than one cluster was recovered contiguously because its FAT chain was freed
+  action: the first cluster is certainly right; the rest is right only if the file was never fragmented - compare against what the file should look like before relying on it
+
+fat-dir-loop:
+  meaning: a directory's first cluster is one already being walked, or nesting went deeper than the reader's cap
+  action: the branch is not followed; the volume is damaged or hand-edited
+
+fat-first-entry-mismatch:
+  meaning: FAT[0] does not hold the media byte the BPB declares
+  action: informational; the BPB is otherwise consistent, but the table and the boot sector disagree about the volume
+
+fat-limit-nodes:
+  meaning: the walk stopped at Limits::max_nodes_per_fs
+  action: raise --max-files; the listing holds what was read up to that point
+
+fat-no-boot-signature:
+  meaning: the boot sector does not end with 0x55AA
+  action: informational; the BPB is otherwise consistent, so the volume is read but one of its two cross-checks is missing
+
+fat-not-open:
+  meaning: walk() was called before a successful open()
+  action: contributor error; the CLI never produces this
+
+fat-orphan-long-name:
+  meaning: a directory ends with long-name entries that name no following entry
+  action: informational; usually the remains of a deleted or renamed file whose 8.3 entry was reused
+
+fat-short-read:
+  meaning: a file's cluster chain ended before the size its directory entry records
+  action: what was read is real and is extracted; the volume is truncated or the chain is damaged
+
+fat-sink-error:
+  meaning: the Sink refused an entry or a write
+  action: usually a limit or a full disk; the message names which
+
+fat-truncated:
+  meaning: the BPB describes more bytes than the image holds
+  action: the volume is cut short; entries whose clusters are past the end cannot be read
+
+fat-type-string-disagrees:
+  meaning: the file-system type string names a different width from the one the cluster count gives
+  action: the cluster count decides, as the specification requires; a disagreement is also what a resized or hand-edited volume looks like
+
 fdt-bad-node-name:
   meaning: a node name is not terminated inside the structure block, or a non-root node is unnamed
   action: the device tree is corrupt; the finding stays at structural tier

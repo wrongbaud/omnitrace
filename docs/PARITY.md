@@ -9,14 +9,15 @@ measurement, how to reproduce it, and what it found.
 
 | baseline | pooled | per-image mean | images ≥ 95 % | verdict |
 |---|---:|---:|---:|---|
-| **moria** 0.2.1 | **99.8 %** | 96.2 % | 28 / 30 | **criterion met** |
-| **ground truth** (`expected.yaml`) | **94.4 %** | 94.3 % | 17 / 19 | 100 % on every fixture that is not FAT |
-| **unblob** 26.6.4 | **95.1 %** | 91.5 % | 22 / 30 | **criterion met** |
+| **moria** 0.2.1 | **99.9 %** | 99.9 % | 30 / 30 | **criterion met** |
+| **ground truth** (`expected.yaml`) | **100.0 %** | 100.0 % | 19 / 19 | every file of every fixture |
+| **unblob** 26.6.4 | **95.1 %** | 95.1 % | 24 / 30 | **criterion met** |
 | binwalk 3.1.0 | 14.9 % | 64.4 % | 8 / 15 | not a like-for-like baseline (§6) |
 
-The unblob figure was **65.7 %** when this was first measured. Closing gap §2
-below — SquashFS v1–v3 — took one image from 0.1 % to 98.8 % and the pooled
-figure past the bar.
+The unblob figure was **65.7 %** when this was first measured, and ground
+truth **94.4 %**. Closing §2 (SquashFS v1–v3) took one image from 0.1 % to
+98.8 % and the pooled unblob figure past the bar; closing §1 (FAT) took ground
+truth to **every file of every fixture**.
 
 The two largest images are the best evidence that this scales: the 7.8 GB
 Auto-emmc eMMC is **99.7 % of unblob and 100.0 % of moria**, and the 3.8 GB
@@ -88,18 +89,25 @@ re-running a tool.
 
 ## What it found
 
-### 1. FAT is not identified at all — the whole ground-truth shortfall
+### 1. FAT was not identified at all — **closed**
 
-`signatures/*.toml` has no FAT entry. `partitions/mount.sh` knows how to mount
-one (`fat → vfat`) and `FORMAT_ALIASES` in the harness knows the name, but
-nothing detects one, so `fat32.img` extracts zero files and `gpt.img` loses
-the file in its FAT `boot` partition.
+`signatures/*.toml` had no FAT entry. `partitions/mount.sh` knew how to mount
+one (`fat → vfat`) and `FORMAT_ALIASES` in the harness knew the name, but
+nothing detected one, so `fat32.img` extracted zero files and `gpt.img` lost
+the file in its FAT `boot` partition. That was the *entire* difference from
+ground truth: every other fixture already scored 100 %.
 
-That is the *entire* difference from ground truth: **every fixture that is not
-FAT scores 100 % — 175 of 175 contents.** All 10 missing contents are FAT.
+**Fixed.** FAT12/16/32 are identified, sized and read, with deleted-file
+recovery under `--history`. Both images are now **100 % of ground truth,
+unblob and moria**, and the fixture set as a whole is 179 of 179 contents.
 
-FAT12/16/32 is the boot partition of a large share of embedded devices. This
-is the single highest-value format to add.
+The format has no magic: what the signature matches is the file-system type
+string, which Microsoft's specification says "is not required to be correct".
+It is treated as a screen and the BPB decides everything — which matters,
+because three corpus images carry `FAT32   `, `FAT12   ` and `FAT16   ` within
+twenty bytes of each other, a driver's string table that the validator now
+rejects on its geometry. `docs/formats/fat.md` has the detail, including what
+can and cannot honestly be recovered from a deleted entry.
 
 ### 2. SquashFS v1–v3 is detected but never sized, so never read — **closed**
 
@@ -196,14 +204,13 @@ still a useful cross-check.
 
 | criterion | state |
 |---|---|
-| ≥ 95 % vs moria | **met** — 99.8 % pooled, 28 of 30 images ≥ 95 %, the two exceptions being the FAT fixtures |
+| ≥ 95 % vs moria | **met** — 99.9 % pooled, and every one of the 30 images is at or above 95 % |
 | ≥ 95 % vs unblob | **met** — 95.1 % pooled, up from 65.7 % as first measured |
-| fixtures vs ground truth | 100 % of every non-FAT fixture (175 / 175); FAT is the only gap |
+| fixtures vs ground truth | **100 %** — 179 of 179 contents, every file of every fixture |
 | large corpus images | 2 of 4 run (3.8 GB auto-ivi, 7.8 GB auto-emmc); `qnx` (15.7 GB) and `audio` (7.8 GB) outstanding |
 
-**Phase 1's exit criterion is met against both baselines.** What is left is
-smaller and named: **FAT** (10 contents here, but the whole ground-truth gap
-and very common in the field), **`ar`** (1,224 — the auto-ivi eMMC's 93.4 %),
-and a decision on record about ELF carving (252 — the dongle dongle's 16.8 %).
-The three history fixtures below 95 % of unblob are §5, and are already 100 %
-of ground truth.
+**Phase 1's exit criterion is met against both baselines, and the fixtures
+are exact.** What is left is named and small: **`ar`** (1,224 — the auto-ivi
+eMMC's 93.4 %) and a decision on record about ELF carving (252 — the dongle
+dongle's 16.8 %). The three history fixtures below 95 % of unblob are §5 and
+are already 100 % of ground truth.

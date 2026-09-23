@@ -116,6 +116,50 @@ validator = "cramfs"
 description = "cramfs superblock, big-endian; 'Compressed ROMFS' signature required, image CRC checked"
 
 [[signature]]
+name = "fat32"
+format = "fat"
+category = "filesystem"
+magic = "FAT32   "
+magic_offset = 82
+endian = "little"
+validator = "fat"
+description = "FAT32 volume; the file-system type string in the extended BPB, which the BPB behind it must agree with"
+references = ["https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc"]
+
+[[signature]]
+name = "fat16"
+format = "fat"
+category = "filesystem"
+magic = "FAT16   "
+magic_offset = 54
+endian = "little"
+validator = "fat"
+description = "FAT16 volume; the file-system type string in the FAT12/16 BPB"
+references = ["https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc"]
+
+[[signature]]
+name = "fat12"
+format = "fat"
+category = "filesystem"
+magic = "FAT12   "
+magic_offset = 54
+endian = "little"
+validator = "fat"
+description = "FAT12 volume; the file-system type string in the FAT12/16 BPB"
+references = ["https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc"]
+
+[[signature]]
+name = "fat-generic"
+format = "fat"
+category = "filesystem"
+magic = "FAT     "
+magic_offset = 54
+endian = "little"
+validator = "fat"
+description = "FAT volume whose type string does not name a width; the cluster count decides FAT12 or FAT16"
+references = ["https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc"]
+
+[[signature]]
 name = "romfs"
 format = "romfs"
 category = "filesystem"

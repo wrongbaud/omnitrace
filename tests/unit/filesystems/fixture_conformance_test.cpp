@@ -542,6 +542,14 @@ const EntryResult* find_superseded(const Walked& w, const ExpectedVersion& v) {
 // The walked entry for a deleted file: by path, or by the lost+found/#<inode>
 // name a reader uses when it could not recover the name. When several
 // candidates exist the one with the expected content wins.
+//
+// Failing both, by content alone. Some formats damage the name when they
+// delete: FAT overwrites the first character of the 8.3 name with 0xE5 and
+// keeps no other copy, so `DELETED.TXT` can only ever be recovered as
+// `_ELETED.TXT`. Insisting on the path there would mean either failing a
+// reader that recovered the file correctly or having it invent the missing
+// character. A sha256 identifies the recovered bytes better than a name the
+// filesystem deliberately destroyed; the match must still be unique.
 const EntryResult* find_deleted(const Walked& w, const ExpectedVersion& v) {
     const std::string orphan = v.inode ? "lost+found/#" + std::to_string(*v.inode) : std::string();
     const EntryResult* first = nullptr;
@@ -551,7 +559,14 @@ const EntryResult* find_deleted(const Walked& w, const ExpectedVersion& v) {
         if (v.sha256 && e->digests.sha256 == *v.sha256) return e;
         if (!first) first = e;
     }
-    return first;
+    if (first != nullptr || !v.sha256) return first;
+    const EntryResult* by_content = nullptr;
+    for (const EntryResult* e : w.historical) {
+        if (!e->meta.deleted || e->digests.sha256 != *v.sha256) continue;
+        if (by_content != nullptr) return nullptr;  // ambiguous: prove it by path instead
+        by_content = e;
+    }
+    return by_content;
 }
 
 void check_version_fields(const Fixture& fx, const ExpectedVersion& v, const EntryResult& r,

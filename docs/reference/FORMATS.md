@@ -25,6 +25,7 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `ext2` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2345`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
 | `ext3` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2346`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
 | `ext4` | filesystem | magic-only | no | yes (`src/filesystems/ext/ExtReader.cpp:2347`) | yes | `ext4` | [ext.md](../formats/ext.md) |  |
+| `fat` | filesystem | validated to consistent (`fat`) | yes | yes (`src/filesystems/fat/FatReader.cpp:898`) | yes | `vfat` | [fat.md](../formats/fat.md) | signatures: `fat32`, `fat16`, `fat12`, `fat-generic` |
 | `jffs2` | filesystem | validated to verified (`jffs2`) | yes | yes (`src/filesystems/jffs2/Jffs2Reader.cpp:1816`) | yes | mtd (comment) | [jffs2.md](../formats/jffs2.md) | one finding per partition: nodes coalesced across gaps up to `max_gap`; obsolete nodes CRC-checked; signatures: `jffs2-le`, `jffs2-be` |
 | `qnx-ifs` | filesystem | validated to verified (`qnx-ifs`) | yes | yes (`src/filesystems/qnxifs/QnxIfsReader.cpp:917`) | no | - | [qnx-ifs.md](../formats/qnx-ifs.md) | compressed images sized by walking the block chain; startup checksum reported but never lowers the tier; signatures: `qnx-ifs` |
 | `qnx6` | filesystem | validated to verified (`qnx6`) | yes | yes (`src/filesystems/qnx6/Qnx6Reader.cpp:1229`) | yes | `qnx6` | [qnx6.md](../formats/qnx6.md) | size covers both superblocks; second-superblock hits with a corrupt primary are placed at the filesystem start; signatures: `qnx6-le`, `qnx6-be` |
@@ -63,6 +64,6 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 
 ## Counts
 
-- 58 signatures over 40 format ids
-- 32 validators, 11 filesystem reader(s), 18 container reader(s)
+- 62 signatures over 41 format ids
+- 33 validators, 12 filesystem reader(s), 18 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

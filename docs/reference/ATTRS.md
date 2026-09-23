@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-640 keys across 54 source files.
+665 keys across 56 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -345,6 +345,24 @@ Source: `src/discovery/validators/ext.cpp` (19 keys)
 | `superblock_checksum` | `src/discovery/validators/ext.cpp:131` | ok or mismatch when RO_COMPAT_METADATA_CSUM is set |
 | `uuid` | `src/discovery/validators/ext.cpp:97` | s_uuid (rev 1) |
 | `volume_name` | `src/discovery/validators/ext.cpp:98` | s_volume_name (rev 1) |
+
+## validator `fat`
+
+Source: `src/discovery/validators/fat.cpp` (11 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `bytes_per_sector` | `src/discovery/validators/fat.cpp:206` | sector size the BPB declares |
+| `cluster_size` | `src/discovery/validators/fat.cpp:208` | bytes per cluster: bytes_per_sector x sectors_per_cluster |
+| `clusters` | `src/discovery/validators/fat.cpp:212` | data clusters, which is what decides FAT12 / FAT16 / FAT32 |
+| `fat_count` | `src/discovery/validators/fat.cpp:210` | copies of the allocation table (almost always 2) |
+| `fat_sectors` | `src/discovery/validators/fat.cpp:211` | sectors in one copy of the allocation table |
+| `fat_type` | `src/discovery/validators/fat.cpp:205` | fat12, fat16 or fat32, from the cluster count and not from the type string |
+| `reserved_sectors` | `src/discovery/validators/fat.cpp:209` | sectors before the first allocation table, the boot sector included |
+| `root_cluster` | `src/discovery/validators/fat.cpp:239` | FAT32 only: first cluster of the root directory |
+| `root_entries` | `src/discovery/validators/fat.cpp:214` | FAT12/16 only: entries in the fixed root directory |
+| `sectors_per_cluster` | `src/discovery/validators/fat.cpp:207` | cluster size in sectors |
+| `total_sectors` | `src/discovery/validators/fat.cpp:213` | sectors the volume claims, from the 16-bit field or its 32-bit twin |
 
 ## validator `dtb`, `fit`
 
@@ -848,6 +866,27 @@ Source: `src/filesystems/ext/ExtReader.cpp` (33 keys)
 | `state` | `src/filesystems/ext/ExtReader.cpp:2291` | clean, not-clean or errors from s_state |
 | `uuid` | `src/filesystems/ext/ExtReader.cpp:2273` | s_uuid as text |
 | `volume_name` | `src/filesystems/ext/ExtReader.cpp:2272` | s_volume_name |
+
+## filesystem reader (`FilesystemInfo::attrs`)
+
+Source: `src/filesystems/fat/FatReader.cpp` (14 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `bytes_per_sector` | `src/filesystems/fat/FatReader.cpp:862` | sector size the BPB declares |
+| `cluster_size` | `src/filesystems/fat/FatReader.cpp:864` | bytes per cluster: bytes_per_sector x sectors_per_cluster |
+| `clusters` | `src/filesystems/fat/FatReader.cpp:865` | data clusters, which is what decides FAT12 / FAT16 / FAT32 |
+| `fat_count` | `src/filesystems/fat/FatReader.cpp:866` | copies of the allocation table (almost always 2) |
+| `fat_sectors` | `src/filesystems/fat/FatReader.cpp:867` | sectors in one copy of the allocation table |
+| `fat_type` | `src/filesystems/fat/FatReader.cpp:861` | fat12, fat16 or fat32, from the cluster count and not from the type string |
+| `label` | `src/filesystems/fat/FatReader.cpp:874` | volume label from the extended BPB, trailing spaces removed |
+| `oem_name` | `src/filesystems/fat/FatReader.cpp:875` | the eight-byte OEM string the formatter wrote at offset 3 |
+| `reserved_sectors` | `src/filesystems/fat/FatReader.cpp:869` | sectors before the first allocation table, the boot sector included |
+| `root_cluster` | `src/filesystems/fat/FatReader.cpp:871` | FAT32 only: first cluster of the root directory |
+| `root_entries` | `src/filesystems/fat/FatReader.cpp:873` | FAT12/16 only: entries in the fixed root directory |
+| `sectors_per_cluster` | `src/filesystems/fat/FatReader.cpp:863` | cluster size in sectors |
+| `total_sectors` | `src/filesystems/fat/FatReader.cpp:868` | sectors the volume claims, from the 16-bit field or its 32-bit twin |
+| `volume_id` | `src/filesystems/fat/FatReader.cpp:878` | volume serial number, as eight hex digits |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 

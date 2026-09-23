@@ -1496,18 +1496,28 @@ def build_fat32(ctx: Ctx) -> Optional[dict]:
         if e.path == "history/config.txt":
             e.content, e.mtime = CONFIG_V3, T0 + 110
     tree = [e for e in tree if e.path != "history/deleted.txt"]
+    # FAT keeps no trace of a superseded version. mtools rewrites a file by
+    # freeing its directory entry and allocating afresh, and the next write
+    # takes the first free slot -- which is the one just freed. The finished
+    # image holds exactly one CONFIG  TXT entry, so v1 and v2 are unnamed and
+    # unreachable: `superseded` is empty, as it is for ext4 for the same
+    # reason. Only the delete, which was not followed by another write to that
+    # directory, leaves a recoverable entry.
     history = {
-        "superseded": [
-            {"path": "history/config.txt", "version": 1, "size": len(CONFIG_V1), "sha256": sha256(CONFIG_V1), "mtime": T0 + 30, "content_recoverable": False},
-            {"path": "history/config.txt", "version": 2, "size": len(CONFIG_V2), "sha256": sha256(CONFIG_V2), "mtime": T0 + 100, "content_recoverable": False},
-        ],
+        "superseded": [],
         "current": [{"path": "history/config.txt", "version": 3, "size": len(CONFIG_V3), "sha256": sha256(CONFIG_V3), "mtime": T0 + 110}],
         "deleted": [
-            {"path": "history/deleted.txt", "size": len(DELETED_TXT), "sha256": sha256(DELETED_TXT), "mtime": T0 + 32, "content_recoverable": True, "dirent_state": "first byte 0xE5, LFN entries remain, start cluster and size intact"},
+            {"path": "history/deleted.txt", "size": len(DELETED_TXT), "sha256": sha256(DELETED_TXT), "mtime": T0 + 32, "content_recoverable": True, "name_recoverable": False, "dirent_state": "first byte overwritten with 0xE5, start cluster and size intact; no long-name entry, so the first character of the name is unrecoverable"},
+        ],
+        "overwritten": [
+            {"path": "history/config.txt", "version": 1, "size": len(CONFIG_V1), "sha256": sha256(CONFIG_V1), "mtime": T0 + 30},
+            {"path": "history/config.txt", "version": 2, "size": len(CONFIG_V2), "sha256": sha256(CONFIG_V2), "mtime": T0 + 100},
         ],
         "note": (
-            "mtools rewrites a file by deleting the entry and allocating afresh; the old clusters of config.txt may have been "
-            "reused, so only the deleted.txt bytes are guaranteed recoverable. Timestamps are local time with TZ=UTC."
+            "config.txt was written three times. FAT frees the old directory entry on each rewrite and the next write reuses "
+            "that slot, so v1 and v2 left no entry behind and no reader can name or find them: they are recorded under "
+            "`overwritten` for the record, not under `superseded`, which means recoverable. deleted.txt keeps its entry "
+            "because nothing was written to that directory afterwards. Timestamps are local time with TZ=UTC."
         ),
     }
     return image_doc("fat32", "fat32", img, ctx.version("mkfs.vfat", ["mkfs.vfat", "--help"]), argv[1:], features, tree,
