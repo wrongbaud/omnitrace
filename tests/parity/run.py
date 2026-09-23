@@ -527,43 +527,108 @@ def _load_yaml(path: Path) -> Any:
         return yaml.safe_load(fh)
 
 
+def _abs_target(r: FileRec) -> str:
+    """A symlink's target as an absolute path inside its own filesystem."""
+    t = r.target
+    if t.startswith("/"):
+        return posixpath.normpath(t)
+    return posixpath.normpath(posixpath.join(posixpath.dirname("/" + r.relpath), t))
+
+
 def parse_omnitrace(manifest: Path, outdir: Path) -> list[Finding]:
-    """manifest.yaml (schema omnitrace/1): a node graph. Top-level findings are
-    the Partition/Container/Filesystem children of the Image node; their files
-    come from filesystems/<id>/files when extracted, else from File nodes."""
+    """manifest.yaml (schema omnitrace/1): a node graph, `parent` and
+    `children` naming ids (docs/CASE_LAYOUT.md).
+
+    Top-level findings are the children of the Image node. A `region` child is
+    an unclaimed gap and is reported as `unknown`, which is what unblob calls
+    the same thing, so the two line up in the findings table.
+
+    A finding's files are everything extracted *below* it, the way the other
+    tools report theirs: its own `filesystems/<id>/files` or
+    `containers/<id>/files`, plus the directory of every filesystem or
+    container node nested under it, whose paths are prefixed with that
+    directory so they stay traceable in the case. Without the nested half a
+    `.tar.gz` holding a rootfs would score zero files against unblob, which
+    reports the same bytes under a `_extract` prefix inside its top-level
+    chunk.
+
+    When nothing was extracted (`--no-extract`), the File nodes' recorded
+    digests stand in.
+    """
     doc = _load_yaml(manifest) or {}
     nodes = doc.get("nodes", []) or []
     by_id = {n.get("id"): n for n in nodes}
     roots = {n.get("id") for n in nodes if str(n.get("kind", "")).lower() == "image"}
+    if nodes and not roots:
+        raise ValueError(f"no image node in {manifest}: schema drift, or not an omnitrace manifest")
+
+    def files_dir_of(n: dict) -> Optional[Path]:
+        kind = str(n.get("kind", "")).lower()
+        sub = {"filesystem": "filesystems", "container": "containers"}.get(kind)
+        if not sub:
+            return None
+        d = outdir / sub / str(n.get("id")) / "files"
+        return d if d.is_dir() else None
+
+    def descendants(n: dict) -> list[dict]:
+        out, stack = [], list(n.get("children", []) or [])
+        while stack:
+            c = by_id.get(stack.pop())
+            if c is None:
+                continue
+            out.append(c)
+            stack.extend(c.get("children", []) or [])
+        return out
+
     findings: list[Finding] = []
     for n in nodes:
         kind = str(n.get("kind", "")).lower()
-        if n.get("parent_id") not in roots or kind not in ("partition", "container", "filesystem"):
+        if n.get("parent") not in roots or kind not in ("partition", "container", "filesystem", "region"):
             continue
         loc = n.get("location") or {}
-        f = Finding(int(loc.get("offset", 0)), canonical_format(n.get("format")), str(n.get("format", "")), int(loc.get("length", 0)) or None)
+        fmt = n.get("format") or ("unknown" if kind == "region" else "")
+        f = Finding(int(loc.get("offset", 0)), canonical_format(fmt), str(fmt),
+                    int(loc.get("length", 0)) or None)
         f.extra = {"node": n.get("id"), "confidence": n.get("confidence"), "kind": kind}
-        files_dir = outdir / "filesystems" / str(n.get("id")) / "files"
-        if files_dir.is_dir():
-            f.root = files_dir.relative_to(outdir).as_posix()
-            f.files = hash_tree(files_dir)
+
+        recs: list[FileRec] = []
+        own = files_dir_of(n)
+        if own is not None:
+            f.root = own.relative_to(outdir).as_posix()
+            recs += hash_tree(own)
+        kids = descendants(n)
+        for c in kids:
+            d = files_dir_of(c)
+            if d is None:
+                continue
+            prefix = d.relative_to(outdir).as_posix()
+            for r in hash_tree(d):
+                if r.kind == "symlink":
+                    # Resolve the target against the entry's place in *its own*
+                    # tree before the prefix is applied, and keep it absolute.
+                    # `bin/sh -> busybox` means /bin/busybox in that filesystem;
+                    # prefixed first it would mean
+                    # /filesystems/n7/files/bin/busybox and match nothing.
+                    r = dataclasses.replace(r, target=_abs_target(r))
+                recs.append(dataclasses.replace(r, relpath=posixpath.join(prefix, r.relpath)))
+        if recs:
+            f.files = sorted(recs, key=lambda r: r.relpath)
             f.extracted = True
         else:
-            # Listing only: walk descendants that are File nodes.
-            stack = list(n.get("child_ids", []) or [])
-            recs: list[FileRec] = []
-            while stack:
-                c = by_id.get(stack.pop())
-                if not c:
-                    continue
-                stack.extend(c.get("child_ids", []) or [])
+            # Listing only: the File nodes carry the digests instead.
+            for c in kids:
                 fm = c.get("file")
-                if str(c.get("kind", "")).lower() == "file" and fm and not fm.get("deleted") and not fm.get("superseded"):
-                    ek = str(fm.get("kind", "regular")).lower()
-                    if ek == "regular":
-                        recs.append(FileRec(str(fm.get("path")), int(fm.get("size", 0)), str((c.get("digests") or {}).get("sha256", ""))))
-                    elif ek == "symlink":
-                        recs.append(FileRec(str(fm.get("path")), int(fm.get("size", 0)), "", "symlink", str(fm.get("link_target", ""))))
+                if str(c.get("kind", "")).lower() != "file" or not fm:
+                    continue
+                if fm.get("deleted") or fm.get("superseded"):
+                    continue
+                ek = str(fm.get("kind", "regular")).lower()
+                if ek == "regular":
+                    recs.append(FileRec(str(fm.get("path")), int(fm.get("size", 0)),
+                                        str((c.get("digests") or {}).get("sha256", ""))))
+                elif ek == "symlink":
+                    recs.append(FileRec(str(fm.get("path")), int(fm.get("size", 0)), "",
+                                        "symlink", str(fm.get("link_target", ""))))
             if recs:
                 f.files = sorted(recs, key=lambda r: r.relpath)
                 f.extracted = False
@@ -653,6 +718,119 @@ def diff_files(a: list[FileRec], b: list[FileRec]) -> dict:
     }
 
 
+# --------------------------------------------------------------------------
+# Image-wide recovery
+# --------------------------------------------------------------------------
+
+
+ZERO_FILL_MAX = 64 << 20  # do not hash a zero run larger than this to test it
+
+
+def zero_fill_hashes(sizes: set[int]) -> dict[str, int]:
+    """sha256 of a run of NULs, for each size asked about.
+
+    A tool that finds a file's metadata but cannot reconstruct its data often
+    writes the right number of zero bytes -- moria does this for 28 of the 39
+    files in the router's JFFS2 overlay. Those are not recovered data, and a
+    recall number that counts them makes a tool look worse for *not*
+    reproducing another tool's failure. They are reported separately rather
+    than dropped, because an image can legitimately hold a zero-filled file
+    and it is not this harness's place to decide which.
+    """
+    out: dict[str, int] = {}
+    for n in sorted(sizes):
+        if n <= 0 or n > ZERO_FILL_MAX:
+            continue
+        h = hashlib.sha256()
+        left = n
+        block = b"\0" * min(n, 1 << 20)
+        while left > 0:
+            h.update(block[: min(left, len(block))])
+            left -= min(left, len(block))
+        out[h.hexdigest()] = n
+    return out
+
+
+def recovery_keys(findings: list[Finding]) -> tuple[set[str], set[str]]:
+    """Every distinct thing a tool got out of one image, ignoring which finding
+    it came from and what it was called.
+
+    The pairwise file diff above only compares files inside findings that
+    matched at the same offset *and* format, which is the right unit for "do
+    these two tools agree about this structure" and the wrong one for "what
+    fraction of the data did each tool recover". A container and its payload
+    sit at different offsets by design -- unblob's `lzma` at 0x50040 is
+    OmniTrace's `uimage` at 0x50000 -- and a nested extraction shows up under a
+    path prefix in one tool and as its own finding in another. Neither is a
+    missing file, but both make a per-finding path diff say so.
+
+    So the recovery metric is set-of-contents, image-wide: the sha256 of every
+    regular file, plus every symlink as its normalised in-tree target (the same
+    `content_key` the file diff uses, so `etc/TZ -> ../tmp/TZ` and
+    `etc/TZ -> /tmp/TZ` are one thing). A file recovered under a different path
+    counts as recovered, which is the honest reading of "files recovered", and
+    a file nobody can produce the bytes of does not count however it is named.
+
+    Returns (all content keys, regular-file sha256 only).
+    """
+    keys: set[str] = set()
+    regular: set[str] = set()
+    for f in findings:
+        for r in f.files:
+            if r.kind == "symlink":
+                keys.add(content_key(r))
+            elif r.sha256:
+                keys.add(r.sha256)
+                regular.add(r.sha256)
+    return keys, regular
+
+
+def _sizes_by_hash(findings: list[Finding]) -> dict[str, int]:
+    return {r.sha256: r.size for f in findings for r in f.files if r.kind != "symlink" and r.sha256}
+
+
+def _pct(part: int, whole: int) -> Optional[float]:
+    return None if whole == 0 else round(100.0 * part / whole, 2)
+
+
+def recovery_report(results: dict[str, ToolResult]) -> dict:
+    """Per tool, and for every ordered pair, what fraction of one tool's
+    contents the other also produced."""
+    names = [n for n, r in results.items() if r.status == "ok"]
+    sets = {n: recovery_keys(results[n].findings) for n in names}
+    per_tool = {
+        n: {"content_keys": len(sets[n][0]), "regular_hashes": len(sets[n][1]),
+            "files": sum(len(f.files) for f in results[n].findings)}
+        for n in names
+    }
+    sizes = {n: _sizes_by_hash(results[n].findings) for n in names}
+    pairs = []
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            ka, kb = sets[a][0], sets[b][0]
+            ra, rb = sets[a][1], sets[b][1]
+            oa, ob = ka - kb, kb - ka
+            za = zero_fill_hashes({sizes[a][k] for k in oa if k in sizes[a]})
+            zb = zero_fill_hashes({sizes[b][k] for k in ob if k in sizes[b]})
+            pairs.append({
+                "a": a, "b": b,
+                "common": len(ka & kb), "only_a": len(oa), "only_b": len(ob),
+                # Of the contents only one tool has, how many are a run of NULs
+                # -- a file whose data that tool could not reconstruct.
+                "only_a_zero_fill": sum(1 for k in oa if k in za),
+                "only_b_zero_fill": sum(1 for k in ob if k in zb),
+                # "b recovered this much of what a did", and the reverse.
+                "b_of_a": _pct(len(ka & kb), len(ka)),
+                "a_of_b": _pct(len(ka & kb), len(kb)),
+                "regular_common": len(ra & rb),
+                "only_a_regular": len(ra - rb),
+                "only_b_regular": len(rb - ra),
+                "regular_b_of_a": _pct(len(ra & rb), len(ra)),
+                "regular_a_of_b": _pct(len(ra & rb), len(rb)),
+            })
+    return {"per_tool": per_tool, "pairs": pairs}
+
+
 def diff_pair(a: ToolResult, b: ToolResult) -> dict:
     fa: dict[int, list[Finding]] = {}
     fb: dict[int, list[Finding]] = {}
@@ -740,6 +918,24 @@ def render_markdown(summary: dict, results: dict[str, ToolResult], cap: int) -> 
             fs = row["per_tool"].get(t, [])
             cells.append("<br>".join(fmt_cell(f) for f in fs) or "")
         L.append(f"| {row['offset']} | 0x{row['offset']:x} | " + " | ".join(cells) + " |")
+    rec = summary.get("recovery") or {}
+    if rec.get("per_tool"):
+        L += ["", "## Recovery (image-wide)", "",
+              "Distinct file contents each tool produced from this image, regardless of which",
+              "finding they came from or what path they were written to: the sha256 of every",
+              "regular file plus every symlink's normalised target. This is the unit for \"how",
+              "much of the data did it recover\"; the per-finding tables below are the unit for",
+              "\"do the tools agree about this structure\".", "",
+              "| tool | files | distinct contents | distinct regular files |",
+              "|---|---:|---:|---:|"]
+        for name, d in rec["per_tool"].items():
+            L.append(f"| {name} | {d['files']:,} | {d['content_keys']:,} | {d['regular_hashes']:,} |")
+        L += ["", "| pair | common | only in A | only in B | B recovered of A | A recovered of B |",
+              "|---|---:|---:|---:|---:|---:|"]
+        for d in rec["pairs"]:
+            bo = "-" if d["b_of_a"] is None else f"{d['b_of_a']:.1f}%"
+            ao = "-" if d["a_of_b"] is None else f"{d['a_of_b']:.1f}%"
+            L.append(f"| {d['a']} (A) vs {d['b']} (B) | {d['common']:,} | {d['only_a']:,} | {d['only_b']:,} | {bo} | {ao} |")
     L += ["", "## Pairwise comparison", ""]
     for pair in summary["pairs"]:
         a, b = pair["a"], pair["b"]
@@ -795,6 +991,7 @@ def build_summary(img: Path, results: dict[str, ToolResult], timestamp: str) -> 
         },
         "findings_union": [{"offset": off, "per_tool": per} for off, per in sorted(union.items())],
         "pairs": pairs,
+        "recovery": recovery_report(results),
     }
 
 

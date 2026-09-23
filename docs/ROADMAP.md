@@ -97,41 +97,67 @@ with a meaning and an action. `analyze` will not fill the disk it writes to.
 | phase | state |
 |---|---|
 | 0 — Foundation | complete |
-| 1 — Discovery, extraction, parity | complete **except parity, which has never been measured** |
+| 1 — Discovery, extraction, parity | extraction complete; parity **measured** (`docs/PARITY.md`) — met against moria, not against unblob |
 | 2 — Recovery, artifacts, reporting | complete; exit criterion verified on both the router and the 7.8 GB auto-emmc eMMC corpora |
 | 3 — Hardening and release | not started |
 | 4 — Web UI | not started, and deliberately after a release (`core-before-ui`) |
 
-**Phase 1's parity gap is worth stating plainly.** Its exit criterion is
-"parity ≥ 95 % files recovered vs unblob and moria on fixtures and corpus".
-The harness exists (`tests/parity/run.py`) and the Windows and macOS CI
-builds do too, but no parity run is recorded anywhere in the tree. The
-extraction work is done and the corpus exercises it hard; the *number* has
-never been produced. Running it is a concrete task, not a formality — it is
-the only external check on whether the readers miss things nobody noticed.
+**Phase 1's parity criterion has now been measured** over 33 images (20
+fixtures, 13 corpus, including a 3.8 GB and a 7.8 GB eMMC), counting distinct
+regular-file contents by sha256:
+
+| baseline | pooled | verdict |
+|---|---:|---|
+| moria 0.2.1 | **99.8 %** | met — 28 of 30 images ≥ 95 %, both exceptions FAT |
+| ground truth (`expected.yaml`) | 94.4 % | 100 % on every fixture that is not FAT |
+| unblob 26.6.4 | 83.0 % | not met — 72 % of the shortfall is one image |
+
+It did exactly what it was supposed to do: it found two real gaps nobody had
+noticed. **FAT is not identified at all** — no signature, so `fat32.img`
+extracts nothing and it is the *entire* difference from ground truth. And
+**SquashFS v1–v3 is detected but never sized**, so the router-wrt image's v3
+Broadcom filesystem is seen at the right offset, carries `extent: unknown`,
+is never handed to a reader, and 3,903 contents are lost with it — on its own
+93 % of the unblob shortfall. The rest of the unblob gap is unblob carving
+individual ELFs out of decompressed blobs, which is a policy difference, not
+missing data. `docs/PARITY.md` has the method, the numbers and the evidence.
+
+Two of the four multi-gigabyte corpus images are in that number — the 7.8 GB
+Auto-emmc eMMC is 99.7 % of unblob and 100.0 % of moria, the 3.8 GB auto-ivi is
+93.4 % and 100.0 % — and `qnx` (15.7 GB) and `audio` (7.8 GB) are outstanding.
 
 ## Next, in order
 
-1. **Measure parity.** Close Phase 1's open criterion with a real number
-   against unblob, binwalk and moria on the fixtures and the corpus.
+1. **Close the two gaps parity found** (`docs/PARITY.md`), in this order:
+   **SquashFS v1–v3** — the validator stops at v4, so a v3 superblock is
+   identified and then dropped for want of an extent; worth 3,903 contents on
+   the router-wrt image alone. Then **FAT12/16/32**, which has no signature at all
+   and is the boot partition of a large share of embedded devices. Then a
+   decision on record about whether to carve ELFs out of decompressed blobs
+   the way unblob does.
 
-2. **Validate the Android analyzer against a real Android tree.** Its markers
+2. **Finish the parity measurement** on the two remaining multi-gigabyte
+   corpus images, `qnx` (15.7 GB) and `audio` (7.8 GB). Four tools over that
+   much evidence needs a disk budget and a long wall clock; everything else is
+   measured.
+
+3. **Validate the Android analyzer against a real Android tree.** Its markers
    come from documented AOSP layout, not evidence; the automotive Android unit's `la_super`
    is the image to check them against. The QNX model *was* aimed at evidence
    and the corpus still corrected six things its fixtures could not, including
    a `Tree` bug that silently disabled its strongest marker.
    `docs/ANALYZERS.md` says which parts are guesses.
 
-3. **More artifact extractors** (§5.5): SQLite with freelist recovery, logs
+4. **More artifact extractors** (§5.5): SQLite with freelist recovery, logs
    with a normalised timeline, ELF metadata. Certificates came first because
    the corpus had 131 of them and most of the rest of §5.5 overlaps what the
    packs and analyzers already do — an extractor earns its place by *parsing*
    something, not by matching it.
 
-4. **Phase 3**: fuzzing per reader under ASan/UBSan, a performance pass on
+5. **Phase 3**: fuzzing per reader under ASan/UBSan, a performance pass on
    large images, signed release artifacts for all three platforms.
 
-5. **Phase 4**: web UI, only after the CLI and library are released.
+6. **Phase 4**: web UI, only after the CLI and library are released.
 
 ## Good first improvements
 

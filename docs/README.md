@@ -26,6 +26,7 @@ For anyone changing the code.
 | [EXTENDING.md](EXTENDING.md) | Step by step, how do I add a validator, a filesystem reader, a container reader, a signature, a CLI command, a fixture, a diagnostic code? |
 | [API.md](API.md) | In which order should I read the twenty public headers, how do I build the Doxygen reference, and which comment conventions do the headers follow? |
 | [TESTING.md](TESTING.md) | How are the synthetic fixtures built, what is in them, and how does the parity harness compare us with unblob, binwalk and moria? |
+| [PARITY.md](PARITY.md) | How much of what unblob and moria recover do we recover, measured, and what did measuring it find? |
 | [ROADMAP.md](ROADMAP.md) | What is supported now, what comes next in order, and which improvements are good first ones? |
 
 ## Reference

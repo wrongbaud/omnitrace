@@ -158,23 +158,104 @@ class ParseOmnitrace(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             out = Path(d)
             make_tree(out / "filesystems" / "n2" / "files", {"etc/passwd": b"root\n"})
+            # A filesystem nested under the uImage: its own case directory,
+            # which the finding at 60 has to account for the way unblob
+            # accounts for a nested extraction inside its top-level chunk.
+            make_tree(out / "filesystems" / "n5" / "files", {"bin/sh": b"shell"})
+            # Real key names: `parent` and `children` (docs/CASE_LAYOUT.md).
+            # This test used to say parent_id/child_ids, matched nothing, and
+            # reported 0 findings as a pass.
             manifest = {
                 "schema": "omnitrace/1",
                 "nodes": [
-                    {"id": "n1", "kind": "Image", "format": "", "location": {"offset": 0, "length": 100}, "child_ids": ["n2", "n3"]},
-                    {"id": "n2", "parent_id": "n1", "kind": "Filesystem", "format": "squashfs", "location": {"offset": 10, "length": 50}, "confidence": 99, "child_ids": []},
-                    {"id": "n3", "parent_id": "n1", "kind": "Container", "format": "uimage", "location": {"offset": 60, "length": 40}, "child_ids": ["n4"]},
-                    {"id": "n4", "parent_id": "n3", "kind": "File", "file": {"path": "kernel", "kind": "Regular", "size": 3}, "digests": {"sha256": sha(b"abc")}},
+                    {"id": "n1", "parent": "", "kind": "image", "format": "raw", "location": {"offset": 0, "length": 100}, "children": ["n2", "n3", "n6"]},
+                    {"id": "n2", "parent": "n1", "kind": "filesystem", "format": "squashfs", "location": {"offset": 10, "length": 50}, "confidence": 99, "children": []},
+                    {"id": "n3", "parent": "n1", "kind": "container", "format": "uimage", "location": {"offset": 60, "length": 40}, "children": ["n4"]},
+                    {"id": "n4", "parent": "n3", "kind": "file", "file": {"path": "payload", "kind": "regular", "size": 3}, "digests": {"sha256": sha(b"abc")}, "children": ["n5"]},
+                    {"id": "n5", "parent": "n4", "kind": "filesystem", "format": "cramfs", "location": {"offset": 64, "length": 20}, "children": []},
+                    {"id": "n6", "parent": "n1", "kind": "region", "format": "", "location": {"offset": 90, "length": 10}},
                 ],
             }
             import yaml
             (out / "manifest.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
             fs = harness.parse_omnitrace(out / "manifest.yaml", out)
-            self.assertEqual([(f.offset, f.format) for f in fs], [(10, "squashfs"), (60, "uimage")])
+            # A region is reported as `unknown`, which is unblob's name for an
+            # unclaimed gap, so the two line up in the findings table.
+            self.assertEqual([(f.offset, f.format) for f in fs],
+                             [(10, "squashfs"), (60, "uimage"), (90, "unknown")])
             self.assertTrue(fs[0].extracted)
             self.assertEqual(fs[0].files[0].relpath, "etc/passwd")
-            self.assertFalse(fs[1].extracted)
-            self.assertEqual(fs[1].files[0].sha256, sha(b"abc"))
+            # The nested filesystem's files belong to the top-level finding,
+            # prefixed with where they are in the case.
+            self.assertTrue(fs[1].extracted)
+            self.assertEqual([r.relpath for r in fs[1].files], ["filesystems/n5/files/bin/sh"])
+            self.assertEqual(fs[1].files[0].sha256, sha(b"shell"))
+
+    def test_a_nested_symlink_resolves_in_its_own_tree(self):
+        """`bin/sh -> busybox` means /bin/busybox in the filesystem it is in.
+        Prefixing the path first made it /filesystems/n5/files/bin/busybox,
+        which matches nothing any other tool reports -- every fixture with a
+        partition table lost its `bin/sh` that way, and it read as a missing
+        file rather than as a harness bug."""
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML not installed")
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            nested = out / "filesystems" / "n3" / "files" / "bin"
+            nested.mkdir(parents=True)
+            (nested / "busybox").write_bytes(b"bb")
+            (nested / "sh").symlink_to("busybox")
+            manifest = {"schema": "omnitrace/1", "nodes": [
+                {"id": "n1", "parent": "", "kind": "image", "format": "raw", "location": {"offset": 0, "length": 10}, "children": ["n2"]},
+                {"id": "n2", "parent": "n1", "kind": "partition", "format": "gpt", "location": {"offset": 0, "length": 10}, "children": ["n3"]},
+                {"id": "n3", "parent": "n2", "kind": "filesystem", "format": "squashfs", "location": {"offset": 0, "length": 10}, "children": []},
+            ]}
+            (out / "manifest.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+            fs = harness.parse_omnitrace(out / "manifest.yaml", out)
+            link = next(r for r in fs[0].files if r.relpath.endswith("/sh"))
+            self.assertEqual(harness.content_key(link), "symlink:/bin/busybox")
+            # and an unprefixed tree agrees, which is the whole point
+            plain = harness.FileRec("bin/sh", 7, "", "symlink", "busybox")
+            self.assertEqual(harness.content_key(plain), harness.content_key(link))
+
+    def test_listing_only_falls_back_to_recorded_digests(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML not installed")
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            manifest = {"schema": "omnitrace/1", "nodes": [
+                {"id": "n1", "parent": "", "kind": "image", "format": "raw", "location": {"offset": 0, "length": 100}, "children": ["n2"]},
+                {"id": "n2", "parent": "n1", "kind": "filesystem", "format": "squashfs", "location": {"offset": 0, "length": 100}, "children": ["n3", "n4", "n5"]},
+                {"id": "n3", "parent": "n2", "kind": "file", "file": {"path": "bin/sh", "kind": "regular", "size": 3}, "digests": {"sha256": sha(b"abc")}},
+                {"id": "n4", "parent": "n2", "kind": "file", "file": {"path": "etc/TZ", "kind": "symlink", "size": 7, "link_target": "/tmp/TZ"}},
+                {"id": "n5", "parent": "n2", "kind": "file", "file": {"path": "gone", "kind": "regular", "size": 1, "deleted": True}, "digests": {"sha256": sha(b"d")}},
+            ]}
+            (out / "manifest.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+            fs = harness.parse_omnitrace(out / "manifest.yaml", out)
+            self.assertEqual(len(fs), 1)
+            self.assertFalse(fs[0].extracted)
+            # A deleted entry is history, not something the tool recovered from
+            # the live tree, so it is not counted against the other tools.
+            self.assertEqual([r.relpath for r in fs[0].files], ["bin/sh", "etc/TZ"])
+
+    def test_a_manifest_it_cannot_read_is_an_error_not_zero_findings(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML not installed")
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            # Nodes, but none of them an image: the shape changed under us.
+            # Reporting "ok, 0 findings" is how the parent_id drift survived.
+            (out / "manifest.yaml").write_text(
+                yaml.safe_dump({"schema": "omnitrace/1", "nodes": [{"id": "n1", "kind": "widget"}]}),
+                encoding="utf-8")
+            with self.assertRaises(ValueError):
+                harness.parse_omnitrace(out / "manifest.yaml", out)
 
 
 class ParseExpected(unittest.TestCase):
@@ -253,6 +334,79 @@ class Diff(unittest.TestCase):
             self.assertIn("skipped - not here", md)
             self.assertIn("jffs2 (jffs2_new) 16B [1 files]", md)
             self.assertIn("paths only in A", md)
+
+
+class Recovery(unittest.TestCase):
+    """The image-wide metric. It exists because the per-finding diff cannot
+    answer "what fraction did it recover": the same bytes routinely land at a
+    different offset and under a different path in two tools."""
+
+    def test_same_bytes_at_a_different_offset_and_path_still_count(self):
+        # A finds one chunk holding two files; B finds two chunks, at other
+        # offsets, and writes the same bytes under a nested prefix. Nothing
+        # matches per-finding; everything was recovered.
+        A = harness.ToolResult("A", findings=[
+            harness.Finding(0, "squashfs", "squashfs_v4_le", 50, True, "r",
+                            [harness.FileRec("bin/sh", 1, sha(b"sh")), harness.FileRec("etc/x", 1, sha(b"x"))]),
+        ])
+        B = harness.ToolResult("B", findings=[
+            harness.Finding(64, "uimage", "uimage", 50, True, "u",
+                            [harness.FileRec("img_extract/bin/sh", 1, sha(b"sh"))]),
+            harness.Finding(900, "cpio", "cpio", 10, True, "c",
+                            [harness.FileRec("etc/x", 1, sha(b"x"))]),
+        ])
+        r = harness.recovery_report({"A": A, "B": B})
+        d = r["pairs"][0]
+        self.assertEqual((d["common"], d["only_a"], d["only_b"]), (2, 0, 0))
+        self.assertEqual(d["b_of_a"], 100.0)
+        self.assertEqual(d["a_of_b"], 100.0)
+
+    def test_a_missed_file_is_counted_as_missed(self):
+        A = harness.ToolResult("A", findings=[harness.Finding(0, "x", "x", 1, True, "r", [
+            harness.FileRec("a", 1, sha(b"a")), harness.FileRec("b", 1, sha(b"b")),
+            harness.FileRec("c", 1, sha(b"c")), harness.FileRec("d", 1, sha(b"d"))])])
+        B = harness.ToolResult("B", findings=[harness.Finding(0, "x", "x", 1, True, "r", [
+            harness.FileRec("a", 1, sha(b"a")), harness.FileRec("b", 1, sha(b"b")),
+            harness.FileRec("c", 1, sha(b"c"))])])
+        d = harness.recovery_report({"A": A, "B": B})["pairs"][0]
+        self.assertEqual((d["common"], d["only_a"], d["only_b"]), (3, 1, 0))
+        self.assertEqual(d["b_of_a"], 75.0)   # B recovered 3 of A's 4
+        self.assertEqual(d["a_of_b"], 100.0)  # A recovered all of B's 3
+
+    def test_symlinks_count_by_normalised_target_not_by_spelling(self):
+        A = harness.ToolResult("A", findings=[harness.Finding(0, "x", "x", 1, True, "r", [
+            harness.FileRec("etc/TZ", 6, "", "symlink", "/tmp/TZ")])])
+        B = harness.ToolResult("B", findings=[harness.Finding(0, "x", "x", 1, True, "r", [
+            harness.FileRec("etc/TZ", 9, "", "symlink", "../tmp/TZ")])])
+        d = harness.recovery_report({"A": A, "B": B})["pairs"][0]
+        self.assertEqual((d["common"], d["only_a"], d["only_b"]), (1, 0, 0))
+        # and they are not counted among the regular files
+        self.assertEqual(d["regular_common"], 0)
+        self.assertIsNone(d["regular_b_of_a"])
+
+    def test_duplicate_content_is_one_recovered_thing(self):
+        # The same bytes at five paths is one content. Otherwise a tool that
+        # writes a file once scores badly against one that writes it five times.
+        A = harness.ToolResult("A", findings=[harness.Finding(0, "x", "x", 1, True, "r",
+            [harness.FileRec(f"p{i}", 1, sha(b"same")) for i in range(5)])])
+        B = harness.ToolResult("B", findings=[harness.Finding(0, "x", "x", 1, True, "r",
+            [harness.FileRec("q", 1, sha(b"same"))])])
+        d = harness.recovery_report({"A": A, "B": B})["pairs"][0]
+        self.assertEqual((d["common"], d["only_a"], d["only_b"]), (1, 0, 0))
+        self.assertEqual(d["b_of_a"], 100.0)
+
+    def test_skipped_tools_and_empty_sets(self):
+        A = harness.ToolResult("A", findings=[harness.Finding(0, "x", "x", 1, True, "r", [])])
+        B = harness.ToolResult("B", status="skipped")
+        r = harness.recovery_report({"A": A, "B": B})
+        self.assertEqual(list(r["per_tool"].keys()), ["A"])
+        self.assertEqual(r["pairs"], [])
+        # A tool that recovered nothing gives no percentage rather than 0% or a
+        # division by zero: "nothing to compare" is not "recovered none of it".
+        C = harness.ToolResult("C", findings=[harness.Finding(0, "x", "x", 1, True, "r", [])])
+        d = harness.recovery_report({"A": A, "C": C})["pairs"][0]
+        self.assertIsNone(d["b_of_a"])
+        self.assertIsNone(d["a_of_b"])
 
 
 if __name__ == "__main__":

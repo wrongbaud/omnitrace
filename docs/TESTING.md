@@ -235,8 +235,9 @@ Every source of entropy is pinned: content from SHA-256 chains, timestamps via t
 
 | File | Role |
 |---|---|
-| `run.py` | The harness. Python 3.9+, PyYAML only for `expected.yaml`/manifest parsing. |
-| `test_run.py` | Unit tests for the normalisers and diff: `python3 -m unittest tests/parity/test_run.py`. |
+| `run.py` | The harness, one image at a time. Python 3.9+, PyYAML only for `expected.yaml`/manifest parsing. |
+| `sweep.py` | Runs `run.py` over many images and pools one number (`scripts/fixtures.sh sweep`). See "Measuring parity" below and `docs/PARITY.md`. |
+| `test_run.py` | Unit tests for the normalisers, the diff and the recovery metric: `python3 -m unittest tests/parity/test_run.py`. |
 | `moria.Dockerfile` | Builds moria (MIT, https://github.com/nmatt0/moria) at commit `30e4038` into `omnitrace-parity-moria`. `run.py` builds it on first use. |
 
 ### Prerequisites
@@ -335,6 +336,58 @@ Observed on the current fixtures (all 18 run clean, exit 0):
 - ubi, nested.tar.gz, uimage-lzma: every file is found by both tools but under a nested extraction prefix (`ubi_extract/…`, `firmware/squashfs-gzip.img_extract/…`), so the path diff against `expected` reports them as only-in-tool; use the `content_only_*` counts (0) there.
 - uimage-lzma: binwalk and moria report `uimage` at 0; unblob reports `unknown` (the 64-byte header) at 0 and `lzma` at 64.
 - binwalk finds every filesystem but, without `sasquatch`/`jefferson`/`ubireader`, extracts none of them; its uImage, UBI and tar extraction is built in.
+
+### Recovery: the image-wide metric
+
+The pairwise diff above compares files **inside findings matched at the same
+offset and format**. That is the right unit for "do these two tools agree
+about this structure" and the wrong one for "what fraction of the data did
+each tool recover": a container and its payload sit at different offsets by
+design, and a nested extraction is a path prefix in one tool and its own
+finding in another.
+
+So `summary.json` also carries a `recovery` block, and `report.md` a
+**Recovery (image-wide)** table: the set of distinct file contents each tool
+produced from the image, regardless of finding or path. The headline unit is
+the **sha256 of every regular file**; symlinks are counted too, in a second
+figure, but are only approximately comparable between tools because a link's
+target resolves against the directory it is in and each tool nests its
+extractions under a prefix of its own.
+
+Two columns exist to keep the number honest:
+
+- **zero-fill**: of the contents only one tool has, how many are a run of
+  NULs — a file whose data that tool could not reconstruct. moria writes 28 of
+  those on `router.bin`'s JFFS2 overlay; counting them would penalise a tool
+  for not reproducing another's failure.
+- **regular vs with-symlinks**: the gap between the two is the prefix
+  artifact, and it is large enough to matter (226 "missing files" on one
+  router image that is 100% on regular files).
+
+### Measuring parity (`sweep.py`)
+
+```sh
+ls tests/fixtures/out/*.img tests/fixtures/out/*.tar.gz > /var/tmp/images.txt
+find corpus -maxdepth 3 -type f \( -name '*.bin' -o -name '*.BIN' \) -size -100M >> /var/tmp/images.txt
+
+scripts/fixtures.sh sweep --list /var/tmp/images.txt --out /var/tmp/parity \
+    --omnitrace build/linux-gcc/apps/cli/omnitrace
+```
+
+Writes `sweep.md` and `sweep.json`: per image, and pooled over the set, the
+share of each baseline's recovered contents that OmniTrace also recovered,
+plus the unweighted per-image mean, the median and every image below 95%.
+A fixture's `expected.yaml` is picked up as the pseudo-tool `expected`, which
+is the only one of the four that settles who is right.
+
+Each image's extraction trees are deleted as soon as its summary is read
+(`--keep` retains them) — four tools over a corpus is tens of gigabytes, and
+the bytes are evidence-derived. The `*.normalized.json` files keep every path
+and hash, so `--reuse` re-aggregates without re-running anything and a changed
+metric does not mean a re-run.
+
+The measured result, the method and the gaps it found are in
+**`docs/PARITY.md`**.
 
 ### Adding a tool
 

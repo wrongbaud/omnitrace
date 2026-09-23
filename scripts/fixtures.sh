@@ -7,6 +7,7 @@
 #   scripts/fixtures.sh verify                               # every image matches its expected.yaml sha256
 #   scripts/fixtures.sh clean                                # remove tests/fixtures/out
 #   scripts/fixtures.sh parity IMAGE [run.py options]        # run the parity harness on one image
+#   scripts/fixtures.sh sweep IMAGE... [sweep.py options]    # run it over many and aggregate one number
 #
 # `build` and `check` forward every other argument to tests/fixtures/build.sh
 # (see its header for --native, --only, --out). Docs: docs/TESTING.md.
@@ -65,11 +66,14 @@ EOF
   parity)
     exec python3 "$root/tests/parity/run.py" "$@"
     ;;
+  sweep)
+    exec python3 "$root/tests/parity/sweep.py" "$@"
+    ;;
   -h|--help|help)
-    sed -n '2,12p' "$0"
+    sed -n '2,13p' "$0"
     ;;
   *)
-    echo "unknown command: $cmd (build|check|list|verify|clean|parity)" >&2
+    echo "unknown command: $cmd (build|check|list|verify|clean|parity|sweep)" >&2
     exit 2
     ;;
 esac
