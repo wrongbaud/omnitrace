@@ -17,7 +17,7 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 `INFO.yaml` uses). A code listed with two severities is emitted at both;
 `where` names every site, `message` is the literal with runtime parts as `...`.
 
-374 diagnostic codes, 73 status codes.
+377 diagnostic codes, 73 status codes.
 
 ## Diagnostics
 
@@ -258,6 +258,9 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 | `qnx6-unsupported-feature` | info, warning | `src/filesystems/qnx6/Qnx6Reader.cpp:1122`, `src/filesystems/qnx6/Qnx6Reader.cpp:1127` | superblock version .......; this reader's layout was verified on version 4.x only | the superblock version is not 4.x (Warning), or the iclaim/iextra trees hold data this reader does not decode (Info) | the layout was verified on version 4.3 automotive images only; compare the walk against qnxmount |
 | `region-high-entropy` | info | `src/discovery/Recurse.cpp:881` | ... bytes at ... bits/byte (...): .... No signature matched, so it is either a format this build does not know, a headerless compressed stream, or ciphertext | an unidentified region's bytes are high-entropy and no signature matched anywhere in it; it is compressed, encrypted or a format this build does not know | entropy cannot tell compression from encryption (xz output is statistically identical to AES), so treat "random" as a lead, not a verdict; carve the region and try the vendor's tooling |
 | `region-unidentified` | info | `src/discovery/Recurse.cpp:855` | no signature matched in ... bytes | no signature matched in this gap of at least min_region_bytes | check fill (0xff/0x00 is erased or padding); otherwise strings or entropy tools |
+| `report-evidence-missing` | warning | `src/report/Integrity.cpp:46`, `src/report/Integrity.cpp:57` | '...' is not where the case recorded it, so nothing in this report could be checked against the evidence it describes | an evidence file named by the case is not where it was, or cannot be read | nothing in the report could be checked against the bytes it describes; find the file or treat the report as unverified |
+| `report-evidence-unhashed` | info | `src/report/Integrity.cpp:34` | '...' has no recorded sha256, so the report cannot say whether the evidence is unchanged | the case recorded no sha256 for a piece of evidence, so it cannot be re-checked | informational; an older case or one made with hashing off. Not a failure and not a verification either |
+| `report-integrity-mismatch` | error | `src/report/Integrity.cpp:69` | '...' no longer hashes to what the case recorded. Recorded ......, found ......; every offset in this report refers to the recorded bytes, not these | an evidence file no longer hashes to what the case recorded | every offset in the report refers to the recorded bytes, not the ones on disk now. Establish which copy is the evidence before relying on anything |
 | `romfs-bad-first-header` | warning | `src/discovery/validators/romfs.cpp:66` | first file header points past the end of the image | the first file header points past the end of the image | structural-tier hit; damaged or not romfs |
 | `romfs-bad-header` | warning | `src/filesystems/romfs/RomfsReader.cpp:370`, `src/filesystems/romfs/RomfsReader.cpp:397` | the header at ... under '...' is unreadable; the rest of this directory was not walked | a file header is unreadable or has an empty name | the rest of that directory list is not walked; entries before it are still emitted |
 | `romfs-bad-link` | warning | `src/filesystems/romfs/RomfsReader.cpp:410` | '...' is a hard link that does not resolve; skipped | a hard link does not resolve to a readable header, or a chain of them loops | the entry is skipped; the image is damaged or the offset was forged |

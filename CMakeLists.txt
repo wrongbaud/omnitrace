@@ -38,6 +38,7 @@ endif()
 # its own tests so that parallel contributors never edit a shared CMake file.
 add_subdirectory(src/core)
 add_subdirectory(src/output)
+add_subdirectory(src/report)
 add_subdirectory(src/discovery)
 add_subdirectory(src/containers)
 add_subdirectory(src/images)

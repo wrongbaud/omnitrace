@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <system_error>
@@ -38,7 +39,9 @@
 #include "omnitrace/filesystems/Filesystem.h"
 #include "omnitrace/output/Markdown.h"
 #include "omnitrace/output/Yaml.h"
+#include "omnitrace/report/Document.h"
 #include "omnitrace/rules/Sweep.h"
+#include "report_document.h"
 
 #ifndef OMNITRACE_VERSION
 #define OMNITRACE_VERSION "0.0.0"
@@ -362,8 +365,10 @@ std::string copy_image_into(const std::filesystem::path& flash, const std::strin
 // graph exists rather than during it: `discovery` has no business knowing what
 // an examiner is looking for, and a hit has to be able to name the node it
 // came from, which only exists once the graph is built.
-void run_rules(const AnalyzeArgs& a, const Manifest& m, const discovery::Listings& listings,
-               const std::shared_ptr<const Source>& image, const std::filesystem::path& out) {
+rules::SweepResult run_rules(const AnalyzeArgs& a, const Manifest& m,
+                             const discovery::Listings& listings,
+                             const std::shared_ptr<const Source>& image,
+                             const std::filesystem::path& out) {
     std::vector<rules::RulePack> packs = rules::RulePack::builtin();
     for (const std::string& path : a.rule_packs) {
         rules::RulePack p;
@@ -403,6 +408,7 @@ void run_rules(const AnalyzeArgs& a, const Manifest& m, const discovery::Listing
     write_text(out / "artifacts.md", rules::artifacts_to_markdown(m, r));
     spdlog::info("rules: {} hit(s) from {} rule(s) over {} file(s) and {} region(s)", r.hits.size(),
                  engine.content_rules() + engine.path_rules(), r.files_scanned, r.regions_scanned);
+    return r;
 }
 
 void cmd_analyze(const AnalyzeArgs& a) {
@@ -478,7 +484,28 @@ void cmd_analyze(const AnalyzeArgs& a) {
         spdlog::info("artifacts: {} record(s) from {} parsed file(s)", extracted.artifacts.size(),
                      extracted.files_examined);
 
-        if (!a.no_rules) run_rules(a, m, listings, file, out);
+        rules::SweepResult swept;
+        if (!a.no_rules) swept = run_rules(a, m, listings, file, out);
+
+        // The report last: it is the only thing that sees all of the run at
+        // once. The evidence is re-hashed here rather than trusted, because a
+        // report is a claim about specific bytes and saying so is cheap
+        // compared with being wrong about it.
+        std::vector<report::EvidenceRef> refs;
+        for (const Evidence& ev : m.evidence)
+            refs.push_back({ev.id, ev.path, ev.digests.sha256, ev.size});
+        const report::IntegrityResult integrity = report::verify_evidence(refs);
+        if (!integrity.verified)
+            spdlog::warn(
+                "report: the evidence could not be verified; see the report's first "
+                "section");
+        const report::Document doc =
+            cli::build_report(m, &integrity, &survey, &extracted, a.no_rules ? nullptr : &swept,
+                              out.filename().string());
+        write_text(out / "report.html", report::to_html(doc));
+        write_text(out / "report.md", report::to_markdown(doc));
+        spdlog::info("report: {} section(s) written to report.html and report.md",
+                     doc.sections.size());
     } else {
         write_text(out / "manifest.yaml", yaml);
     }
@@ -557,7 +584,58 @@ void set_process_argv(std::vector<std::string> argv) {
     g_argv = std::move(argv);
 }
 
+namespace {
+
+// `omnitrace report <case>` — re-render a finished case.
+//
+// Reads INFO.yaml back and rebuilds the sections the manifest holds. The
+// platform, artifact and search sections are not among them: recovering those
+// needs readers for platform.yaml, certificates.yaml and artifacts.yaml, which
+// do not exist yet, so they are left out rather than emitted empty. `analyze`
+// writes the full report because it has all four results in hand.
+//
+// It exists anyway because the integrity check is the point: re-hashing the
+// evidence months later, against a case made then, is exactly the question an
+// examiner needs answered before relying on anything in it.
+void run_report(const std::string& case_dir) {
+    const std::filesystem::path dir(case_dir);
+    const std::filesystem::path info = dir / "INFO.yaml";
+    std::error_code ec;
+    if (!std::filesystem::exists(info, ec))
+        fail("no INFO.yaml in '" + case_dir + "': not a case directory");
+
+    std::ifstream f(info, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (text.empty()) fail("'" + info.string() + "' is empty or unreadable");
+
+    Manifest m;
+    if (const Status st = output::manifest_from_yaml(text, m); !st) fail(st.error);
+
+    std::vector<report::EvidenceRef> refs;
+    for (const Evidence& ev : m.evidence)
+        refs.push_back({ev.id, ev.path, ev.digests.sha256, ev.size});
+    const report::IntegrityResult integrity = report::verify_evidence(refs);
+
+    const report::Document doc =
+        cli::build_report(m, &integrity, nullptr, nullptr, nullptr, dir.filename().string());
+    write_text(dir / "report.html", report::to_html(doc));
+    write_text(dir / "report.md", report::to_markdown(doc));
+    if (!integrity.verified)
+        spdlog::warn("the evidence could not be verified; the report's first section says why");
+    spdlog::info("report: {} section(s) written to {}/report.html and report.md",
+                 doc.sections.size(), case_dir);
+}
+
+}  // namespace
+
 void register_analyze_commands(CLI::App& app) {
+    auto* rep = app.add_subcommand("report", "Re-render a finished case directory as a report");
+    auto case_dir = std::make_shared<std::string>();
+    rep->add_option("case", *case_dir, "Case directory written by analyze")
+        ->required()
+        ->check(CLI::ExistingDirectory);
+    rep->callback([case_dir]() { run_report(*case_dir); });
+
     auto scan_args = std::make_shared<std::pair<std::string, bool>>();
     auto* scan = app.add_subcommand("scan", "Find format signatures in an image");
     scan->add_option("image", scan_args->first, "Path to image")

@@ -1029,6 +1029,18 @@ region-unidentified:
   meaning: no signature matched in this gap of at least min_region_bytes
   action: check fill (0xff/0x00 is erased or padding); otherwise strings or entropy tools
 
+report-evidence-missing:
+  meaning: an evidence file named by the case is not where it was, or cannot be read
+  action: nothing in the report could be checked against the bytes it describes; find the file or treat the report as unverified
+
+report-evidence-unhashed:
+  meaning: the case recorded no sha256 for a piece of evidence, so it cannot be re-checked
+  action: informational; an older case or one made with hashing off. Not a failure and not a verification either
+
+report-integrity-mismatch:
+  meaning: an evidence file no longer hashes to what the case recorded
+  action: every offset in the report refers to the recorded bytes, not the ones on disk now. Establish which copy is the evidence before relying on anything
+
 romfs-bad-first-header:
   meaning: the first file header points past the end of the image
   action: structural-tier hit; damaged or not romfs
