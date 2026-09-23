@@ -586,6 +586,107 @@ TEST(Analyze, ContainerWithReaderIsWalkedSizedAndDescendedInto) {
     EXPECT_EQ(inner_nodes[0]->format, "squashfs");
 }
 
+// A find inside an extracted file is carved when it is a strict sub-range of
+// that file, and is not when it is the whole of it.
+//
+// Both halves matter. Without the first, a payload holding complete binaries
+// leaves them located, sized and typed but with no digests at all -- the
+// dongle dongle's xz payload is 222 whole ARM shared objects that could not be
+// hashed, so they could not be matched against a known-file set. Without the
+// second, every whole-file find is carved as a byte-identical second copy of a
+// file the case already holds: measuring "the whole of it" against the File
+// node's `location.length` (which is a position in the *enclosing* structure,
+// not the file's size) duplicated 52 tarballs out of one router image.
+TEST(Analyze, SubRangeOfAnExtractedFileIsCarvedButTheWholeOfItIsNot) {
+    const Bytes stream = gzip_of(Bytes(40000, 'C'));
+    Bytes b(64 * 1024, 0);
+    std::copy(stream.begin(), stream.end(), b.begin() + 16 * 1024);
+
+    // The payload is padding, then a second gzip stream, then padding: the
+    // inner stream is a strict sub-range of the file the reader writes.
+    const Bytes inner_stream = gzip_of(Bytes(2048, 'D'));
+    constexpr std::size_t kAt = 2048;
+    std::vector<std::uint8_t> payload(kAt + inner_stream.size() + 1024, 0);
+    std::copy(inner_stream.begin(), inner_stream.end(),
+              payload.begin() + static_cast<std::ptrdiff_t>(kAt));
+
+    FakeContainerBehaviour cb;
+    cb.payload.assign(payload.begin(), payload.end());
+    cb.stream_len = stream.size();
+
+    TempDir out("subcarve");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.open_reader = fake_lookup();
+    opts.open_container = fake_container_lookup(cb);
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "img.bin", opts, m, listings));
+
+    const Node* outer = node_at(m, NodeKind::Container, 16 * 1024, "gzip");
+    ASSERT_NE(outer, nullptr);
+    const auto kids = m.children_of(outer->id);
+    ASSERT_EQ(kids.size(), 1u);
+    const Node* file = kids[0];
+    ASSERT_EQ(file->kind, NodeKind::File);
+
+    // The inner stream: a strict sub-range, so it is carved and hashed.
+    const auto inner_nodes = m.children_of(file->id);
+    ASSERT_FALSE(inner_nodes.empty());
+    const Node* sub = inner_nodes[0];
+    EXPECT_EQ(sub->location.offset, kAt);
+    ASSERT_NE(sub->attrs.count("carved_path"), 0u)
+        << "a strict sub-range of an extracted file has no other route to a digest";
+    const std::string carved = sub->attrs.at("carved_path");
+    // Named for the file it came from: two payloads both hold something at
+    // the same offset, and the offset alone would not say which.
+    EXPECT_EQ(carved.rfind("partitions/" + file->id + "-", 0), 0u) << carved;
+    const fsys::path on_disk = out.path / carved;
+    ASSERT_TRUE(fsys::is_regular_file(on_disk)) << on_disk;
+    EXPECT_EQ(fsys::file_size(on_disk), sub->location.length);
+    EXPECT_FALSE(sub->digests.sha256.empty()) << "carving is what gives a region its digests";
+    EXPECT_EQ(sub->digests.bytes, sub->location.length);
+    // And the bytes are the ones at that offset of the *payload*, not of the
+    // image: a sub-range is carved from the extracted file it was found in.
+    std::ifstream in(on_disk, std::ios::binary);
+    const std::string got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string want(reinterpret_cast<const char*>(payload.data()) + kAt,
+                           static_cast<std::size_t>(sub->location.length));
+    EXPECT_EQ(got, want);
+}
+
+TEST(Analyze, AFindCoveringAWholeExtractedFileIsNotCarvedAgain) {
+    const Bytes stream = gzip_of(Bytes(40000, 'C'));
+    Bytes b(64 * 1024, 0);
+    std::copy(stream.begin(), stream.end(), b.begin() + 16 * 1024);
+
+    // The payload *is* the squashfs, start to end.
+    const Bytes inner = synthetic_squashfs(3000);
+    FakeContainerBehaviour cb;
+    cb.payload.assign(inner.begin(), inner.end());
+    cb.stream_len = stream.size();
+
+    TempDir out("wholecarve");
+    AnalyzeOptions opts;
+    opts.out_dir = out.path.string();
+    opts.open_reader = fake_lookup();
+    opts.open_container = fake_container_lookup(cb);
+    Manifest m;
+    Listings listings;
+    ASSERT_TRUE(analyze(source_of(b), "img.bin", opts, m, listings));
+
+    const Node* outer = node_at(m, NodeKind::Container, 16 * 1024, "gzip");
+    ASSERT_NE(outer, nullptr);
+    const auto kids = m.children_of(outer->id);
+    ASSERT_EQ(kids.size(), 1u);
+    const auto inner_nodes = m.children_of(kids[0]->id);
+    ASSERT_FALSE(inner_nodes.empty());
+    const Node* fsnode = inner_nodes[0];
+    EXPECT_EQ(fsnode->format, "squashfs");
+    EXPECT_EQ(fsnode->attrs.count("carved_path"), 0u)
+        << "the extracted file already is these bytes; carving would duplicate it";
+}
+
 // A real gzip member is measured by the validator, so the finding has an
 // extent before the gap pass runs and no "unidentified" region is reported
 // over the bytes the stream occupies.

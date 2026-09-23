@@ -597,6 +597,19 @@ def parse_omnitrace(manifest: Path, outdir: Path) -> list[Finding]:
             f.root = own.relative_to(outdir).as_posix()
             recs += hash_tree(own)
         kids = descendants(n)
+        # Carved files count. A find that no reader can open -- a complete ELF
+        # sitting inside a decompressed payload -- is written to partitions/
+        # with its digests, which is materially what unblob does when it emits
+        # `<range>.elf32_extract/carved.elf`. Counting one and not the other
+        # measures the harness, not the tools.
+        for c in [n] + kids:
+            carved = ((c.get("attrs") or {}).get("carved_path") or "")
+            if not carved:
+                continue
+            fp = outdir / carved
+            if not fp.is_file():
+                continue
+            recs.append(FileRec(carved, fp.stat().st_size, sha256_file(fp)))
         for c in kids:
             d = files_dir_of(c)
             if d is None:

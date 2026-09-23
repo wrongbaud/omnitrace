@@ -1246,6 +1246,28 @@ std::string carve_bytes(const Span& whole, const Node& n, const std::filesystem:
                                short_read);
 }
 
+// The same, for a find whose offsets are into an extracted file rather than
+// into the evidence: a region inside a decompressed payload has its own
+// `location.source`, and the image Span cannot reach it.
+//
+// The open is cached because one payload can hold hundreds of them -- the
+// dongle dongle's xz payload is 222 shared objects, and opening a 23 MB file
+// once per object would be 222 maps of the same bytes.
+std::string carve_bytes_from(std::shared_ptr<MappedFile>& cached, std::string& cached_path,
+                             const Node& n, const std::filesystem::path& path, Digests& digests,
+                             bool& short_read) {
+    // `source_id` is the path for an extracted file (a word-swapped view is
+    // the only one that carries a "|..." suffix, and those are never here).
+    if (cached_path != n.location.source_id || !cached) {
+        std::shared_ptr<MappedFile> f;
+        if (Status st = MappedFile::open(n.location.source_id, f); !st) return st.error;
+        cached = std::move(f);
+        cached_path = n.location.source_id;
+    }
+    return stream_span_to_file(Span::whole(cached).sub(n.location.offset, n.location.length), path,
+                               digests, short_read);
+}
+
 // The corrected view's file name: the evidence's stem, the transform that was
 // undone, and .bin -- the same "-swap32" tag carved files already carry
 // (carved_file_name below).
@@ -1319,9 +1341,15 @@ std::string write_corrected_view(const AnalyzeOptions& opts, const Span& view,
 
 // The GPT label / index name of a partition entry node, or the offset-format
 // name of a nested find, made safe for every host and unique in `used`.
-std::string carved_file_name(const Node& n, bool is_entry, std::set<std::string>& used) {
+std::string carved_file_name(const Node& n, bool is_entry, std::set<std::string>& used,
+                             const std::string& owner_id) {
     std::string stem;
-    if (is_entry) {
+    if (!owner_id.empty()) {
+        // A find inside an extracted file: its offset is into that file, so
+        // two payloads both hold something at 0x7908. Naming the owning node
+        // keeps them apart and says which file to look in.
+        stem = owner_id + "-" + hex08(n.location.offset) + "-" + n.format;
+    } else if (is_entry) {
         stem = attr_or(n.attrs, "index", "p");
         std::string label = attr_or(n.attrs, "label", "");
         for (char& ch : label)
@@ -1358,6 +1386,8 @@ void carve_all(Ctx& c, const Span& whole) {
     }
 
     std::set<std::string> used;
+    std::shared_ptr<MappedFile> sub_source;  // the extracted file a sub-range is carved from
+    std::string sub_source_path;
     std::vector<std::string> ids;
     for (const Node& n : c.out.nodes()) ids.push_back(n.id);
     bool any_ok = false;
@@ -1365,6 +1395,7 @@ void carve_all(Ctx& c, const Span& whole) {
         Node* n = c.out.find(id);
         if (!n) continue;
         bool is_entry = false;
+        bool sub_file = false;
         if (n->kind == NodeKind::Partition) {
             if (attr_or(n->attrs, "role", "") == "table") continue;
             if (attr_or(n->attrs, "protective", "") == "true") continue;
@@ -1385,6 +1416,28 @@ void carve_all(Ctx& c, const Span& whole) {
                     if (!in.empty()) n->attrs["carved_in"] = in;
                     continue;
                 }
+            } else if (parent->kind == NodeKind::File) {
+                // A find inside an *extracted file* is reachable through that
+                // file only when it is the whole of it. A strict sub-range is
+                // not: the dongle dongle's xz payload is one 23 MB file
+                // holding 222 complete ARM shared objects, and until they were
+                // carved they had no digests at all -- located, sized and
+                // typed, but impossible to match against a known-file set or
+                // cite in a report. `docs/formats/elf.md` has the reasoning.
+                //
+                // "The whole of it" has to be measured against the file's own
+                // size. A File node's `location` is a position in the
+                // *enclosing* structure -- for a file inside a filesystem its
+                // `length` is the filesystem's -- so comparing against that
+                // made every whole-file find look like a sub-range and carved
+                // a byte-identical second copy of 52 tarballs and 52 gzips out
+                // of one router image.
+                const std::uint64_t file_size =
+                    parent->file ? parent->file->size : parent->digests.bytes;
+                if (n->location.offset == 0 && file_size != 0 && n->location.length >= file_size) {
+                    continue;
+                }
+                sub_file = true;
             } else if (parent->kind != NodeKind::Image) {
                 continue;  // inside a filesystem/container: reachable through its extraction
             }
@@ -1394,7 +1447,8 @@ void carve_all(Ctx& c, const Span& whole) {
                 {Severity::Info, "carve-unknown-size", "extent unknown; not carved"});
             continue;
         }
-        const std::string name = carved_file_name(*n, is_entry, used);
+        const std::string name =
+            carved_file_name(*n, is_entry, used, sub_file ? n->parent_id : std::string{});
         if (n->location.length > c.opts.max_carve_bytes) {
             const std::string why = name + " skipped: " + dec(n->location.length) +
                                     " exceeds --max-carve-bytes (" + dec(c.opts.max_carve_bytes) +
@@ -1423,7 +1477,9 @@ void carve_all(Ctx& c, const Span& whole) {
         }
         Digests d;
         bool short_read = false;
-        const std::string err = carve_bytes(whole, *n, dir / name, d, short_read);
+        const std::string err =
+            sub_file ? carve_bytes_from(sub_source, sub_source_path, *n, dir / name, d, short_read)
+                     : carve_bytes(whole, *n, dir / name, d, short_read);
         if (!err.empty()) {
             carve_partial(c, name + ": " + err);
             n->diagnostics.push_back({Severity::Error, "carve-write-failed", err});

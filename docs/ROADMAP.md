@@ -109,7 +109,7 @@ regular-file contents by sha256:
 | baseline | pooled | verdict |
 |---|---:|---|
 | moria 0.2.1 | **99.9 %** | met — every one of the 30 images is at or above 95 % |
-| unblob 26.6.4 | **98.9 %** | met — 65.7 % when first measured, see below |
+| unblob 26.6.4 | **99.6 %** | met — 65.7 % when first measured, see below |
 | ground truth (`expected.yaml`) | **100.0 %** | every file of every fixture, 179 of 179 |
 
 It did exactly what it was supposed to do: it found real gaps nobody had
@@ -129,9 +129,12 @@ and the fixture set is exact.
 eMMC; they are now read, with the GNU and BSD long-name dialects resolved, and
 that image went from 93.4 % to 99.8 % of unblob.
 
-What remains against unblob is one decision rather than a gap: unblob carves
-individual ELFs out of decompressed blobs, which is a policy difference, not
-missing data. `docs/PARITY.md` has the method, the numbers and the evidence.
+The last open question — whether to carve a structure found inside a payload
+the way unblob does — is **decided and done**. One corpus dongle's xz payload
+is 222 complete ARM shared objects that were located, sized and typed but had
+no digests at all, so they could not be matched against a known-file set; they
+are now carved. That image went from 16.8 % to 91.6 % of unblob.
+`docs/PARITY.md` has the method, the numbers and the evidence.
 
 Two of the four multi-gigabyte corpus images are in that number — the 7.8 GB
 Auto-emmc eMMC is 99.7 % of unblob and 100.0 % of moria, the 3.8 GB auto-ivi is
@@ -139,12 +142,12 @@ Auto-emmc eMMC is 99.7 % of unblob and 100.0 % of moria, the 3.8 GB auto-ivi is
 
 ## Next, in order
 
-1. **Decide, and record, whether to carve ELFs out of decompressed blobs** the
-   way unblob does (`docs/PARITY.md` §3). It is the whole of what is left
-   between the two tools — 252 contents, and the whole of the dongle dongle's
-   16.8 % — and it is a product decision, not a missing reader: the bytes are
-   already inside the payload OmniTrace emits whole. Ground truth is exact and
-   every named format gap is closed.
+1. **Finish the parity measurement** on the two corpus images still outside
+   it, `qnx` (15.7 GB) and `audio` (7.8 GB). Everything else is measured:
+   ground truth is exact, every named format gap is closed, and the carving
+   decision is made, so what is left of the unblob difference is 141 contents
+   out of 31,951 — four of the five images below 95 % are the history
+   fixtures, which are 100 % of ground truth.
 
 2. **Finish the parity measurement** on the two remaining multi-gigabyte
    corpus images, `qnx` (15.7 GB) and `audio` (7.8 GB). Four tools over that

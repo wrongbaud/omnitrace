@@ -114,13 +114,25 @@ Carving streams through bounded reads and hashes as it writes; the node gets
 | partition entry with a GPT label | `<index>-<label>.bin` | `p6-system.bin` |
 | partition entry without a label (MBR, unnamed GPT) | `<index>.bin` | `p6.bin` |
 | nested find directly under the image or a partition (`--carve all`) | `0x<offset, 8+ hex digits>-<format>.bin` | `0x03100000-squashfs.bin`, `0x00050000-uimage.bin` |
+| a **strict sub-range of an extracted file** (`--carve all`) | `<owner node>-0x<offset>-<format>.bin` | `n000096-0x00007908-elf.bin` |
+
+The sub-range row is what gives a structure inside a payload its digests. A
+decompressed firmware blob can hold complete binaries — one corpus dongle's
+xz payload is 222 whole ARM shared objects — and without a carve they are
+located, sized and typed but have no hash, so they cannot be matched against a
+known-file set. The owner node is in the name because an offset alone does not
+say which payload it is an offset into. `docs/formats/elf.md` has the
+reasoning and the cost.
 
 Not carved: table nodes, protective entries, entries past the end of the
 data, unidentified regions, finds nested inside another filesystem or
-container (they are reachable through that node's extraction), and a find
-that starts exactly at a partition's first byte (the partition file already
-is its carve; the find gets `attrs.carved_in` pointing at it). A find with an
-unknown extent gets the `carve-unknown-size` diagnostic instead of a file.
+container (they are reachable through that node's extraction), a find that
+covers **the whole of** an extracted file (that file already is those bytes —
+measured against the file's own size, not the File node's `location.length`,
+which is a position in the enclosing structure), and a find that starts
+exactly at a partition's first byte (the partition file already is its carve;
+the find gets `attrs.carved_in` pointing at it). A find with an unknown extent
+gets the `carve-unknown-size` diagnostic instead of a file.
 
 `--carve none|table|all` (default `all`): `table` carves only partition
 entries; `none` creates no `partitions/` directory at all.

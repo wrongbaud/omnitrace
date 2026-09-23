@@ -11,14 +11,15 @@ measurement, how to reproduce it, and what it found.
 |---|---:|---:|---:|---|
 | **moria** 0.2.1 | **99.9 %** | 99.9 % | 30 / 30 | **criterion met** |
 | **ground truth** (`expected.yaml`) | **100.0 %** | 100.0 % | 19 / 19 | every file of every fixture |
-| **unblob** 26.6.4 | **98.9 %** | 95.3 % | 25 / 30 | **criterion met** |
+| **unblob** 26.6.4 | **99.6 %** | 97.8 % | 25 / 30 | **criterion met** |
 | binwalk 3.1.0 | 14.9 % | 64.4 % | 8 / 15 | not a like-for-like baseline (§6) |
 
 The unblob figure was **65.7 %** when this was first measured, and ground
 truth **94.4 %**. Closing §2 (SquashFS v1–v3) took one image from 0.1 % to
-98.8 %, §1 (FAT) took ground truth to **every file of every fixture**, and §4
-(`ar`) took the 3.8 GB auto-ivi eMMC from 93.4 % to 99.8 % and the pooled
-unblob figure to 98.9 %.
+98.8 %, §1 (FAT) took ground truth to **every file of every fixture**, §4
+(`ar`) took the 3.8 GB auto-ivi eMMC from 93.4 % to 99.8 %, and §3 (carving a
+structure inside a payload) took the dongle dongle from 16.8 % to 91.6 %.
+Pooled against unblob: 65.7 % → 99.6 %.
 
 The two largest images are the best evidence that this scales: the 7.8 GB
 Auto-emmc eMMC is **99.7 % of unblob and 100.0 % of moria**, and the 3.8 GB
@@ -154,7 +155,7 @@ whose LZMA block is corrupt — zero-filled, flagged `squashfs-block-corrupt`
 and emitted rather than dropped — and two symlinks unblob refuses as path
 traversal.
 
-### 3. unblob carves sub-ranges out of decompressed blobs; OmniTrace does not
+### 3. Carving a structure inside a payload — **decided, and done**
 
 On the dongle dongle, 221 of unblob's 247 extra contents are
 `xz.uncompressed_extract/<range>.elf32_extract/carved.elf` — individual ELF
@@ -162,12 +163,29 @@ binaries cut out of one decompressed payload — plus `*.unknown` gaps around
 them. The same pattern accounts for the 4 extra contents on `router.bin`'s
 LZMA kernel and 4 on the SPI image.
 
-**No data is missing**: those byte ranges are inside the payload OmniTrace
-emits whole. It is a difference in what counts as a file, and it is the second
-largest contributor to the unblob gap (247 contents). Whether to carve ELFs
-out of a decompressed kernel is a product decision, not a bug — but it should
-be a decision on record rather than an accident, and carving them would make
-the two tools comparable on this axis.
+**No data was missing**: those byte ranges are inside the payload OmniTrace
+emits whole. What was missing was a *hash*.
+
+**Decided: carve them.** The dongle payload is one 23 MB file holding 222
+complete ARM32 shared objects — each with section headers inside its claimed
+extent and a dynamic section naming the libraries it needs, which `readelf`
+parses straight out of the payload. OmniTrace already located, sized and typed
+all 222 and gave them **no digests at all**, because digests come from carving.
+A tool that can say "a complete ARM shared object at offset 30984, 396,124
+bytes" but not what it hashes to has stopped one step short of useful: an
+examiner cannot match it against a known-file set or cite it in a report.
+
+A find inside an extracted file is now carved when it is a strict sub-range of
+that file, and not when it is the whole of it. `docs/formats/elf.md` records
+the decision, the rule and the cost (that dongle goes from 14 carved files to
+237, and 15 MB to 37 MB for a 16 MB image; every other corpus image gains
+between none and three).
+
+**The harness was also measuring the wrong thing.** It counted files under
+`filesystems/` and `containers/` but not carved ones, while counting unblob's
+`carved.elf` — so it measured the harness rather than the tools. With carved
+files counted and all 33 images re-run, the dongle goes from 16.8 % to 91.6 %
+and the pooled unblob figure from 98.9 % to 99.6 %.
 
 ### 4. `ar` static libraries were not opened — **closed**
 
@@ -212,13 +230,16 @@ still a useful cross-check.
 | criterion | state |
 |---|---|
 | ≥ 95 % vs moria | **met** — 99.9 % pooled, and every one of the 30 images is at or above 95 % |
-| ≥ 95 % vs unblob | **met** — 98.9 % pooled, up from 65.7 % as first measured |
+| ≥ 95 % vs unblob | **met** — 99.6 % pooled, up from 65.7 % as first measured |
 | fixtures vs ground truth | **100 %** — 179 of 179 contents, every file of every fixture |
 | large corpus images | 2 of 4 run (3.8 GB auto-ivi, 7.8 GB auto-emmc); `qnx` (15.7 GB) and `audio` (7.8 GB) outstanding |
 
 **Phase 1's exit criterion is met against both baselines, the fixtures are
-exact, and every named format gap is closed.** What remains against unblob is
-a single decision on record: whether to carve ELFs out of decompressed blobs
-the way it does (§3 — 252 contents, and the whole of the dongle dongle's
-16.8 %). The four fixtures below 95 % of unblob are §5 and §3, and are already
-100 % of ground truth.
+exact, every named format gap is closed, and the one open decision is made.**
+
+What is left is 141 contents out of 31,951, and it is not a gap to close: four
+of the five images below 95 % of unblob are the history fixtures of §5, where
+unblob's jefferson resurrects deleted nodes into the live tree and OmniTrace
+records them as deleted — all of them are **100 % of ground truth**. The
+fifth is the dongle dongle at 91.6 %, the remainder of §3's carving
+difference.

@@ -182,23 +182,23 @@ Source: `src/discovery/Recurse.cpp` (46 keys)
 | `block_size` | `src/discovery/Recurse.cpp:618` | block size reported by the filesystem reader (FilesystemInfo::block_size) |
 | `boot` | `src/discovery/Recurse.cpp:326` | true on an MBR entry with the 0x80 active flag |
 | `bytes` | `src/discovery/Recurse.cpp:653` | bytes the reader emitted for this filesystem (WalkResult::bytes) |
-| `carve_skipped` | `src/discovery/Recurse.cpp:1404` | why a node was not carved: max-carve-bytes when it exceeds --max-carve-bytes, disk-space when the output filesystem has no room for it |
-| `carved_in` | `src/discovery/Recurse.cpp:1385` | partitions/<file> that already contains this find (it starts at the partition's first byte) |
-| `carved_path` | `src/discovery/Recurse.cpp:1433` | partitions/<file> holding exactly location.offset .. offset+length; node digests are that file's |
+| `carve_skipped` | `src/discovery/Recurse.cpp:1458` | why a node was not carved: max-carve-bytes when it exceeds --max-carve-bytes, disk-space when the output filesystem has no room for it |
+| `carved_in` | `src/discovery/Recurse.cpp:1416` | partitions/<file> that already contains this find (it starts at the partition's first byte) |
+| `carved_path` | `src/discovery/Recurse.cpp:1489` | partitions/<file> holding exactly location.offset .. offset+length; node digests are that file's |
 | `category` | `src/discovery/Recurse.cpp:257` | signature category of the finding (filesystem, container, compressed, partition-table, kernel, bootloader, crypto, other) |
 | `claimed_size` | `src/discovery/Recurse.cpp:1089` | the entry's original size when it ran past the end of the data (partition-truncated) |
 | `compression` | `src/discovery/Recurse.cpp:619` | compression reported by the filesystem reader (FilesystemInfo::compression) |
-| `corrected_path` | `src/discovery/Recurse.cpp:1299` | case-relative path of the corrected rendering the analysis ran on (word-swapped images); every offset on this node's descendants is an offset into that file |
-| `corrected_sha256` | `src/discovery/Recurse.cpp:1300` | sha256 of the file named by corrected_path |
-| `corrected_skipped` | `src/discovery/Recurse.cpp:1273` | max-carve-bytes when the corrected view was larger than the limit and was not written |
-| `corrected_source_id` | `src/discovery/Recurse.cpp:1306` | Source id every offset in this manifest is relative to; a later pass re-opening corrected_path gets a different id and needs this to match regions |
+| `corrected_path` | `src/discovery/Recurse.cpp:1321` | case-relative path of the corrected rendering the analysis ran on (word-swapped images); every offset on this node's descendants is an offset into that file |
+| `corrected_sha256` | `src/discovery/Recurse.cpp:1322` | sha256 of the file named by corrected_path |
+| `corrected_skipped` | `src/discovery/Recurse.cpp:1295` | max-carve-bytes when the corrected view was larger than the limit and was not written |
+| `corrected_source_id` | `src/discovery/Recurse.cpp:1328` | Source id every offset in this manifest is relative to; a later pass re-opening corrected_path gets a different id and needs this to match regions |
 | `deleted` | `src/discovery/Recurse.cpp:656` | deletion records emitted with --history (WalkResult::deleted) |
 | `dirs` | `src/discovery/Recurse.cpp:650` | directory entries emitted (WalkResult::dirs) |
 | `entries` | `src/discovery/Recurse.cpp:648` | total entries emitted (WalkResult::entries) |
 | `entropy` | `src/discovery/Recurse.cpp:868` | mean Shannon entropy of the region in bits per byte, 0.000 to 8.000, over sampled windows |
 | `entropy_chi2` | `src/discovery/Recurse.cpp:876` | reduced chi-square of the sampled byte histogram against a uniform distribution; about 1.0 is uniform, far above it is structured |
 | `entropy_class` | `src/discovery/Recurse.cpp:869` | erased, sparse, text, binary, packed or random - what the region's bytes look like statistically (core/Entropy.h) |
-| `evidence` | `src/discovery/Recurse.cpp:1712` | id of the Evidence row (e1) on the Image node |
+| `evidence` | `src/discovery/Recurse.cpp:1768` | id of the Evidence row (e1) on the Image node |
 | `files` | `src/discovery/Recurse.cpp:649` | regular-file entries emitted (WalkResult::files) |
 | `fill` | `src/discovery/Recurse.cpp:867` | 0xff / 0x00 (or 0x..) when every byte of an unidentified region is that value: erased flash or padding |
 | `gpt_attributes` | `src/discovery/Recurse.cpp:323` | GPT attribute bits of the entry, when non-zero |
@@ -219,8 +219,8 @@ Source: `src/discovery/Recurse.cpp` (46 keys)
 | `type_byte` | `src/discovery/Recurse.cpp:306` | the MBR type byte again, under the format-specific key |
 | `type_guid` | `src/discovery/Recurse.cpp:304` | the GPT type GUID again, under the format-specific key |
 | `unique_guid` | `src/discovery/Recurse.cpp:314` | GPT unique partition GUID |
-| `word_swap` | `src/discovery/Recurse.cpp:1742` | swap16 or swap32 on the Image node when the dump was byte-reversed per word |
-| `word_swap_confidence` | `src/discovery/Recurse.cpp:1743` | detector score (0-100) behind word_swap |
+| `word_swap` | `src/discovery/Recurse.cpp:1798` | swap16 or swap32 on the Image node when the dump was byte-reversed per word |
+| `word_swap_confidence` | `src/discovery/Recurse.cpp:1799` | detector score (0-100) behind word_swap |
 | `written` | `src/discovery/Recurse.cpp:501` | false on a regular-file node that was not written to disk (extraction on, but the Sink skipped it) |
 
 ## validator `android-boot`
