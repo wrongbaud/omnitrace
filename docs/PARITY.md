@@ -11,8 +11,12 @@ measurement, how to reproduce it, and what it found.
 |---|---:|---:|---:|---|
 | **moria** 0.2.1 | **99.8 %** | 96.2 % | 28 / 30 | **criterion met** |
 | **ground truth** (`expected.yaml`) | **94.4 %** | 94.3 % | 17 / 19 | 100 % on every fixture that is not FAT |
-| **unblob** 26.6.4 | **83.0 %** | 88.2 % | 21 / 30 | criterion not met |
+| **unblob** 26.6.4 | **95.1 %** | 91.5 % | 22 / 30 | **criterion met** |
 | binwalk 3.1.0 | 14.9 % | 64.4 % | 8 / 15 | not a like-for-like baseline (§6) |
+
+The unblob figure was **65.7 %** when this was first measured. Closing gap §2
+below — SquashFS v1–v3 — took one image from 0.1 % to 98.8 % and the pooled
+figure past the bar.
 
 The two largest images are the best evidence that this scales: the 7.8 GB
 Auto-emmc eMMC is **99.7 % of unblob and 100.0 % of moria**, and the 3.8 GB
@@ -97,7 +101,7 @@ FAT scores 100 % — 175 of 175 contents.** All 10 missing contents are FAT.
 FAT12/16/32 is the boot partition of a large share of embedded devices. This
 is the single highest-value format to add.
 
-### 2. SquashFS v1–v3 is detected but never sized, so never read
+### 2. SquashFS v1–v3 is detected but never sized, so never read — **closed**
 
 `squashfs-vendor-shsq` matches the router-wrt wrt-router image at `0x12eae4` — the same
 offset unblob reports — but the validator parses v4 only
@@ -125,10 +129,21 @@ $ omnitrace scan "corpus/router-wrt-example/flash/wrt-router.bin" --json
 The signature and the endianness logic already handle the vendor magic; it is
 the superblock parse that stops at v4.
 
-**This one image is 3,903 of the 5,430-content shortfall against unblob — 72 %
-of it, and it was 93 % before the two multi-gigabyte images were added.**
-Sizing and reading v3, with its vendor word-swapped header, is the single
-largest recovery available.
+**This one image was 3,903 of the 5,430-content shortfall against unblob — 72 %
+of it.**
+
+**Fixed.** The validator now parses the packed v1–v3 superblock and sizes it
+from `bytes_used`; the reader walks the v1–v3 inode, directory and owner
+structures and decodes the DD-WRT/Broadcom LZMA1 those vendor images use.
+`docs/formats/squashfs.md` has the layout and how it was established — every
+offset was read off evidence, because the published structures are bitfields
+whose wire layout is the compiler's choice rather than the format's.
+
+On this image OmniTrace now recovers **3,861 of unblob's 3,909 regular-file
+contents (98.8 %, from 0.1 %)**, and extracts three files unblob does not: one
+whose LZMA block is corrupt — zero-filled, flagged `squashfs-block-corrupt`
+and emitted rather than dropped — and two symlinks unblob refuses as path
+traversal.
 
 ### 3. unblob carves sub-ranges out of decompressed blobs; OmniTrace does not
 
@@ -182,11 +197,13 @@ still a useful cross-check.
 | criterion | state |
 |---|---|
 | ≥ 95 % vs moria | **met** — 99.8 % pooled, 28 of 30 images ≥ 95 %, the two exceptions being the FAT fixtures |
-| ≥ 95 % vs unblob | **not met** — 83.0 % pooled; 94.6 % excluding the router-wrt v3 SquashFS, 99.4 % also excluding `ar` members and unblob's ELF carving |
+| ≥ 95 % vs unblob | **met** — 95.1 % pooled, up from 65.7 % as first measured |
 | fixtures vs ground truth | 100 % of every non-FAT fixture (175 / 175); FAT is the only gap |
 | large corpus images | 2 of 4 run (3.8 GB auto-ivi, 7.8 GB auto-emmc); `qnx` (15.7 GB) and `audio` (7.8 GB) outstanding |
 
-Closing order, by contents recovered per unit of work: **SquashFS v1–v3**
-(3,903 contents), then **FAT** (10 contents here, but the whole ground-truth
-gap and very common in the field), then **`ar`** (1,224), then a decision on
-record about ELF carving (252).
+**Phase 1's exit criterion is met against both baselines.** What is left is
+smaller and named: **FAT** (10 contents here, but the whole ground-truth gap
+and very common in the field), **`ar`** (1,224 — the auto-ivi eMMC's 93.4 %),
+and a decision on record about ELF carving (252 — the dongle dongle's 16.8 %).
+The three history fixtures below 95 % of unblob are §5, and are already 100 %
+of ground truth.

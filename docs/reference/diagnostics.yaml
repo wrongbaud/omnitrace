@@ -1285,6 +1285,14 @@ sparse-unknown-version:
   meaning: the version is not 1.0
   action: magic-tier hit; not a known sparse format
 
+squashfs-bad-inode-count:
+  meaning: a v1-v3 superblock claims zero inodes, which no real filesystem does
+  action: treat the match as a false positive; the magic landed on data that is not a superblock
+
+squashfs-compression-probed:
+  meaning: a v1-v3 superblock names no compressor, so one was found by decoding its first metadata block; this says which won
+  action: informational; v1-v3 predate the compression id, and a vendor (DD-WRT/Broadcom) LZMA1 variant is the common non-zlib answer
+
 squashfs-bad-block-size:
   meaning: block_size is not a power of two in 4 KiB..1 MiB
   action: magic-tier hit; not a usable superblock

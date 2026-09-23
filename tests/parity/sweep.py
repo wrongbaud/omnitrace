@@ -300,8 +300,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         rows.append(row)
         for b in BASELINES:
             d = row["baselines"].get(b)
-            if d and d["subject_of_baseline"] is not None:
-                print(f"   {SUBJECT} recovered {d['subject_of_baseline']:.1f}% of {b}", flush=True)
+            # The same unit the headline uses: distinct regular-file contents.
+            if d and d["regular_share"] is not None:
+                print(f"   {SUBJECT} recovered {d['regular_share']:.1f}% of {b}", flush=True)
 
     doc = {
         "schema": SCHEMA,

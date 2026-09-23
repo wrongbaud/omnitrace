@@ -97,7 +97,7 @@ with a meaning and an action. `analyze` will not fill the disk it writes to.
 | phase | state |
 |---|---|
 | 0 — Foundation | complete |
-| 1 — Discovery, extraction, parity | extraction complete; parity **measured** (`docs/PARITY.md`) — met against moria, not against unblob |
+| 1 — Discovery, extraction, parity | **complete** — parity measured and met against both baselines (`docs/PARITY.md`) |
 | 2 — Recovery, artifacts, reporting | complete; exit criterion verified on both the router and the 7.8 GB auto-emmc eMMC corpora |
 | 3 — Hardening and release | not started |
 | 4 — Web UI | not started, and deliberately after a release (`core-before-ui`) |
@@ -109,18 +109,23 @@ regular-file contents by sha256:
 | baseline | pooled | verdict |
 |---|---:|---|
 | moria 0.2.1 | **99.8 %** | met — 28 of 30 images ≥ 95 %, both exceptions FAT |
+| unblob 26.6.4 | **95.1 %** | met — 65.7 % when first measured, see below |
 | ground truth (`expected.yaml`) | 94.4 % | 100 % on every fixture that is not FAT |
-| unblob 26.6.4 | 83.0 % | not met — 72 % of the shortfall is one image |
 
-It did exactly what it was supposed to do: it found two real gaps nobody had
-noticed. **FAT is not identified at all** — no signature, so `fat32.img`
-extracts nothing and it is the *entire* difference from ground truth. And
-**SquashFS v1–v3 is detected but never sized**, so the router-wrt image's v3
-Broadcom filesystem is seen at the right offset, carries `extent: unknown`,
-is never handed to a reader, and 3,903 contents are lost with it — on its own
-93 % of the unblob shortfall. The rest of the unblob gap is unblob carving
-individual ELFs out of decompressed blobs, which is a policy difference, not
-missing data. `docs/PARITY.md` has the method, the numbers and the evidence.
+It did exactly what it was supposed to do: it found real gaps nobody had
+noticed, and the largest is now closed. **SquashFS v1–v3 was detected but
+never sized**, so the router-wrt image's v3 Broadcom filesystem was seen at the
+right offset, carried `extent: unknown`, was never handed to a reader, and
+3,903 contents went with it — 72 % of the whole unblob shortfall. Reading
+v1–v3 took that image from 0.1 % to 98.8 % and the pooled figure from 65.7 %
+to 95.1 %.
+
+What remains: **FAT is not identified at all** — no signature, so `fat32.img`
+extracts nothing, and it is the *entire* difference from ground truth.
+**`ar` static libraries are not opened** (1,224 contents on the auto-ivi eMMC).
+The rest of the unblob gap is unblob carving individual ELFs out of
+decompressed blobs, which is a policy difference, not missing data.
+`docs/PARITY.md` has the method, the numbers and the evidence.
 
 Two of the four multi-gigabyte corpus images are in that number — the 7.8 GB
 Auto-emmc eMMC is 99.7 % of unblob and 100.0 % of moria, the 3.8 GB auto-ivi is
@@ -128,11 +133,10 @@ Auto-emmc eMMC is 99.7 % of unblob and 100.0 % of moria, the 3.8 GB auto-ivi is
 
 ## Next, in order
 
-1. **Close the two gaps parity found** (`docs/PARITY.md`), in this order:
-   **SquashFS v1–v3** — the validator stops at v4, so a v3 superblock is
-   identified and then dropped for want of an extent; worth 3,903 contents on
-   the router-wrt image alone. Then **FAT12/16/32**, which has no signature at all
-   and is the boot partition of a large share of embedded devices. Then a
+1. **Close the gaps parity still shows** (`docs/PARITY.md`): **FAT12/16/32**,
+   which has no signature at all, is the boot partition of a large share of
+   embedded devices and is the entire remaining difference from ground truth.
+   Then **`ar` static libraries** (1,224 contents on the auto-ivi eMMC). Then a
    decision on record about whether to carve ELFs out of decompressed blobs
    the way unblob does.
 

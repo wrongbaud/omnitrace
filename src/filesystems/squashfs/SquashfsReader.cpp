@@ -42,6 +42,15 @@ constexpr std::size_t kInodeHeaderSize = 16;
 constexpr std::size_t kDirHeaderSize = 12;
 constexpr std::size_t kDirEntrySize = 8;
 constexpr std::size_t kFragEntrySize = 16;
+// v1-v3. The base inode header is 12 bytes (type/mode/uid/guid packed into one
+// 32-bit word, then mtime and inode_number), the directory header is 9 and the
+// directory entry 5 -- all confirmed byte for byte against a corpus image,
+// because the published structs are bitfields whose wire layout the compiler
+// chooses. `docs/formats/squashfs.md` records the layout and how it was read.
+constexpr std::size_t kLegacyInodeBase = 12;
+constexpr std::size_t kLegacyDirHeaderSize = 9;
+constexpr std::size_t kLegacyDirEntrySize = 5;
+constexpr std::uint8_t kLegacyNoOwner = 0xFF;  // "no guid" sentinel in v1-v3
 constexpr std::size_t kXattrIdSize = 16;
 constexpr std::size_t kIdSize = 4;
 
@@ -88,6 +97,7 @@ constexpr const char* kCodeLimitFiles = "squashfs-limit-files";
 constexpr const char* kCodeLimitFileBytes = "squashfs-limit-file-bytes";
 constexpr const char* kCodeSinkError = "squashfs-sink-error";
 constexpr const char* kCodeRootInvalid = "squashfs-root-invalid";
+constexpr const char* kCodeCompressionProbed = "squashfs-compression-probed";
 
 std::string dec(std::uint64_t v) {
     return std::to_string(v);
@@ -150,6 +160,11 @@ struct Superblock {
     std::uint64_t root_inode = 0, bytes_used = 0;
     std::uint64_t id_table_start = 0, xattr_id_table_start = 0, inode_table_start = 0;
     std::uint64_t directory_table_start = 0, fragment_table_start = 0, export_table_start = 0;
+    // v1-v3 only. Those keep two separate owner tables of 32-bit ids rather
+    // than v4's one, and name no compressor at all (see `probe_codec`).
+    bool legacy = false;
+    std::uint64_t uid_start = 0, guid_start = 0;
+    std::uint8_t no_uids = 0, no_guids = 0;
 };
 
 // Decoded metadata block plus the offset of the block that follows it.
@@ -297,8 +312,20 @@ struct SquashfsReader::Impl {
 
     // -------------------------------------------------------------- superblock
     Status parse_superblock();
+    Status parse_legacy_superblock();
+    // v1-v3 name no compressor, so one has to be found by trying. See the
+    // definition for why that is safe and what it costs.
+    void probe_codec();
+    // Vendor LZMA1: five header bytes (properties + dictionary size), then the
+    // stream, with neither a size field nor an end marker. `expected` is the
+    // size squashfs already knows; a short result is kept, because a block that
+    // stops early is damaged data rather than a reason to lose the file.
+    bool decode_legacy_lzma(std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out,
+                            std::size_t expected) const;
+    bool legacy_lzma = false;
     Status load_compressor_options();
     void load_id_table();
+    void load_legacy_id_tables();
     void load_xattr_header();
 
     // -------------------------------------------------------------- metadata
@@ -331,12 +358,32 @@ struct SquashfsReader::Impl {
         out = ids[idx];
         return true;
     }
+    // v1-v3 keep two tables and an index into each, and spell "this file has
+    // no group of its own" as guid index 0xFF, which means the group is the
+    // owner. v4 folded both into one table, so only the legacy path needs
+    // this. Returns false when an index is outside its table.
+    bool lookup_legacy_owner(std::uint16_t uid_idx, std::uint16_t guid_idx, std::uint32_t& uid,
+                             std::uint32_t& gid) const {
+        if (!ids_ok || uid_idx >= uids.size()) return false;
+        uid = uids[uid_idx];
+        if (guid_idx == kLegacyNoOwner) {
+            gid = uid;
+            return true;
+        }
+        if (guid_idx >= guids.size()) return false;
+        gid = guids[guid_idx];
+        return true;
+    }
+    std::vector<std::uint32_t> uids, guids;  // v1-v3 only
     bool lookup_fragment(std::uint32_t idx, std::uint64_t& start, std::uint32_t& size,
                          std::string* why);
     bool lookup_xattr_count(std::uint32_t idx, std::uint32_t& count, std::string* why);
 
     // -------------------------------------------------------------- inodes / dirs
     bool read_inode(std::uint64_t ref, Inode& ino, std::string* why, const char** code = nullptr);
+    bool read_legacy_inode(std::uint64_t ref, Inode& ino, std::string* why, const char** code);
+    bool read_legacy_directory(const Inode& dir, std::vector<DirEntry>& entries, std::string* why,
+                               bool* limit_hit);
     // `limit_hit` is set when Limits::max_nodes_per_fs stopped the listing
     // (entries holds what was read so far); other failures leave it false.
     bool read_directory(const Inode& dir, std::vector<DirEntry>& entries, std::string* why,
@@ -370,10 +417,15 @@ Status SquashfsReader::Impl::parse_superblock() {
         sb.endian = Endian::Big;
         known = true;
     } else if (sb.magic == "shsq" || sb.magic == "qshs") {
+        // A vendor magic says nothing about byte order, so take whichever
+        // makes s_major a version that exists. v3 is what the DD-WRT/Broadcom
+        // "shsq" images in the corpus actually are, so 4 alone is not enough.
         const auto le = span.at<std::uint16_t>(28, Endian::Little);
         const auto be = span.at<std::uint16_t>(28, Endian::Big);
-        sb.endian = (le && *le == kMajor) ? Endian::Little
-                                          : ((be && *be == kMajor) ? Endian::Big : Endian::Little);
+        auto plausible = [](const std::optional<std::uint16_t>& v) {
+            return v && *v >= 1 && *v <= kMajor;
+        };
+        sb.endian = plausible(le) ? Endian::Little : (plausible(be) ? Endian::Big : Endian::Little);
         known = true;
     }
     if (!known) return Status::fail("squashfs-bad-superblock: magic is not a SquashFS magic");
@@ -401,9 +453,10 @@ Status SquashfsReader::Impl::parse_superblock() {
     sb.fragment_table_start = g64(80);
     sb.export_table_start = g64(88);
 
+    if (sb.major >= 1 && sb.major < kMajor) return parse_legacy_superblock();
     if (sb.major != kMajor)
         return Status::fail("squashfs-unsupported-version: major " + dec(sb.major) +
-                            " (only 4 is supported)");
+                            " (1 to 4 are supported)");
     if (sb.block_log < kMinBlockLog || sb.block_log > kMaxBlockLog)
         return Status::fail("squashfs-bad-superblock: block_log " + dec(sb.block_log) +
                             " outside 12..20");
@@ -426,6 +479,151 @@ Status SquashfsReader::Impl::parse_superblock() {
                               "compression id " + dec(sb.compression) +
                                   " is not known; compressed blocks cannot be decoded"});
     return Status::success();
+}
+
+// Vendor LZMA1, as DD-WRT/Broadcom squashfs stores it: five properties bytes
+// then a raw stream with no size and no end marker. `kFilterLzma1Ext` is the
+// liblzma filter for exactly that -- it stops when told how much to produce.
+//
+// A block that produces less than `expected` keeps what it produced and still
+// returns true when something came out: one damaged block inside a large file
+// costs that block, not the file. The caller reports it.
+bool SquashfsReader::Impl::decode_legacy_lzma(std::span<const std::uint8_t> in,
+                                              std::vector<std::uint8_t>& out,
+                                              std::size_t expected) const {
+    constexpr std::size_t kPropsBytes = 5;
+    if (in.size() <= kPropsBytes) return false;
+    compress::RawFilter f;
+    f.id = compress::kFilterLzma1Ext;
+    f.props.assign(in.begin(), in.begin() + kPropsBytes);
+    const std::span<const std::uint8_t> body = in.subspan(kPropsBytes);
+    const compress::RawFilter chain[1] = {f};
+    const Status st = compress::decompress_raw(chain, body, out, expected);
+    if (st) return true;
+    // decompress_raw leaves a short result in `out` and says so; anything else
+    // cleared it.
+    return !out.empty();
+}
+
+// v1-v3: the packed superblock (`docs/formats/squashfs.md`). Called from
+// parse_superblock() once s_major says the image is not v4; the magic, the
+// byte order and sb.major/minor are already set.
+Status SquashfsReader::Impl::parse_legacy_superblock() {
+    const Endian e = sb.endian;
+    sb.legacy = true;
+    const std::uint64_t need = sb.major >= 3 ? 119u : (sb.major == 2 ? 63u : 51u);
+    if (span.size() < need)
+        return Status::fail("squashfs-bad-superblock: fewer than " + dec(need) + " bytes for a v" +
+                            dec(sb.major) + " superblock");
+    auto g16 = [&](std::uint64_t off) { return *span.at<std::uint16_t>(off, e); };
+    auto g32 = [&](std::uint64_t off) { return *span.at<std::uint32_t>(off, e); };
+    auto g64 = [&](std::uint64_t off) { return *span.at<std::uint64_t>(off, e); };
+    auto g8 = [&](std::uint64_t off) { return *span.at<std::uint8_t>(off, e); };
+
+    // Fields the 32-bit layout always has.
+    sb.inodes = g32(4);
+    sb.bytes_used = g32(8);
+    sb.uid_start = g32(12);
+    sb.guid_start = g32(16);
+    sb.inode_table_start = g32(20);
+    sb.directory_table_start = g32(24);
+    sb.block_log = g16(34);
+    sb.flags = g8(36);
+    sb.no_uids = g8(37);
+    sb.no_guids = g8(38);
+    sb.mkfs_time = g32(39);
+    sb.root_inode = g64(43);
+    // v1 has only the 16-bit block size, so it cannot exceed 32 KiB.
+    sb.block_size = sb.major >= 2 ? g32(51) : g16(32);
+    sb.fragments = sb.major >= 2 ? g32(55) : 0;
+    sb.fragment_table_start = sb.major >= 2 ? g32(59) : kInvalidBlk;
+
+    // v3 widened everything. The 32-bit twins stay valid below 4 GiB and go to
+    // zero above it, so prefer the wide field only when it says something.
+    if (sb.major >= 3) {
+        const std::uint64_t wide_used = g64(63);
+        const std::uint64_t wide_uid = g64(71);
+        const std::uint64_t wide_guid = g64(79);
+        const std::uint64_t wide_inode = g64(87);
+        const std::uint64_t wide_dir = g64(95);
+        const std::uint64_t wide_frag = g64(103);
+        if (wide_used >= need) sb.bytes_used = wide_used;
+        if (wide_uid >= need) sb.uid_start = wide_uid;
+        if (wide_guid >= need) sb.guid_start = wide_guid;
+        if (wide_inode >= need) sb.inode_table_start = wide_inode;
+        if (wide_dir >= need) sb.directory_table_start = wide_dir;
+        if (wide_frag >= need) sb.fragment_table_start = wide_frag;
+    }
+    if (sb.fragments == 0) sb.fragment_table_start = kInvalidBlk;
+    // v1-v3 have no xattrs and no export table this reader uses.
+    sb.xattr_id_table_start = kInvalidBlk;
+    sb.export_table_start = kInvalidBlk;
+    sb.id_table_start = kInvalidBlk;
+
+    if (sb.block_log < kMinBlockLog || sb.block_log > kMaxBlockLog)
+        return Status::fail("squashfs-bad-superblock: block_log " + dec(sb.block_log) +
+                            " outside 12..20");
+    if (sb.block_size != (1u << sb.block_log))
+        return Status::fail("squashfs-bad-superblock: block_size " + dec(sb.block_size) +
+                            " != 1 << block_log " + dec(sb.block_log));
+    if (sb.bytes_used < need)
+        return Status::fail("squashfs-bad-superblock: bytes_used " + dec(sb.bytes_used) +
+                            " smaller than the superblock");
+    if (sb.bytes_used > span.size())
+        open_diags.push_back({Severity::Warning, kCodeTruncatedImage,
+                              "bytes_used " + dec(sb.bytes_used) + " exceeds the " +
+                                  dec(span.size()) + " bytes available"});
+    probe_codec();
+    return Status::success();
+}
+
+// v1-v3 record no compression id: the format assumed zlib, and the vendors who
+// changed it changed the magic instead. So the compressor is found by decoding
+// the first metadata block of the inode table with each candidate and keeping
+// the one that works.
+//
+// This is safe because it is a decode, not a guess: a wrong codec fails on a
+// block whose length the superblock already fixed, and a right one produces
+// the table the rest of the walk then reads. It costs one block per image.
+//
+// Broadcom's LZMA is the reason this exists. It stores LZMA1 with a five-byte
+// header (properties plus dictionary size) and no uncompressed-size field and
+// no end marker, which `kFilterLzma1Ext` handles by being told the size --
+// exactly what squashfs knows for every block it asks for.
+void SquashfsReader::Impl::probe_codec() {
+    codec.reset();
+    legacy_lzma = false;
+    const auto hdr = span.at<std::uint16_t>(sb.inode_table_start, sb.endian);
+    if (!hdr) return;
+    const std::size_t on_disk = *hdr & 0x7FFFu;
+    if ((*hdr & kMetaUncompressed) != 0) {
+        // Nothing compressed to learn from; zlib is the format's default and
+        // costs nothing if no compressed block ever turns up.
+        codec = compress::Codec::Zlib;
+        return;
+    }
+    if (on_disk == 0 || on_disk > kMetadataSize) return;
+    auto in = span.bytes(sb.inode_table_start + 2, on_disk);
+    if (!in) return;
+    std::vector<std::uint8_t> out;
+    if (compress::decompress(compress::Codec::Zlib, *in, out, kMetadataSize)) {
+        codec = compress::Codec::Zlib;
+        return;
+    }
+    if (decode_legacy_lzma(*in, out, kMetadataSize)) {
+        codec = compress::Codec::Lzma;
+        legacy_lzma = true;
+        open_diags.push_back(
+            {Severity::Info, kCodeCompressionProbed,
+             "the v" + dec(sb.major) +
+                 " superblock names no compressor; metadata decodes as vendor LZMA1 with a "
+                 "five-byte header (DD-WRT/Broadcom)"});
+        return;
+    }
+    open_diags.push_back({Severity::Error, kCodeUnsupportedCompression,
+                          "the v" + dec(sb.major) +
+                              " superblock names no compressor and its metadata decodes as "
+                              "neither zlib nor vendor LZMA1"});
 }
 
 Status SquashfsReader::Impl::load_compressor_options() {
@@ -472,9 +670,41 @@ Status SquashfsReader::Impl::load_compressor_options() {
     return Status::success();
 }
 
+// v1-v3 owner tables. Unlike every other table in the format these are not
+// metadata blocks: they are plain arrays of 32-bit ids at uid_start and
+// guid_start, uncompressed, which is why they are read here rather than
+// through indexed_block().
+void SquashfsReader::Impl::load_legacy_id_tables() {
+    uids.clear();
+    guids.clear();
+    ids_ok = false;
+    auto load = [&](std::uint64_t start, std::size_t count, const char* what,
+                    std::vector<std::uint32_t>& out) {
+        if (count == 0) return true;
+        const auto raw = span.bytes(start, count * kIdSize);
+        if (!raw) {
+            open_diags.push_back({Severity::Warning, kCodeMetadataCorrupt,
+                                  std::string(what) + " table at " + hex(start) + " (" +
+                                      dec(count) + " entries) runs past the image"});
+            return false;
+        }
+        out.reserve(count);
+        for (std::size_t i = 0; i < count; ++i)
+            out.push_back(ld<std::uint32_t>(raw->data() + i * kIdSize));
+        return true;
+    };
+    if (!load(sb.uid_start, sb.no_uids, "uid", uids)) return;
+    if (!load(sb.guid_start, sb.no_guids, "guid", guids)) return;
+    ids_ok = true;
+}
+
 void SquashfsReader::Impl::load_id_table() {
     ids.clear();
     ids_ok = false;
+    if (sb.legacy) {
+        load_legacy_id_tables();
+        return;
+    }
     if (sb.no_ids == 0) {
         ids_ok = true;
         return;
@@ -567,11 +797,20 @@ std::shared_ptr<const MetaBlock> SquashfsReader::Impl::meta_block(std::uint64_t 
                        " is compressed with unsupported compression id " + dec(sb.compression);
             return nullptr;
         }
-        const Status s = compress::decompress(*codec, in, blk->data, kMetadataSize);
-        if (!s) {
-            if (why)
-                *why = "metadata block at " + hex(off) + " does not decompress (" + s.error + ")";
-            return nullptr;
+        if (legacy_lzma) {
+            if (!decode_legacy_lzma(in, blk->data, kMetadataSize)) {
+                if (why)
+                    *why = "metadata block at " + hex(off) + " does not decode as vendor LZMA1";
+                return nullptr;
+            }
+        } else {
+            const Status s = compress::decompress(*codec, in, blk->data, kMetadataSize);
+            if (!s) {
+                if (why)
+                    *why =
+                        "metadata block at " + hex(off) + " does not decompress (" + s.error + ")";
+                return nullptr;
+            }
         }
     } else {
         blk->data.assign(in.begin(), in.end());
@@ -676,8 +915,101 @@ bool SquashfsReader::Impl::lookup_xattr_count(std::uint32_t idx, std::uint32_t& 
 
 // ---------------------------------------------------------------- inodes
 
+// v1-v3 inodes. The base header is 12 bytes -- type, mode, uid index and guid
+// index packed into one 32-bit word, then mtime and inode_number -- against
+// v4's 16, and every type that follows is laid out differently.
+//
+// The word is packed from the low bits on a little-endian build, which is how
+// the compiler lays out the published bitfield struct; reading it as one
+// integer and shifting is the only way to get the same answer on both byte
+// orders. Confirmed field by field against a corpus image
+// (`docs/formats/squashfs.md`).
+bool SquashfsReader::Impl::read_legacy_inode(std::uint64_t ref, Inode& ino, std::string* why,
+                                             const char** code) {
+    ino = Inode{};
+    if (code) *code = kCodeMetadataCorrupt;
+    MetaCursor c = cursor_for_ref(sb.inode_table_start, ref);
+    std::uint8_t h[kLegacyInodeBase];
+    if (!meta_read(c, h, why)) return false;
+    const std::uint32_t w = ld<std::uint32_t>(h + 0);
+    ino.type = static_cast<std::uint16_t>(w & 0xFu);
+    ino.mode = static_cast<std::uint16_t>((w >> 4) & 0xFFFu);
+    ino.uid_idx = static_cast<std::uint16_t>((w >> 16) & 0xFFu);
+    ino.gid_idx = static_cast<std::uint16_t>((w >> 24) & 0xFFu);
+    ino.mtime = ld<std::uint32_t>(h + 4);
+    ino.inode_number = ld<std::uint32_t>(h + 8);
+
+    std::uint8_t b[32];
+    auto u16 = [&](std::size_t off) { return ld<std::uint16_t>(b + off); };
+    auto u32 = [&](std::size_t off) { return ld<std::uint32_t>(b + off); };
+    auto u64 = [&](std::size_t off) { return ld<std::uint64_t>(b + off); };
+    auto need = [&](std::size_t n) { return meta_read(c, std::span<std::uint8_t>(b, n), why); };
+
+    switch (ino.type) {
+        case kDir:   // u32 nlink, u32 (file_size:19 | offset:13), u32 start_block, u32 parent
+        case kLDir:  // the same, then u16 i_count and an index this reader does not need
+            if (!need(16)) return false;
+            ino.nlink = u32(0);
+            ino.dir_size = u32(4) & 0x7FFFFu;
+            ino.dir_block_offset = static_cast<std::uint16_t>((u32(4) >> 19) & 0x1FFFu);
+            ino.dir_start_block = u32(8);
+            ino.parent_inode = u32(12);
+            return true;
+        case kFile:  // u64 start_block, u32 fragment, u32 offset, u32 file_size, u32 blocks[]
+            if (!need(20)) return false;
+            ino.start_block = u64(0);
+            ino.fragment = u32(8);
+            ino.block_offset = u32(12);
+            ino.file_size = u32(16);
+            ino.blocks_cursor = c;
+            return true;
+        case kSymlink: {  // u32 nlink, u16 target_size, char target[]
+            if (!need(6)) return false;
+            ino.nlink = u32(0);
+            const std::uint16_t tsize = u16(4);
+            std::uint8_t chunk[256];
+            std::size_t left = tsize;
+            ino.target.reserve(tsize);
+            while (left > 0) {
+                const std::size_t n = std::min<std::size_t>(left, sizeof(chunk));
+                if (!meta_read(c, std::span<std::uint8_t>(chunk, n), why)) return false;
+                ino.target.append(reinterpret_cast<const char*>(chunk), n);
+                left -= n;
+            }
+            return true;
+        }
+        case kBlkdev:
+        case kChrdev:  // u32 nlink, u32 rdev
+            if (!need(8)) return false;
+            ino.nlink = u32(0);
+            ino.rdev = u32(4);
+            return true;
+        case kFifo:
+        case kSocket:  // u32 nlink
+            if (!need(4)) return false;
+            ino.nlink = u32(0);
+            return true;
+        case kLFile:
+            // v1-v3 have an extended regular inode whose layout no image in
+            // the corpus uses. Refusing it by name beats guessing a layout and
+            // emitting a file made of the wrong bytes.
+            if (why)
+                *why = "inode at ref " + hex(ref) + " is a v" + dec(sb.major) +
+                       " extended regular file, a layout this reader does not have an example of";
+            if (code) *code = kCodeBadInodeType;
+            return false;
+        default:
+            if (why)
+                *why = "inode at ref " + hex(ref) + " has type " + dec(ino.type) +
+                       ", which is not a v" + dec(sb.major) + " inode type";
+            if (code) *code = kCodeBadInodeType;
+            return false;
+    }
+}
+
 bool SquashfsReader::Impl::read_inode(std::uint64_t ref, Inode& ino, std::string* why,
                                       const char** code) {
+    if (sb.legacy) return read_legacy_inode(ref, ino, why, code);
     ino = Inode{};
     if (code) *code = kCodeMetadataCorrupt;
     MetaCursor c = cursor_for_ref(sb.inode_table_start, ref);
@@ -800,8 +1132,82 @@ bool SquashfsReader::Impl::read_inode(std::uint64_t ref, Inode& ino, std::string
     }
 }
 
+// v1-v3 directory listings: a 9-byte header (count, then a 32-bit start block
+// and a 32-bit base inode number) followed by 5-byte entries whose first 16
+// bits pack the metadata offset and the type together.
+//
+// The 9 is the part worth knowing. The published struct is
+// `count:8; start_block:24; inode_number:32`, which reads as 8 bytes, and 8
+// produces names that are one byte adrift on the second entry and garbage
+// after that. Nine is what the bytes say: parsing a corpus image's root
+// directory with it consumes exactly the 231 bytes the inode claims and
+// yields 22 clean names, where 8 consumes 46 and yields none.
+bool SquashfsReader::Impl::read_legacy_directory(const Inode& dir, std::vector<DirEntry>& entries,
+                                                 std::string* why, bool* limit_hit) {
+    entries.clear();
+    if (limit_hit) *limit_hit = false;
+    if (dir.dir_size <= 3) return true;  // as v4: the size counts 3 extra
+    std::uint64_t remaining = dir.dir_size - 3;
+    MetaCursor c = cursor_for_ref(
+        sb.directory_table_start,
+        (static_cast<std::uint64_t>(dir.dir_start_block) << 16) | dir.dir_block_offset);
+    while (remaining > 0) {
+        if (remaining < kLegacyDirHeaderSize) {
+            if (why)
+                *why = dec(remaining) +
+                       " trailing bytes in a directory listing are too short for a header";
+            return false;
+        }
+        std::uint8_t h[kLegacyDirHeaderSize];
+        if (!meta_read(c, h, why)) return false;
+        remaining -= kLegacyDirHeaderSize;
+        const std::uint32_t count = static_cast<std::uint32_t>(h[0]) + 1;  // stored as count - 1
+        const std::uint32_t start = ld<std::uint32_t>(h + 1);
+        const std::uint32_t base_inode = ld<std::uint32_t>(h + 5);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            if (entries.size() >= limits().max_nodes_per_fs) {
+                if (limit_hit) *limit_hit = true;
+                if (why)
+                    *why = "listing has more than max_nodes_per_fs (" +
+                           dec(limits().max_nodes_per_fs) + ") entries";
+                return false;
+            }
+            if (remaining < kLegacyDirEntrySize) {
+                if (why)
+                    *why = "directory entry " + dec(i) + " of " + dec(count) +
+                           " runs past the listing";
+                return false;
+            }
+            std::uint8_t e[kLegacyDirEntrySize];
+            if (!meta_read(c, e, why)) return false;
+            remaining -= kLegacyDirEntrySize;
+            DirEntry d;
+            const std::uint16_t packed = ld<std::uint16_t>(e + 0);
+            const std::size_t name_len = static_cast<std::size_t>(e[2]) + 1;
+            const std::int16_t inode_delta = ld<std::int16_t>(e + 3);
+            d.type = static_cast<std::uint16_t>(packed >> 13);
+            d.inode_ref = (static_cast<std::uint64_t>(start) << 16) | (packed & 0x1FFFu);
+            d.inode_number =
+                static_cast<std::uint32_t>(static_cast<std::int64_t>(base_inode) + inode_delta);
+            if (remaining < name_len) {
+                if (why)
+                    *why =
+                        "directory entry name (" + dec(name_len) + " bytes) runs past the listing";
+                return false;
+            }
+            std::vector<std::uint8_t> name(name_len);
+            if (!meta_read(c, name, why)) return false;
+            remaining -= name_len;
+            d.name.assign(name.begin(), name.end());
+            entries.push_back(std::move(d));
+        }
+    }
+    return true;
+}
+
 bool SquashfsReader::Impl::read_directory(const Inode& dir, std::vector<DirEntry>& entries,
                                           std::string* why, bool* limit_hit) {
+    if (sb.legacy) return read_legacy_directory(dir, entries, why, limit_hit);
     entries.clear();
     if (limit_hit) *limit_hit = false;
     // The kernel treats file_size as (bytes on disk + 3); a size of 3 or less
@@ -878,15 +1284,21 @@ FileMeta SquashfsReader::Impl::make_meta(const std::string& path, const Inode& i
     m.inode = ino.inode_number;
     m.nlink = ino.nlink;
     std::uint32_t uid = 0, gid = 0;
-    const bool uid_ok = lookup_id(ino.uid_idx, uid);
-    const bool gid_ok = lookup_id(ino.gid_idx, gid);
+    bool uid_ok = true, gid_ok = true;
+    if (sb.legacy) {
+        uid_ok = gid_ok = lookup_legacy_owner(ino.uid_idx, ino.gid_idx, uid, gid);
+    } else {
+        uid_ok = lookup_id(ino.uid_idx, uid);
+        gid_ok = lookup_id(ino.gid_idx, gid);
+    }
     m.uid = uid;
     m.gid = gid;
     if ((!uid_ok || !gid_ok) && !w.bad_id_reported) {
         w.bad_id_reported = true;
+        const std::size_t table = sb.legacy ? uids.size() + guids.size() : ids.size();
         diag(*w.out, Severity::Warning, kCodeBadId,
              "'" + path + "' references id index " + dec(uid_ok ? ino.gid_idx : ino.uid_idx) +
-                 " outside the id table (" + dec(ids.size()) +
+                 " outside the id table (" + dec(table) +
                  " entries); uid/gid reported as 0 (reported once)");
     }
     switch (m.kind) {
@@ -968,11 +1380,20 @@ bool SquashfsReader::Impl::decode_fragment(std::uint64_t start, std::uint32_t si
                        " is compressed with unsupported compression id " + dec(sb.compression);
             return false;
         }
-        const Status s = compress::decompress(*codec, in, frag_cache, sb.block_size);
-        if (!s) {
-            if (why)
-                *why = "fragment block at " + hex(start) + " does not decompress (" + s.error + ")";
-            return false;
+        if (legacy_lzma) {
+            if (!decode_legacy_lzma(in, frag_cache, sb.block_size)) {
+                if (why)
+                    *why = "fragment block at " + hex(start) + " does not decode as vendor LZMA1";
+                return false;
+            }
+        } else {
+            const Status s = compress::decompress(*codec, in, frag_cache, sb.block_size);
+            if (!s) {
+                if (why)
+                    *why = "fragment block at " + hex(start) + " does not decompress (" + s.error +
+                           ")";
+                return false;
+            }
         }
     } else {
         frag_cache.assign(in.begin(), in.end());
@@ -1061,6 +1482,18 @@ bool SquashfsReader::Impl::stream_file(const FileMeta& meta, Inode& ino, Walk& w
                 if (!codec) {
                     ok = false;
                     why = "unsupported compression id " + dec(sb.compression);
+                } else if (legacy_lzma) {
+                    // Vendor LZMA1 has no size of its own, and squashfs knows
+                    // it: `expected` is what the block list says this block
+                    // decodes to.
+                    if (decode_legacy_lzma(data, out_buf, static_cast<std::size_t>(expected)) &&
+                        out_buf.size() == expected) {
+                        data = out_buf;
+                    } else {
+                        ok = false;
+                        why = "block does not decode as vendor LZMA1 to " + dec(expected) +
+                              " bytes (got " + dec(out_buf.size()) + ")";
+                    }
                 } else {
                     const Status s = compress::decompress_exact(*codec, data, out_buf,
                                                                 static_cast<std::size_t>(expected));
@@ -1325,7 +1758,13 @@ FilesystemInfo SquashfsReader::info() const {
     const Superblock& sb = im.sb;
     fi.size = sb.bytes_used;
     fi.block_size = sb.block_size;
-    fi.compression = compression_name(sb.compression);
+    // v1-v3 record no compression id, so report what the probe actually
+    // decoded rather than "unknown" -- an examiner reading the summary wants
+    // to know the image is LZMA, not that the field is missing.
+    fi.compression =
+        sb.legacy ? (im.legacy_lzma ? "lzma-vendor"
+                                    : (im.codec ? compress::codec_name(*im.codec) : "unknown"))
+                  : compression_name(sb.compression);
     fi.endian = sb.endian;
     fi.attrs["version"] = dec(sb.major) + "." + dec(sb.minor);
     fi.attrs["magic"] = sb.magic;

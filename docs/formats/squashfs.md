@@ -1,4 +1,4 @@
-# SquashFS v4
+# SquashFS v1–v4
 
 Reader: `src/filesystems/squashfs/SquashfsReader.{h,cpp}` (`fs::FilesystemReader`,
 format id `squashfs`). Validator: `src/discovery/validators/squashfs.cpp`.
@@ -6,15 +6,16 @@ Tests: `tests/unit/filesystems/squashfs_test.cpp`.
 
 SquashFS is the read-only compressed filesystem found in the majority of Linux
 router, camera, NAS and appliance firmware. Version 4 (2009, kernel 2.6.29) is
-the only version in current use; 1–3 are recognised by the validator and refused
-by the reader (`squashfs-unsupported-version`).
+the only version in current use, but **v1–v3 images are still shipping on
+devices in the field**, and this reader walks them too — see
+[The legacy layout](#the-legacy-layout-v1v3).
 
 ## On-disk layout
 
 Everything is in the byte order given by the magic: `hsqs` little-endian,
 `sqsh` big-endian. Vendor images with a modified magic (`shsq`, `qshs`; DD-WRT
 and some Broadcom SDKs) are accepted and the byte order is chosen by whichever
-makes the major version read as 4.
+makes the major version read as one that exists (1 to 4).
 
 ```
 offset  size
@@ -161,6 +162,57 @@ inode with `squashfs-metadata-corrupt`, and coverage becomes `partial`. Raise
 `--max-file-bytes` past the entry size (the `<fmt>-limit-file-bytes` warning
 gives it) and the same image reads as `Consistent` with all 60,530 entries.
 
+## The legacy layout (v1–v3)
+
+v1–v3 use a different superblock, different inodes and a different directory
+format from v4. None of it is a minor variation, and it is worth stating why
+the numbers below are not simply copied from a header file: **the published
+structures are bitfields**, whose wire layout is the compiler's choice rather
+than the format's, so every offset here was read off a corpus image and
+checked against a byte-for-byte comparison with unsquashfs's output.
+
+| | v1–v3 | v4 |
+|---|---|---|
+| superblock | packed, unaligned, 51 / 63 / 119 bytes for v1 / v2 / v3 | 96 bytes, aligned |
+| `bytes_used` | 32-bit at offset 8; v3 adds a 64-bit twin at 63 | 64-bit at 40 |
+| owner ids | two tables (`uid_start`, `guid_start`) of plain uncompressed `u32`, indexed separately, `0xFF` meaning "group is the owner" | one metadata table, one index |
+| compressor | **not recorded** — see below | `compression` id at 20 |
+| inode base | 12 bytes: one 32-bit word packing `type:4`, `mode:12`, `uid:8`, `guid:8`, then `mtime`, `inode_number` | 16 bytes, four 16-bit fields |
+| directory inode | `nlink`, then `file_size:19` \| `offset:13` in one word, `start_block`, `parent` | `start_block`, `nlink`, `file_size`, `offset`, `parent` |
+| regular inode | 64-bit `start_block`, then `fragment`, `offset`, `file_size` | 32-bit `start_block` first |
+| directory header | **9 bytes**: `count` as one byte, then a 32-bit start block and a 32-bit base inode | 12 bytes, three 32-bit fields |
+| directory entry | **5 bytes**: `offset:13` \| `type:3` in 16 bits, a one-byte name length, a 16-bit signed inode delta | 8 bytes, four 16-bit fields |
+
+The directory header is the one to be careful about. The published struct is
+`count:8; start_block:24; inode_number:32`, which reads as 8 bytes — and 8
+produces a name that is one byte adrift on the second entry and garbage after
+that. Nine is what the bytes say: parsing one corpus router's root directory
+with 9 consumes exactly the 231 bytes the inode claims and yields 22 clean
+names, where 8 consumes 46 and yields none.
+
+### The compressor is not recorded
+
+v1–v3 predate the `compression` field: the format assumed zlib, and vendors who
+changed it changed the *magic* instead. So the reader finds the compressor by
+decoding the first metadata block of the inode table with each candidate and
+keeping whichever works (`squashfs-compression-probed` says which). That is a
+decode rather than a guess — a wrong codec fails on a block whose length the
+superblock already fixed — and it costs one block per image.
+
+The candidate that matters is **DD-WRT/Broadcom LZMA**: LZMA1 with a five-byte
+header (properties plus dictionary size), no uncompressed-size field and no end
+marker. liblzma's `LZMA_FILTER_LZMA1EXT` decodes exactly that when told how
+much output to produce, which SquashFS always knows — the block list gives the
+size of every data block and metadata blocks are 8 KiB.
+
+### A damaged block costs that block, not the file
+
+One `.ko` on the router-wrt corpus image has a data block that no LZMA decoder will
+take (unsquashfs and unblob both drop the whole 4.3 MB file). This reader
+zero-fills the block, emits the rest, marks the entry truncated and says which
+block and at what offset with `squashfs-block-corrupt`. Damaged evidence is
+still evidence.
+
 ## Known gaps
 
 * Extended attribute names and values are not decoded (only the count).
@@ -171,6 +223,12 @@ gives it) and the same image reads as `Consistent` with all 60,530 entries.
   Sink has no hard-link primitive.
 * Big-endian images are covered by the synthetic test only; there is no
   big-endian mksquashfs to produce a real fixture.
+* The v1–v3 **extended regular inode** (type 9) is refused by name rather than
+  parsed: no image in the corpus has one, and guessing a layout would emit a
+  file made of the wrong bytes. `squashfs-bad-inode-type` names it.
+* v1–v3 fixtures are synthetic (`SynthLegacy` in the reader test, uncompressed
+  so the test is about the structures). Real v1–v3 coverage is the corpus,
+  because `mksquashfs` 4.x cannot write them.
 
 ## References
 
@@ -178,4 +236,6 @@ gives it) and the same image reads as `Consistent` with all 60,530 entries.
   `fragment.c`, `id.c`, `xattr_id.c` (read for understanding; no code copied)
 * https://dr-emann.github.io/squashfs/ — the community format description
 * squashfs-tools (`mksquashfs`, `unsquashfs`) — reference producer/consumer
+* squashfs-tools 3.4 `squashfs_fs.h` — the v1–v3 structures, as bitfields;
+  the wire offsets in this page were read off evidence, not off that header
   used by the tests

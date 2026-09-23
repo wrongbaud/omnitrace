@@ -623,16 +623,16 @@ Source: `src/discovery/validators/squashfs.cpp` (10 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `block_size` | `src/discovery/validators/squashfs.cpp:88` | superblock block_size |
-| `bytes_used` | `src/discovery/validators/squashfs.cpp:94` | superblock bytes_used |
-| `compression` | `src/discovery/validators/squashfs.cpp:86` | compressor name for ids 1..6 |
-| `compression_id` | `src/discovery/validators/squashfs.cpp:87` | numeric compression id |
-| `flags` | `src/discovery/validators/squashfs.cpp:92` | superblock flags as hex |
-| `fragments` | `src/discovery/validators/squashfs.cpp:90` | fragment count |
-| `id_count` | `src/discovery/validators/squashfs.cpp:93` | no_ids |
-| `inodes` | `src/discovery/validators/squashfs.cpp:89` | inode count |
-| `mkfs_time` | `src/discovery/validators/squashfs.cpp:91` | mkfs_time (epoch seconds) |
-| `version` | `src/discovery/validators/squashfs.cpp:78` | major.minor |
+| `block_size` | `src/discovery/validators/squashfs.cpp:114` | superblock block_size |
+| `bytes_used` | `src/discovery/validators/squashfs.cpp:118` | superblock bytes_used |
+| `compression` | `src/discovery/validators/squashfs.cpp:216` | compressor name for ids 1..6 |
+| `compression_id` | `src/discovery/validators/squashfs.cpp:217` | numeric compression id |
+| `flags` | `src/discovery/validators/squashfs.cpp:222` | superblock flags as hex |
+| `fragments` | `src/discovery/validators/squashfs.cpp:116` | fragment count |
+| `id_count` | `src/discovery/validators/squashfs.cpp:223` | no_ids |
+| `inodes` | `src/discovery/validators/squashfs.cpp:115` | inode count |
+| `mkfs_time` | `src/discovery/validators/squashfs.cpp:117` | mkfs_time (epoch seconds) |
+| `version` | `src/discovery/validators/squashfs.cpp:113` | major.minor |
 
 ## validator `android_super`
 
@@ -969,27 +969,27 @@ Source: `src/filesystems/squashfs/SquashfsReader.cpp` (21 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `compression_id` | `src/filesystems/squashfs/SquashfsReader.cpp:1335` | numeric compression id |
-| `exportable` | `src/filesystems/squashfs/SquashfsReader.cpp:1339` | true when an export table exists |
-| `flags` | `src/filesystems/squashfs/SquashfsReader.cpp:1334` | superblock flags as hex |
-| `fragments` | `src/filesystems/squashfs/SquashfsReader.cpp:1333` | fragment count |
-| `gzip_level` | `src/filesystems/squashfs/SquashfsReader.cpp:449` | gzip compressor option |
-| `gzip_strategies` | `src/filesystems/squashfs/SquashfsReader.cpp:451` | gzip compressor option |
-| `gzip_window` | `src/filesystems/squashfs/SquashfsReader.cpp:450` | gzip compressor option |
-| `id_count` | `src/filesystems/squashfs/SquashfsReader.cpp:1336` | no_ids |
-| `inodes` | `src/filesystems/squashfs/SquashfsReader.cpp:1332` | inode count |
-| `lz4_flags` | `src/filesystems/squashfs/SquashfsReader.cpp:463` | lz4 compressor option |
-| `lz4_version` | `src/filesystems/squashfs/SquashfsReader.cpp:462` | lz4 compressor option |
-| `lzo_algorithm` | `src/filesystems/squashfs/SquashfsReader.cpp:454` | lzo compressor option |
-| `lzo_level` | `src/filesystems/squashfs/SquashfsReader.cpp:455` | lzo compressor option |
-| `magic` | `src/filesystems/squashfs/SquashfsReader.cpp:1331` | the four magic bytes as text |
-| `mkfs_time` | `src/filesystems/squashfs/SquashfsReader.cpp:1337` | mkfs_time (epoch seconds) |
-| `root_inode` | `src/filesystems/squashfs/SquashfsReader.cpp:1338` | root inode reference as hex |
-| `version` | `src/filesystems/squashfs/SquashfsReader.cpp:1330` | major.minor |
-| `xattr_ids` | `src/filesystems/squashfs/SquashfsReader.cpp:1340` | number of xattr ids (0 when there is no xattr table) |
-| `xz_dict_size` | `src/filesystems/squashfs/SquashfsReader.cpp:458` | xz compressor option |
-| `xz_filters` | `src/filesystems/squashfs/SquashfsReader.cpp:459` | xz compressor option |
-| `zstd_level` | `src/filesystems/squashfs/SquashfsReader.cpp:466` | zstd compressor option |
+| `compression_id` | `src/filesystems/squashfs/SquashfsReader.cpp:1774` | numeric compression id |
+| `exportable` | `src/filesystems/squashfs/SquashfsReader.cpp:1778` | true when an export table exists |
+| `flags` | `src/filesystems/squashfs/SquashfsReader.cpp:1773` | superblock flags as hex |
+| `fragments` | `src/filesystems/squashfs/SquashfsReader.cpp:1772` | fragment count |
+| `gzip_level` | `src/filesystems/squashfs/SquashfsReader.cpp:647` | gzip compressor option |
+| `gzip_strategies` | `src/filesystems/squashfs/SquashfsReader.cpp:649` | gzip compressor option |
+| `gzip_window` | `src/filesystems/squashfs/SquashfsReader.cpp:648` | gzip compressor option |
+| `id_count` | `src/filesystems/squashfs/SquashfsReader.cpp:1775` | no_ids |
+| `inodes` | `src/filesystems/squashfs/SquashfsReader.cpp:1771` | inode count |
+| `lz4_flags` | `src/filesystems/squashfs/SquashfsReader.cpp:661` | lz4 compressor option |
+| `lz4_version` | `src/filesystems/squashfs/SquashfsReader.cpp:660` | lz4 compressor option |
+| `lzo_algorithm` | `src/filesystems/squashfs/SquashfsReader.cpp:652` | lzo compressor option |
+| `lzo_level` | `src/filesystems/squashfs/SquashfsReader.cpp:653` | lzo compressor option |
+| `magic` | `src/filesystems/squashfs/SquashfsReader.cpp:1770` | the four magic bytes as text |
+| `mkfs_time` | `src/filesystems/squashfs/SquashfsReader.cpp:1776` | mkfs_time (epoch seconds) |
+| `root_inode` | `src/filesystems/squashfs/SquashfsReader.cpp:1777` | root inode reference as hex |
+| `version` | `src/filesystems/squashfs/SquashfsReader.cpp:1769` | major.minor |
+| `xattr_ids` | `src/filesystems/squashfs/SquashfsReader.cpp:1779` | number of xattr ids (0 when there is no xattr table) |
+| `xz_dict_size` | `src/filesystems/squashfs/SquashfsReader.cpp:656` | xz compressor option |
+| `xz_filters` | `src/filesystems/squashfs/SquashfsReader.cpp:657` | xz compressor option |
+| `zstd_level` | `src/filesystems/squashfs/SquashfsReader.cpp:664` | zstd compressor option |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 

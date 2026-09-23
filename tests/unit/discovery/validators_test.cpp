@@ -58,6 +58,54 @@ TEST(Crc32, MatchesZlibOracleForEveryParameterSet) {
 
 // ---------------------------------------------------------------- squashfs
 
+// v1-v3: the packed superblock. Its fields are not where v4 puts them and
+// are not aligned, which is the point of testing it separately.
+Bytes squashfs_legacy_header(std::uint16_t major = 3, std::uint64_t bytes_used = 200000,
+                             bool big = false) {
+    Bytes b(4096, 0);
+    auto u16 = [&](std::size_t o, std::uint16_t v) {
+        big ? test::put_u16be(b, o, v) : test::put_u16le(b, o, v);
+    };
+    auto u32 = [&](std::size_t o, std::uint32_t v) {
+        big ? test::put_u32be(b, o, v) : test::put_u32le(b, o, v);
+    };
+    auto u64 = [&](std::size_t o, std::uint64_t v) {
+        big ? test::put_u64be(b, o, v) : test::put_u64le(b, o, v);
+    };
+    // A vendor magic, because that is how these turn up in the field.
+    test::put_bytes(b, 0, "shsq");
+    u32(4, 20);                                                        // inodes
+    u32(8, major >= 3 ? 0u : static_cast<std::uint32_t>(bytes_used));  // bytes_used_2
+    u32(12, static_cast<std::uint32_t>(bytes_used - 8));               // uid_start_2
+    u32(16, 0);                                                        // guid_start_2
+    u32(20, static_cast<std::uint32_t>(bytes_used - 700));             // inode_table_start_2
+    u32(24, static_cast<std::uint32_t>(bytes_used - 400));             // directory_table_start_2
+    u16(28, major);
+    u16(30, 0);
+    u16(32, major == 1 ? 32768 : 0);  // block_size_1: v1's only block size
+    u16(34, major == 1 ? 15 : 17);    // block_log
+    b[36] = 0xC0;                     // flags
+    b[37] = 1;                        // no_uids
+    b[38] = 0;                        // no_guids
+    u32(39, 1700000000);              // mkfs_time
+    u64(43, 0);                       // root_inode
+    if (major >= 2) {
+        u32(51, 131072);  // block_size
+        u32(55, 1);       // fragments
+        u32(59, static_cast<std::uint32_t>(bytes_used - 100));
+    }
+    if (major >= 3) {
+        u64(63, bytes_used);
+        u64(71, bytes_used - 8);
+        u64(79, 0);
+        u64(87, bytes_used - 700);
+        u64(95, bytes_used - 400);
+        u64(103, bytes_used - 100);
+        u64(111, bytes_used - 4);
+    }
+    return b;
+}
+
 Bytes squashfs_header(std::uint64_t bytes_used = 200000, bool big = false) {
     Bytes b(4096, 0);
     auto u16 = [&](std::size_t o, std::uint16_t v) {
@@ -152,18 +200,82 @@ TEST(SquashfsValidator, CorruptedHeadersDowngradeOrReject) {
     EXPECT_EQ(f[0].size, b.size());
     EXPECT_EQ(f[0].diagnostics[0].code, "squashfs-truncated");
 
+    // A v4-shaped superblock that claims v3 is not a v3 superblock: v3 keeps
+    // its block size at 51, not 12, so parsing it as what it says it is finds
+    // nothing there. It stays at Magic with the reason attached rather than
+    // being sized on fields that mean something else.
     b = squashfs_header(3000);
-    test::put_u16le(b, 28, 3);  // v3: recognised, not parsed
+    test::put_u16le(b, 28, 3);
     f = scan_one(b, "squashfs-le");
     ASSERT_EQ(f.size(), 1u);
     EXPECT_EQ(f[0].confidence, Confidence::Magic);
-    EXPECT_EQ(f[0].diagnostics[0].code, "squashfs-unsupported-version");
+    EXPECT_EQ(f[0].attrs.at("version"), "3.0");
 
     test::put_u16le(b, 28, 0x4141);  // garbage version: reject
     EXPECT_TRUE(scan_one(b, "squashfs-le").empty());
 
     Bytes tiny{'h', 's', 'q', 's', 1, 2, 3};  // truncated superblock
     f = scan_one(tiny, "squashfs-le");
+    ASSERT_EQ(f.size(), 1u);
+    EXPECT_EQ(f[0].confidence, Confidence::Magic);
+    EXPECT_EQ(f[0].diagnostics[0].code, "squashfs-truncated-superblock");
+}
+
+TEST(SquashfsValidator, LegacyVersionsAreSizedSoAReaderCanSeeThem) {
+    // The point of the whole legacy path. Before it, a v1-v3 superblock was
+    // identified and then dropped for want of an extent, and an unsized
+    // structure is never handed to a reader (docs/ARCHITECTURE.md) -- so an
+    // entire root filesystem went unread. `docs/PARITY.md` measured that at
+    // 3,903 files on one corpus router.
+    for (const std::uint16_t major : {std::uint16_t{1}, std::uint16_t{2}, std::uint16_t{3}}) {
+        const Bytes b = squashfs_legacy_header(major, 3000);
+        const auto f = scan_one(b, "squashfs-vendor-shsq");
+        ASSERT_EQ(f.size(), 1u) << "major " << major;
+        EXPECT_EQ(f[0].attrs.at("version"), std::to_string(major) + ".0");
+        EXPECT_GE(f[0].confidence, Confidence::Structural) << "major " << major;
+        // bytes_used rounded up to the 4 KiB mksquashfs pads to.
+        EXPECT_EQ(f[0].size, 4096u) << "major " << major;
+        EXPECT_EQ(f[0].attrs.at("bytes_used"), "3000");
+    }
+}
+
+TEST(SquashfsValidator, LegacyReadsTheWideBytesUsedWhenTheNarrowOneIsZero) {
+    // v3 keeps both a 32-bit and a 64-bit bytes_used. mksquashfs leaves the
+    // narrow one at zero on a large image, and the corpus router that drove
+    // this work is exactly that case -- trusting the narrow field alone sizes
+    // the filesystem at nothing.
+    Bytes b = squashfs_legacy_header(3, 3000);
+    EXPECT_EQ(b[8] | b[9] | b[10] | b[11], 0) << "the fixture must exercise the fallback";
+    const auto f = scan_one(b, "squashfs-vendor-shsq");
+    ASSERT_EQ(f.size(), 1u);
+    EXPECT_EQ(f[0].attrs.at("bytes_used"), "3000");
+    EXPECT_GE(f[0].confidence, Confidence::Structural);
+}
+
+TEST(SquashfsValidator, LegacyRefusesWhatIsNotASuperblock) {
+    // v1 has no 32-bit block size, so its block cannot exceed 32 KiB; a v1
+    // claiming 128 KiB is not a v1.
+    Bytes b = squashfs_legacy_header(1, 3000);
+    test::put_u16le(b, 32, 0);   // block_size_1
+    test::put_u16le(b, 34, 17);  // block_log says 128 KiB
+    auto f = scan_one(b, "squashfs-vendor-shsq");
+    ASSERT_EQ(f.size(), 1u);
+    EXPECT_EQ(f[0].confidence, Confidence::Magic);
+    EXPECT_EQ(f[0].diagnostics[0].code, "squashfs-bad-block-size");
+
+    // Zero inodes is not a filesystem.
+    b = squashfs_legacy_header(3, 3000);
+    test::put_u32le(b, 4, 0);
+    f = scan_one(b, "squashfs-vendor-shsq");
+    ASSERT_EQ(f.size(), 1u);
+    EXPECT_EQ(f[0].confidence, Confidence::Magic);
+    EXPECT_EQ(f[0].diagnostics[0].code, "squashfs-bad-inode-count");
+
+    // A truncated v3 is reported as truncated rather than parsed on whatever
+    // happens to follow it in the image.
+    b = squashfs_legacy_header(3, 3000);
+    b.resize(60);
+    f = scan_one(b, "squashfs-vendor-shsq");
     ASSERT_EQ(f.size(), 1u);
     EXPECT_EQ(f[0].confidence, Confidence::Magic);
     EXPECT_EQ(f[0].diagnostics[0].code, "squashfs-truncated-superblock");

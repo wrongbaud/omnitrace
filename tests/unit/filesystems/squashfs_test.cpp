@@ -746,6 +746,221 @@ TEST(SquashfsHostile, SymlinkTargetSizeIsNeverAllocatedUpFront) {
     }
 }
 
+// ------------------------------------------------------- v1-v3 synthetic image
+//
+// The legacy superblock is packed and its inode, directory-header and
+// directory-entry layouts all differ from v4, so nothing above can be reused.
+// Everything here is stored uncompressed, which keeps the test about the
+// structures rather than about a compressor: the corpus covers the vendor
+// LZMA1 path that v1-v3 images use in the field.
+class SynthLegacy {
+   public:
+    explicit SynthLegacy(std::uint16_t major, Endian e = Endian::Little) : major_(major), e_(e) {}
+
+    std::vector<std::uint8_t> build() {
+        const std::uint64_t need = major_ >= 3 ? 119u : (major_ == 2 ? 63u : 51u);
+        std::vector<std::uint8_t> img(need, 0);
+        img.resize(128, 0);  // the reader wants 96 bytes before it looks at the version
+
+        const std::string hello = "hello world\n";
+        const std::uint64_t hello_off = img.size();
+        append(img, hello);
+
+        // ---- inodes, one uncompressed metadata block
+        std::vector<std::uint8_t> ino;
+        const std::uint16_t root_at = static_cast<std::uint16_t>(ino.size());
+        const std::size_t root_pos = ino.size();
+        base(ino, 1, 0755, 0, kNoGuid, 1700000000u, 1);
+        u32(ino, 3);  // nlink
+        u32(ino, 0);  // (file_size:19 | offset:13), patched
+        u32(ino, 0);  // start_block in the directory table
+        u32(ino, 4);  // parent = inodes + 1
+        const std::uint16_t hello_at = static_cast<std::uint16_t>(ino.size());
+        base(ino, 2, 0644, 0, 0, 1700000002u, 2);
+        u64(ino, hello_off);
+        u32(ino, 0xFFFFFFFFu);                                            // no fragment
+        u32(ino, 0);                                                      // offset
+        u32(ino, static_cast<std::uint32_t>(hello.size()));               // file_size
+        u32(ino, static_cast<std::uint32_t>(hello.size()) | (1u << 24));  // one stored block
+        const std::uint16_t link_at = static_cast<std::uint16_t>(ino.size());
+        base(ino, 3, 0777, 0, 0, 1700000004u, 3);
+        u32(ino, 1);  // nlink
+        const std::string target = "hello.txt";
+        u16(ino, static_cast<std::uint16_t>(target.size()));
+        append(ino, target);
+
+        // ---- directory table, one uncompressed metadata block
+        std::vector<std::uint8_t> dir;
+        dir.push_back(1);                         // count - 1: two entries
+        u32(dir, 0);                              // start block of the inodes they name
+        u32(dir, 2);                              // base inode number
+        entry(dir, hello_at, 2, "hello.txt", 0);  // inode 2 = base + 0
+        entry(dir, link_at, 3, "link", 1);        // inode 3 = base + 1
+        const std::uint32_t dir_size = static_cast<std::uint32_t>(dir.size()) + 3;
+        put32(ino, root_pos + 16, dir_size & 0x7FFFFu);  // offset 0 in the block
+
+        const std::uint64_t inode_start = img.size();
+        meta(img, ino);
+        const std::uint64_t dir_start = img.size();
+        meta(img, dir);
+        const std::uint64_t uid_start = img.size();
+        u32(img, 1000);  // uid table: one entry
+        const std::uint64_t guid_start = img.size();
+        u32(img, 100);  // guid table: one entry
+        const std::uint64_t used = img.size();
+
+        // ---- superblock
+        put_bytes(img, 0, "hsqs");
+        put32(img, 4, 3);  // inodes
+        put32(img, 8, major_ >= 3 ? 0u : static_cast<std::uint32_t>(used));
+        put32(img, 12, static_cast<std::uint32_t>(uid_start));
+        put32(img, 16, static_cast<std::uint32_t>(guid_start));
+        put32(img, 20, static_cast<std::uint32_t>(inode_start));
+        put32(img, 24, static_cast<std::uint32_t>(dir_start));
+        put16(img, 28, major_);
+        put16(img, 30, 0);
+        put16(img, 32, major_ == 1 ? 4096 : 0);
+        put16(img, 34, 12);
+        img[36] = 0xC0;
+        img[37] = 1;  // no_uids
+        img[38] = 1;  // no_guids
+        put32(img, 39, 1700000000u);
+        put64(img, 43, static_cast<std::uint64_t>(root_at));  // block 0, offset root_at
+        if (major_ >= 2) {
+            put32(img, 51, 4096);
+            put32(img, 55, 0);  // no fragments
+            put32(img, 59, 0xFFFFFFFFu);
+        }
+        if (major_ >= 3) {
+            put64(img, 63, used);
+            put64(img, 71, uid_start);
+            put64(img, 79, guid_start);
+            put64(img, 87, inode_start);
+            put64(img, 95, dir_start);
+            put64(img, 103, 0xFFFFFFFFFFFFFFFFull);
+            put64(img, 111, 0xFFFFFFFFFFFFFFFFull);
+        }
+        return img;
+    }
+
+   private:
+    static constexpr std::uint8_t kNoGuid = 0xFF;
+    std::uint16_t major_;
+    Endian e_;
+
+    void append(std::vector<std::uint8_t>& v, const std::string& s) const {
+        v.insert(v.end(), s.begin(), s.end());
+    }
+    void u16(std::vector<std::uint8_t>& v, std::uint16_t x) const {
+        const std::size_t o = v.size();
+        v.resize(o + 2);
+        put16(v, o, x);
+    }
+    void u32(std::vector<std::uint8_t>& v, std::uint32_t x) const {
+        const std::size_t o = v.size();
+        v.resize(o + 4);
+        put32(v, o, x);
+    }
+    void u64(std::vector<std::uint8_t>& v, std::uint64_t x) const {
+        const std::size_t o = v.size();
+        v.resize(o + 8);
+        put64(v, o, x);
+    }
+    template <class T>
+    void put(std::vector<std::uint8_t>& v, std::size_t o, T x) const {
+        for (std::size_t i = 0; i < sizeof(T); ++i) {
+            const std::size_t shift = e_ == Endian::Little ? i : sizeof(T) - 1 - i;
+            v[o + i] = static_cast<std::uint8_t>(x >> (8 * shift));
+        }
+    }
+    void put16(std::vector<std::uint8_t>& v, std::size_t o, std::uint16_t x) const {
+        put<std::uint16_t>(v, o, x);
+    }
+    void put32(std::vector<std::uint8_t>& v, std::size_t o, std::uint32_t x) const {
+        put<std::uint32_t>(v, o, x);
+    }
+    void put64(std::vector<std::uint8_t>& v, std::size_t o, std::uint64_t x) const {
+        put<std::uint64_t>(v, o, x);
+    }
+    static void put_bytes(std::vector<std::uint8_t>& v, std::size_t o, const char* s) {
+        for (std::size_t i = 0; s[i] != '\0'; ++i) v[o + i] = static_cast<std::uint8_t>(s[i]);
+    }
+    // The 12-byte legacy base: one 32-bit word packing type, mode and the two
+    // owner indices, then mtime and the inode number.
+    void base(std::vector<std::uint8_t>& v, std::uint32_t type, std::uint32_t mode,
+              std::uint32_t uid, std::uint32_t guid, std::uint32_t mtime, std::uint32_t number) {
+        u32(v, (type & 0xFu) | ((mode & 0xFFFu) << 4) | ((uid & 0xFFu) << 16) |
+                   ((guid & 0xFFu) << 24));
+        u32(v, mtime);
+        u32(v, number);
+    }
+    // A 5-byte directory entry: offset and type packed into 16 bits, the name
+    // length less one, then the signed inode delta.
+    void entry(std::vector<std::uint8_t>& v, std::uint16_t offset, std::uint16_t type,
+               const std::string& name, std::int16_t delta) {
+        u16(v, static_cast<std::uint16_t>((offset & 0x1FFFu) |
+                                          (static_cast<std::uint32_t>(type) << 13)));
+        v.push_back(static_cast<std::uint8_t>(name.size() - 1));
+        const std::size_t o = v.size();
+        v.resize(o + 2);
+        put16(v, o, static_cast<std::uint16_t>(delta));
+        append(v, name);
+    }
+    // One uncompressed metadata block.
+    void meta(std::vector<std::uint8_t>& img, const std::vector<std::uint8_t>& body) const {
+        const std::size_t o = img.size();
+        img.resize(o + 2);
+        put16(img, o, static_cast<std::uint16_t>(body.size() | 0x8000u));
+        img.insert(img.end(), body.begin(), body.end());
+    }
+};
+
+TEST(SquashfsLegacy, ReadsV1ThroughV3) {
+    for (const std::uint16_t major : {std::uint16_t{1}, std::uint16_t{2}, std::uint16_t{3}}) {
+        const auto img = SynthLegacy(major).build();
+        const Walked w = walk_listing(span_of(img), true);
+        ASSERT_TRUE(w.status) << "major " << major << ": " << w.status.error;
+        ASSERT_EQ(w.by_path.count("hello.txt"), 1u) << "major " << major;
+        const FileMeta& f = w.by_path.at("hello.txt").meta;
+        EXPECT_EQ(f.kind, EntryKind::Regular);
+        EXPECT_EQ(f.size, 12u);
+        EXPECT_EQ(f.mode & 0777, 0644u);
+        EXPECT_EQ(f.mtime, 1700000002);
+        // Two owner tables and an index into each, unlike v4's single table.
+        EXPECT_EQ(f.uid, 1000u) << "major " << major;
+        EXPECT_EQ(f.gid, 100u) << "major " << major;
+        ASSERT_EQ(w.by_path.count("link"), 1u);
+        EXPECT_EQ(w.by_path.at("link").meta.kind, EntryKind::Symlink);
+        EXPECT_EQ(w.by_path.at("link").meta.link_target, "hello.txt");
+    }
+}
+
+TEST(SquashfsLegacy, GuidSentinelMeansTheOwnersGroup) {
+    // v1-v3 spell "this file has no group of its own" as guid index 0xFF,
+    // which means the group is the owner. Read as an index it is out of range
+    // and the walk would report gid 0 with a bad-id warning.
+    const auto img = SynthLegacy(3).build();
+    const Walked w = walk_listing(span_of(img), false);
+    ASSERT_TRUE(w.status) << w.status.error;
+    ASSERT_EQ(w.by_path.count("hello.txt"), 1u);
+    // The root carries the sentinel; it is not emitted as an entry, so assert
+    // on the diagnostics instead: a mishandled sentinel warns once.
+    for (const Diagnostic& d : w.result.diagnostics)
+        EXPECT_STRNE(d.code.c_str(), "squashfs-bad-id") << d.message;
+}
+
+TEST(SquashfsLegacy, BigEndianLegacyImage) {
+    const auto img = SynthLegacy(3, Endian::Big).build();
+    // A big-endian v3 image keeps the little-endian magic in this fixture, so
+    // point the reader at the byte order through the vendor magic path.
+    std::vector<std::uint8_t> be = img;
+    const char* m = "sqsh";
+    for (std::size_t i = 0; i < 4; ++i) be[i] = static_cast<std::uint8_t>(m[i]);
+    const Walked w = walk_listing(span_of(be), false);
+    ASSERT_TRUE(w.status) << w.status.error;
+    EXPECT_EQ(w.by_path.count("hello.txt"), 1u);
+}
+
 TEST(SquashfsSynth, Registry) {
     FilesystemRegistry& reg = FilesystemRegistry::instance();
     const std::vector<std::string> formats = reg.formats();
