@@ -97,10 +97,23 @@ Status sweep(const Engine& engine, const Manifest& m, const discovery::Listings&
                  "no image view was available, so unidentified regions were not searched; only "
                  "extracted files were"});
     } else {
+        // Which source ids the given Span stands for. On a word-swapped image
+        // the analysis ran through a SwappedSource, so every region's
+        // source_id is "<evidence>|swap32" -- but `image` here is the
+        // corrected file re-opened from flash/, whose id is its path. Testing
+        // equality against that one id alone matched nothing, so no region on
+        // a word-swapped image was ever searched and the only sign of it was
+        // "0 regions scanned". analyze records the id it used.
+        std::set<std::string> ours{image.source_id()};
+        for (const Node& n : m.nodes()) {
+            const auto it = n.attrs.find("corrected_source_id");
+            if (it != n.attrs.end() && !it->second.empty()) ours.insert(it->second);
+        }
+
         for (const Node& n : m.nodes()) {
             if (n.kind != NodeKind::Region || n.location.length == 0) continue;
             if (out.hits.size() >= limits.max_hits_total) break;
-            if (n.location.source_id != image.source_id()) continue;
+            if (ours.count(n.location.source_id) == 0) continue;
 
             // Entropy already said what these bytes are. Fill holds nothing,
             // and uniformly random bytes hold nothing a pattern can find.

@@ -94,6 +94,7 @@ src/discovery/Recurse.cpp:
   entropy_class: erased, sparse, text, binary, packed or random - what the region's bytes look like statistically (core/Entropy.h)
   corrected_path: case-relative path of the corrected rendering the analysis ran on (word-swapped images); every offset on this node's descendants is an offset into that file
   corrected_sha256: sha256 of the file named by corrected_path
+  corrected_source_id: Source id every offset in this manifest is relative to; a later pass re-opening corrected_path gets a different id and needs this to match regions
   corrected_skipped: max-carve-bytes when the corrected view was larger than the limit and was not written
   backup_header: "ok or crc-mismatch: state of the GPT backup header folded into this primary table node"
   backup_lba: LBA of the folded GPT backup header (my_lba of the backup)

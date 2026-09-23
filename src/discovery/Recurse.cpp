@@ -1298,6 +1298,12 @@ std::string write_corrected_view(const AnalyzeOptions& opts, const Span& view,
     const std::string rel = "flash/" + name;
     n.attrs["corrected_path"] = rel;
     n.attrs["corrected_sha256"] = d.sha256;
+    // The id every offset in this manifest is relative to. A later pass that
+    // re-opens the file above gets a *different* Source id -- the path it was
+    // written to -- so without this recorded there is nothing to match the
+    // regions against. rules::sweep skipped every region on a word-swapped
+    // image for exactly that reason, and said only "0 regions scanned".
+    n.attrs["corrected_source_id"] = view.source_id();
     if (short_read)
         n.diagnostics.push_back({Severity::Warning, "image-corrected-view-short",
                                  "the evidence stopped returning bytes before its size while the " +
