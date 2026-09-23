@@ -11,13 +11,14 @@ measurement, how to reproduce it, and what it found.
 |---|---:|---:|---:|---|
 | **moria** 0.2.1 | **99.9 %** | 99.9 % | 30 / 30 | **criterion met** |
 | **ground truth** (`expected.yaml`) | **100.0 %** | 100.0 % | 19 / 19 | every file of every fixture |
-| **unblob** 26.6.4 | **95.1 %** | 95.1 % | 24 / 30 | **criterion met** |
+| **unblob** 26.6.4 | **98.9 %** | 95.3 % | 25 / 30 | **criterion met** |
 | binwalk 3.1.0 | 14.9 % | 64.4 % | 8 / 15 | not a like-for-like baseline (§6) |
 
 The unblob figure was **65.7 %** when this was first measured, and ground
 truth **94.4 %**. Closing §2 (SquashFS v1–v3) took one image from 0.1 % to
-98.8 % and the pooled unblob figure past the bar; closing §1 (FAT) took ground
-truth to **every file of every fixture**.
+98.8 %, §1 (FAT) took ground truth to **every file of every fixture**, and §4
+(`ar`) took the 3.8 GB auto-ivi eMMC from 93.4 % to 99.8 % and the pooled
+unblob figure to 98.9 %.
 
 The two largest images are the best evidence that this scales: the 7.8 GB
 Auto-emmc eMMC is **99.7 % of unblob and 100.0 % of moria**, and the 3.8 GB
@@ -168,16 +169,22 @@ out of a decompressed kernel is a product decision, not a bug — but it should
 be a decision on record rather than an accident, and carving them would make
 the two tools comparable on this axis.
 
-### 4. `ar` static libraries are not opened
+### 4. `ar` static libraries were not opened — **closed**
 
-On the 3.8 GB auto-ivi eMMC, OmniTrace recovers **exactly** what moria does —
-17,352 of 17,352 — and 93.4 % of what unblob does. Of unblob's 1,229 extra
-contents, **1,224 are `libgcc.a_extract/*.o`**: members of `ar` static
-archives, which unblob descends into and OmniTrace treats as files.
+On the 3.8 GB auto-ivi eMMC, OmniTrace recovered **exactly** what moria does —
+17,352 of 17,352 — but only 93.4 % of what unblob does. Of unblob's 1,229
+extra contents, **1,224 were `libgcc.a_extract/*.o`**: members of `ar` static
+archives, which unblob descends into and OmniTrace treated as opaque files.
 
-`ar` is a real container format, not a carving heuristic, so this is a genuine
-(if low-value-for-forensics) gap. The remaining 5 are the ELF/unknown carving
-of §3.
+**Fixed.** `ar` is identified, sized and read, with the GNU and BSD long-name
+dialects resolved — a cross toolchain's `libgcc.a` is 1,771 members of which
+every one is a `/N` offset into the archive's string table, so resolving them
+is the difference between member names and a directory of files called
+`/108`. That image is now **99.8 % of unblob** (18,552 of 18,579 contents, up
+from 17,352) and still 100 % of moria. `docs/formats/ar.md` has the format and
+why the validator reaches `Verified`.
+
+The 27 contents still only unblob's are the ELF/unknown carving of §3.
 
 ### 5. The history fixtures look like losses against unblob and are not
 
@@ -205,12 +212,13 @@ still a useful cross-check.
 | criterion | state |
 |---|---|
 | ≥ 95 % vs moria | **met** — 99.9 % pooled, and every one of the 30 images is at or above 95 % |
-| ≥ 95 % vs unblob | **met** — 95.1 % pooled, up from 65.7 % as first measured |
+| ≥ 95 % vs unblob | **met** — 98.9 % pooled, up from 65.7 % as first measured |
 | fixtures vs ground truth | **100 %** — 179 of 179 contents, every file of every fixture |
 | large corpus images | 2 of 4 run (3.8 GB auto-ivi, 7.8 GB auto-emmc); `qnx` (15.7 GB) and `audio` (7.8 GB) outstanding |
 
-**Phase 1's exit criterion is met against both baselines, and the fixtures
-are exact.** What is left is named and small: **`ar`** (1,224 — the auto-ivi
-eMMC's 93.4 %) and a decision on record about ELF carving (252 — the dongle
-dongle's 16.8 %). The three history fixtures below 95 % of unblob are §5 and
-are already 100 % of ground truth.
+**Phase 1's exit criterion is met against both baselines, the fixtures are
+exact, and every named format gap is closed.** What remains against unblob is
+a single decision on record: whether to carve ELFs out of decompressed blobs
+the way it does (§3 — 252 contents, and the whole of the dongle dongle's
+16.8 %). The four fixtures below 95 % of unblob are §5 and §3, and are already
+100 % of ground truth.

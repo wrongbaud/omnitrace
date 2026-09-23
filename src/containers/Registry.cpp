@@ -14,6 +14,7 @@ namespace detail {
 void omnitrace_container_anchor_stream();
 void omnitrace_container_anchor_uimage();
 void omnitrace_container_anchor_androidboot();
+void omnitrace_container_anchor_ar();
 void omnitrace_container_anchor_cpio();
 void omnitrace_container_anchor_tar();
 void omnitrace_container_anchor_zip();
@@ -30,6 +31,7 @@ void link_builtin_containers() {
     omnitrace_container_anchor_stream();
     omnitrace_container_anchor_uimage();
     omnitrace_container_anchor_androidboot();
+    omnitrace_container_anchor_ar();
     omnitrace_container_anchor_cpio();
     omnitrace_container_anchor_tar();
     omnitrace_container_anchor_zip();

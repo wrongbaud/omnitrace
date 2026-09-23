@@ -46,6 +46,7 @@ encryption.
 | [verity.md](verity.md) | `dm-verity` | `verity` (consistent) | n.a. | hash-tree extent only |
 | [qnx6.md](qnx6.md) | `qnx6` | `qnx6` (verified) | `Qnx6Reader` | yes: files, metadata, snapshot history |
 | [qnx-ifs.md](qnx-ifs.md) | `qnx-ifs` | `qnx-ifs` (verified) | `QnxIfsReader` | yes: files, metadata; zlib/lzo/ucl/lz4 blocks decompressed |
+| [ar.md](ar.md) | `ar` | `ar` (verified) | `ArReader` | yes: members, with GNU and BSD long names resolved |
 
 Plain magics without a validator (`tar`, `zip`, `7z`, `cpio`,
 PEM / OpenSSH / PGP key blocks) are listed in

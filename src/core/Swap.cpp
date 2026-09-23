@@ -110,6 +110,11 @@ const std::vector<BytePattern>& byte_patterns() {
         {"7z", {0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c}, true, true},
         {"zip", {'P', 'K', 0x03, 0x04}, true, true},
         {"cpio-newc", {'0', '7', '0', '7', '0', '1'}, true, true},
+        // "!<arch>\n" is eight bytes at offset 0. A static library is mostly
+        // ELF members, whose own magic is four bytes and cannot score, so
+        // without this a .a of compressed-looking object code is analysed
+        // word-swapped and the whole archive is lost.
+        {"ar", {'!', '<', 'a', 'r', 'c', 'h', '>', '\n'}, true, true},
         {"xz", {0xfd, '7', 'z', 'X', 'Z', 0x00}, true, true},
         {"zstd", {0x28, 0xb5, 0x2f, 0xfd}, true, true},
         {"lz4-frame", {0x04, 0x22, 0x4d, 0x18}, true, true},

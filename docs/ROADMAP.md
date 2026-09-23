@@ -109,7 +109,7 @@ regular-file contents by sha256:
 | baseline | pooled | verdict |
 |---|---:|---|
 | moria 0.2.1 | **99.9 %** | met — every one of the 30 images is at or above 95 % |
-| unblob 26.6.4 | **95.1 %** | met — 65.7 % when first measured, see below |
+| unblob 26.6.4 | **98.9 %** | met — 65.7 % when first measured, see below |
 | ground truth (`expected.yaml`) | **100.0 %** | every file of every fixture, 179 of 179 |
 
 It did exactly what it was supposed to do: it found real gaps nobody had
@@ -125,10 +125,13 @@ nothing, and it was the *entire* difference from ground truth. FAT12/16/32 are
 now identified, sized and read, with deleted-file recovery under `--history`,
 and the fixture set is exact.
 
-What remains: **`ar` static libraries are not opened** (1,224 contents on the
-Auto-ivi eMMC). The rest of the unblob gap is unblob carving individual ELFs
-out of decompressed blobs, which is a policy difference, not missing data.
-`docs/PARITY.md` has the method, the numbers and the evidence.
+**`ar` static libraries were not opened**, worth 1,224 contents on the auto-ivi
+eMMC; they are now read, with the GNU and BSD long-name dialects resolved, and
+that image went from 93.4 % to 99.8 % of unblob.
+
+What remains against unblob is one decision rather than a gap: unblob carves
+individual ELFs out of decompressed blobs, which is a policy difference, not
+missing data. `docs/PARITY.md` has the method, the numbers and the evidence.
 
 Two of the four multi-gigabyte corpus images are in that number — the 7.8 GB
 Auto-emmc eMMC is 99.7 % of unblob and 100.0 % of moria, the 3.8 GB auto-ivi is
@@ -136,11 +139,12 @@ Auto-emmc eMMC is 99.7 % of unblob and 100.0 % of moria, the 3.8 GB auto-ivi is
 
 ## Next, in order
 
-1. **Close the gaps parity still shows** (`docs/PARITY.md`): **`ar` static
-   libraries**, worth 1,224 contents on the auto-ivi eMMC, then a decision on
-   record about whether to carve ELFs out of decompressed blobs the way unblob
-   does. Both are what is left of the unblob difference; ground truth is
-   already exact.
+1. **Decide, and record, whether to carve ELFs out of decompressed blobs** the
+   way unblob does (`docs/PARITY.md` §3). It is the whole of what is left
+   between the two tools — 252 contents, and the whole of the dongle dongle's
+   16.8 % — and it is a product decision, not a missing reader: the bytes are
+   already inside the payload OmniTrace emits whole. Ground truth is exact and
+   every named format gap is closed.
 
 2. **Finish the parity measurement** on the two remaining multi-gigabyte
    corpus images, `qnx` (15.7 GB) and `audio` (7.8 GB). Four tools over that

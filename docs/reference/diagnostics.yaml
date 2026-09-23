@@ -73,6 +73,38 @@ android-boot-truncated-header:
   meaning: fewer bytes than the header needs after the magic
   action: magic-tier hit at the end of the data; usually noise
 
+ar-bad-header:
+  meaning: bytes where a member header should be are not one, so the archive ends there
+  action: expected at the end of an archive embedded in a larger image; a warning mid-archive means it is damaged
+
+ar-bad-name:
+  meaning: a member's name is empty, or is one a path component cannot be (a separator, '.' or '..')
+  action: the member is still emitted, under a name derived from its position; check the archive was not crafted to escape its extraction directory
+
+ar-limit-entries:
+  meaning: the walk stopped at Limits::max_nodes_per_fs
+  action: raise --max-files; the listing holds the members read up to that point
+
+ar-limit-members:
+  meaning: the validator stopped counting at the signature's max_members
+  action: informational; the archive may hold more members than the finding reports
+
+ar-no-members:
+  meaning: the ar magic is not followed by a member header
+  action: treat the match as a false positive: '!<arch>' is eight bytes of ASCII and appears in text
+
+ar-sink-error:
+  meaning: the Sink refused a member or a write
+  action: usually a limit or a full disk; the message names which
+
+ar-truncated:
+  meaning: the archive is cut short: a member's data runs past the end of the image
+  action: the members that verified are still claimed and extracted; the rest is not in this image
+
+ar-truncated-member:
+  meaning: a member claims more bytes than the archive holds
+  action: what was read is real and is extracted; the archive is truncated
+
 bzip2-truncated-header:
   meaning: fewer than 4 bytes were available for the bzip2 header
   action: magic-tier hit at the end of the data; nothing was lost

@@ -8,6 +8,13 @@
 #   <source path>:
 #     <key>: one line
 
+src/containers/ar/ArReader.cpp:
+  bsd_long_names: the archive uses the BSD '#1/<len>' dialect, where a long name is the first bytes of the member's data
+  data_bytes: member data bytes, the 60-byte headers and any padding excluded
+  members: members that are files; the symbol and string tables are counted separately
+  string_table: the archive has a '//' member holding the names too long for the 16-byte field
+  symbol_table: the archive has a '/' or '__.SYMDEF' member indexing its symbols
+
 src/containers/androidboot/AndroidBootReader.cpp:
   board_name: the board name the boot header records, sanitised
   header_version: Android boot image header version (0-4)
@@ -135,6 +142,13 @@ src/discovery/Recurse.cpp:
   word_swap: "swap16 or swap32 on the Image node when the dump was byte-reversed per word"
   word_swap_confidence: detector score (0-100) behind word_swap
   written: "false on a regular-file node that was not written to disk (extraction on, but the Sink skipped it)"
+
+src/discovery/validators/ar.cpp:
+  bsd_long_names: the archive uses the BSD '#1/<len>' dialect, where a long name is the first bytes of the member's data
+  data_bytes: member data bytes, the 60-byte headers and any padding excluded
+  members: members that are files; the symbol and string tables are counted separately
+  string_table: the archive has a '//' member holding the names too long for the 16-byte field
+  symbol_table: the archive has a '/' or '__.SYMDEF' member indexing its symbols
 
 src/discovery/validators/common.h:
   checksum: mismatch when the payload decoded to its end and then disagreed with the check the stream records over it

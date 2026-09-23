@@ -1,5 +1,5 @@
-// archive_test.cpp — the tar and cpio readers, and the two wrapper readers
-// (uImage, Android boot).
+// archive_test.cpp — the tar, cpio and ar readers, and the two wrapper
+// readers (uImage, Android boot).
 //
 // The archives are built here byte by byte rather than by shelling out, so
 // the test is the same on every host and pins the exact layout each reader
@@ -64,8 +64,7 @@ std::string octal(std::uint64_t v, std::size_t width) {
 
 // One 512-byte ustar header, checksum filled in.
 Bytes tar_header(const std::string& name, std::uint64_t size, char typeflag,
-                 const std::string& link = {}, const std::string& prefix = {},
-                 bool gnu = false) {
+                 const std::string& link = {}, const std::string& prefix = {}, bool gnu = false) {
     Bytes h(512, 0);
     put(h, 0, name);
     put(h, 100, octal(0644, 8));
@@ -109,20 +108,19 @@ std::string hex8(std::uint64_t v) {
     return s;
 }
 
-void cpio_member(Bytes& out, const std::string& name, std::uint32_t mode,
-                 const std::string& data) {
+void cpio_member(Bytes& out, const std::string& name, std::uint32_t mode, const std::string& data) {
     std::string h = "070701";
-    h += hex8(7);                 // ino
-    h += hex8(mode);              // mode
-    h += hex8(1000);              // uid
-    h += hex8(1000);              // gid
-    h += hex8(1);                 // nlink
-    h += hex8(1700000000);        // mtime
-    h += hex8(data.size());       // filesize
-    h += hex8(0) + hex8(0);       // dev
-    h += hex8(0) + hex8(0);       // rdev
-    h += hex8(name.size() + 1);   // namesize (with NUL)
-    h += hex8(0);                 // check
+    h += hex8(7);                // ino
+    h += hex8(mode);             // mode
+    h += hex8(1000);             // uid
+    h += hex8(1000);             // gid
+    h += hex8(1);                // nlink
+    h += hex8(1700000000);       // mtime
+    h += hex8(data.size());      // filesize
+    h += hex8(0) + hex8(0);      // dev
+    h += hex8(0) + hex8(0);      // rdev
+    h += hex8(name.size() + 1);  // namesize (with NUL)
+    h += hex8(0);                // check
     out.insert(out.end(), h.begin(), h.end());
     out.insert(out.end(), name.begin(), name.end());
     out.push_back(0);
@@ -551,8 +549,8 @@ TEST(AndroidBootContainer, VendorBootUsesItsOwnLayout) {
     constexpr std::uint32_t kRamdisk = 900, kDtb = 300;
     Bytes img(kPage, 0);
     put(img, 0, "VNDRBOOT");
-    put_le32(img, 8, 3);      // header_version
-    put_le32(img, 12, kPage); // page_size
+    put_le32(img, 8, 3);       // header_version
+    put_le32(img, 12, kPage);  // page_size
     put_le32(img, 24, kRamdisk);
     put_le32(img, 2096, 2112);  // header_size
     put_le32(img, 2100, kDtb);
@@ -606,31 +604,49 @@ Bytes zip_of(const std::string& name, const std::string& data, std::uint32_t ext
     auto str = [&](const std::string& t) { out.insert(out.end(), t.begin(), t.end()); };
 
     const std::uint32_t local_at = 0;
-    le32(0x04034B50U);                                    // local header
-    le16(20); le16(0); le16(0);                           // version, flags, method (stored)
-    le16(0); le16(0x21);                                  // time, date (1980-01-01)
-    le32(0); le32(static_cast<std::uint32_t>(data.size()));
+    le32(0x04034B50U);  // local header
+    le16(20);
+    le16(0);
+    le16(0);  // version, flags, method (stored)
+    le16(0);
+    le16(0x21);  // time, date (1980-01-01)
+    le32(0);
     le32(static_cast<std::uint32_t>(data.size()));
-    le16(static_cast<std::uint16_t>(name.size())); le16(0);
+    le32(static_cast<std::uint32_t>(data.size()));
+    le16(static_cast<std::uint16_t>(name.size()));
+    le16(0);
     str(name);
     str(data);
 
     const std::uint32_t cd_at = static_cast<std::uint32_t>(out.size());
-    le32(0x02014B50U);                                    // central header
-    le16(made_by); le16(20); le16(0); le16(0);
-    le16(0); le16(0x21);
-    le32(0); le32(static_cast<std::uint32_t>(data.size()));
+    le32(0x02014B50U);  // central header
+    le16(made_by);
+    le16(20);
+    le16(0);
+    le16(0);
+    le16(0);
+    le16(0x21);
+    le32(0);
     le32(static_cast<std::uint32_t>(data.size()));
-    le16(static_cast<std::uint16_t>(name.size())); le16(0); le16(0);
-    le16(0); le16(0);
+    le32(static_cast<std::uint32_t>(data.size()));
+    le16(static_cast<std::uint16_t>(name.size()));
+    le16(0);
+    le16(0);
+    le16(0);
+    le16(0);
     le32(external_attrs);
     le32(local_at);
     str(name);
 
     const std::uint32_t cd_size = static_cast<std::uint32_t>(out.size()) - cd_at;
-    le32(0x06054B50U);                                    // end record
-    le16(0); le16(0); le16(1); le16(1);
-    le32(cd_size); le32(cd_at); le16(0);
+    le32(0x06054B50U);  // end record
+    le16(0);
+    le16(0);
+    le16(1);
+    le16(1);
+    le32(cd_size);
+    le32(cd_at);
+    le16(0);
     return out;
 }
 
@@ -757,7 +773,10 @@ TEST(StreamContainer, Lz4AndZstdAreRegisteredAndScreenTheirMagic) {
     // A frame magic with nothing behind it opens (the magic is the screen)
     // and then fails to decode, rather than being mistaken for a payload.
     Bytes lz4_head(256, 0x00);
-    lz4_head[0] = 0x04; lz4_head[1] = 0x22; lz4_head[2] = 0x4D; lz4_head[3] = 0x18;
+    lz4_head[0] = 0x04;
+    lz4_head[1] = 0x22;
+    lz4_head[2] = 0x4D;
+    lz4_head[3] = 0x18;
     std::shared_ptr<const Source> keep2;
     auto reader = make("lz4");
     ASSERT_TRUE(reader->open(span_of(lz4_head, keep2)));
@@ -853,7 +872,10 @@ TEST(SparseContainer, OpenRejectsWhatIsNotSparse) {
     // The magic written the wrong way round must not open either: that is the
     // bug the signature had until a real img2simg image caught it.
     Bytes reversed(64, 0);
-    reversed[0] = 0xED; reversed[1] = 0x26; reversed[2] = 0xFF; reversed[3] = 0x3A;
+    reversed[0] = 0xED;
+    reversed[1] = 0x26;
+    reversed[2] = 0xFF;
+    reversed[3] = 0x3A;
     std::shared_ptr<const Source> keep2;
     EXPECT_FALSE(make("android-sparse")->open(span_of(reversed, keep2)));
 }
@@ -872,7 +894,10 @@ TEST(StreamContainer, Bzip2IsRegisteredAndScreensItsHeader) {
     // magic; the validator is what checks the digit and the block magic) and
     // then fails to decode rather than emitting a bogus payload.
     Bytes head(512, 0x00);
-    head[0] = 'B'; head[1] = 'Z'; head[2] = 'h'; head[3] = '9';
+    head[0] = 'B';
+    head[1] = 'Z';
+    head[2] = 'h';
+    head[3] = '9';
     std::shared_ptr<const Source> keep2;
     auto reader = make("bzip2");
     ASSERT_TRUE(reader->open(span_of(head, keep2)));
@@ -880,4 +905,218 @@ TEST(StreamContainer, Bzip2IsRegisteredAndScreensItsHeader) {
     fs::WalkResult r;
     EXPECT_FALSE(reader->walk(sink, fs::WalkOptions{}, r));
     EXPECT_TRUE(r.entries_out.empty());
+}
+
+// -------------------------------------------------------------------- ar
+//
+// ar has no trailer and no checksum: a walk is the only way to find the end,
+// and the two-byte terminator on each 60-byte header is the only per-member
+// check. What these cover is the part that is not the walk -- the three name
+// dialects, the two members that are not files, and the shapes that must not
+// be followed.
+
+// One 60-byte member header plus its data, padded to an even offset.
+void put_ar_member(Bytes& out, const std::string& name16, const std::string& data,
+                   const std::string& mtime = "1700000000", const std::string& uid = "1000",
+                   const std::string& gid = "1000", const std::string& mode = "100644") {
+    std::string h = name16;
+    h.resize(16, ' ');
+    auto field = [&](const std::string& v, std::size_t w) {
+        std::string f = v;
+        f.resize(w, ' ');
+        h += f;
+    };
+    field(mtime, 12);
+    field(uid, 6);
+    field(gid, 6);
+    field(mode, 8);
+    field(std::to_string(data.size()), 10);
+    h += "`\n";
+    out.insert(out.end(), h.begin(), h.end());
+    out.insert(out.end(), data.begin(), data.end());
+    if ((data.size() & 1U) != 0) out.push_back('\n');
+}
+
+Bytes ar_magic() {
+    const std::string m = "!<arch>\n";
+    return Bytes(m.begin(), m.end());
+}
+
+TEST(ArContainer, GnuShortLongAndBsdNamesAllResolve) {
+    // Three dialects, one archive. A reader that emits the raw name field
+    // produces files called "/0" and "#1/13", which is what a cross
+    // toolchain's libgcc.a looks like when long names are not resolved.
+    Bytes img = ar_magic();
+    // The string table the "/N" names point into: names terminated by "/\n".
+    const std::string strtab = "a-very-long-member-name.o/\nanother-long-one.o/\n";
+    put_ar_member(img, "//", strtab, "", "", "", "");
+    put_ar_member(img, "short.o/", "SHORT");
+    put_ar_member(img, "/0", "LONG-ZERO");
+    put_ar_member(img, "/27", "LONG-27");
+    put_ar_member(img, "#1/13", std::string("bsd-name.o\0\0\0", 13) + "BSDDATA");
+
+    std::shared_ptr<const Source> keep;
+    auto reader = make("ar");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    const Walked w = walk_it(*reader);
+    ASSERT_TRUE(w.st) << w.st.error;
+
+    EXPECT_EQ(w.r.files, 4u) << "the string table is not a file";
+    const EntryResult* s = entry_named(w.r, "short.o");
+    ASSERT_NE(s, nullptr) << "GNU short names end at their slash";
+    EXPECT_EQ(s->digests.bytes, 5u);
+    ASSERT_NE(entry_named(w.r, "a-very-long-member-name.o"), nullptr)
+        << "/0 is an offset into the string table, not a name";
+    ASSERT_NE(entry_named(w.r, "another-long-one.o"), nullptr) << "/27 likewise";
+    const EntryResult* b = entry_named(w.r, "bsd-name.o");
+    ASSERT_NE(b, nullptr) << "#1/13 puts the name in the first 13 data bytes";
+    EXPECT_EQ(b->digests.bytes, 7u) << "and those 13 bytes are not part of the data";
+}
+
+TEST(ArContainer, SymbolAndStringTablesAreNotFiles) {
+    // `/` and `//` are the archive's own indexes. `ar t` does not list them
+    // and neither does unblob; emitting them would put two files in every
+    // extracted static library that were never in the source tree.
+    Bytes img = ar_magic();
+    put_ar_member(img, "/", std::string(8, '\0'), "0", "0", "0", "0");
+    put_ar_member(img, "//", "long.o/\n", "", "", "", "");
+    put_ar_member(img, "real.o/", "DATA");
+
+    std::shared_ptr<const Source> keep;
+    auto reader = make("ar");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    const ContainerInfo ci = reader->info();
+    EXPECT_EQ(ci.attrs.at("members"), "1") << "the tables are counted as tables, not members";
+    EXPECT_EQ(ci.attrs.at("symbol_table"), "true");
+    EXPECT_EQ(ci.attrs.at("string_table"), "true");
+    EXPECT_EQ(ci.size, img.size());
+
+    const Walked w = walk_it(*reader);
+    ASSERT_TRUE(w.st) << w.st.error;
+    EXPECT_EQ(w.r.files, 1u);
+    EXPECT_NE(entry_named(w.r, "real.o"), nullptr);
+    EXPECT_EQ(entry_named(w.r, "/"), nullptr);
+    EXPECT_EQ(entry_named(w.r, "//"), nullptr);
+}
+
+TEST(ArContainer, MemberMetadataIsKept) {
+    Bytes img = ar_magic();
+    put_ar_member(img, "m.o/", "DATA", "1700000123", "1001", "1002", "100755");
+    std::shared_ptr<const Source> keep;
+    auto reader = make("ar");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    const Walked w = walk_it(*reader);
+    const EntryResult* e = entry_named(w.r, "m.o");
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->meta.mode, 0755u) << "the mode field is octal";
+    EXPECT_EQ(e->meta.uid, 1001u);
+    EXPECT_EQ(e->meta.gid, 1002u);
+    ASSERT_TRUE(e->meta.mtime.has_value());
+    EXPECT_EQ(*e->meta.mtime, 1700000123);
+}
+
+TEST(ArContainer, OddSizedMemberIsPaddedToAnEvenOffset) {
+    // The padding byte belongs to nobody: reading it as data shifts every
+    // later member by one and the walk falls apart on the next header.
+    Bytes img = ar_magic();
+    put_ar_member(img, "odd.o/", "ODD");  // 3 bytes -> one pad byte
+    put_ar_member(img, "next.o/", "NEXT");
+    std::shared_ptr<const Source> keep;
+    auto reader = make("ar");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    const Walked w = walk_it(*reader);
+    ASSERT_EQ(w.r.files, 2u);
+    const EntryResult* o = entry_named(w.r, "odd.o");
+    ASSERT_NE(o, nullptr);
+    EXPECT_EQ(o->digests.bytes, 3u) << "the pad byte is not part of the member";
+    EXPECT_NE(entry_named(w.r, "next.o"), nullptr);
+}
+
+TEST(ArContainer, TruncatedArchiveKeepsTheMembersItHasAndSaysSo) {
+    Bytes img = ar_magic();
+    put_ar_member(img, "whole.o/", "COMPLETE");
+    put_ar_member(img, "cut.o/", "0123456789");
+    img.resize(img.size() - 6);  // cut inside the last member's data
+
+    std::shared_ptr<const Source> keep;
+    auto reader = make("ar");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    const Walked w = walk_it(*reader);
+    ASSERT_TRUE(w.st) << w.st.error;
+    EXPECT_NE(entry_named(w.r, "whole.o"), nullptr) << "what verified is still evidence";
+    EXPECT_TRUE(w.r.truncated);
+    EXPECT_TRUE(has_code(w.r.diagnostics, "ar-truncated-member"));
+}
+
+TEST(ArContainer, AMemberNameThatWouldEscapeIsRenamedNotFollowed) {
+    // A name is a path component and nothing else. `../x` in an archive is
+    // how an extraction ends up outside its own directory.
+    Bytes img = ar_magic();
+    put_ar_member(img, "../escape.o/", "SNEAKY");
+    std::shared_ptr<const Source> keep;
+    auto reader = make("ar");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    const Walked w = walk_it(*reader);
+    EXPECT_EQ(entry_named(w.r, "../escape.o"), nullptr);
+    ASSERT_EQ(w.r.files, 1u) << "the bytes are still emitted, under a name that cannot escape";
+    EXPECT_EQ(w.r.entries_out.front().meta.path, "member-1");
+    EXPECT_TRUE(has_code(w.r.diagnostics, "ar-bad-name"));
+}
+
+TEST(ArContainer, EntryLimitStopsTheWalk) {
+    Bytes img = ar_magic();
+    for (int i = 0; i < 8; ++i) put_ar_member(img, "m" + std::to_string(i) + ".o/", "X");
+    std::shared_ptr<const Source> keep;
+    auto reader = make("ar");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+    Limits lim;
+    lim.max_nodes_per_fs = 3;
+    const Walked w = walk_it(*reader, lim);
+    EXPECT_EQ(w.r.files, 3u);
+    EXPECT_TRUE(w.r.truncated);
+    EXPECT_TRUE(has_code(w.r.diagnostics, "ar-limit-entries"));
+}
+
+TEST(ArContainer, OpenRejectsWhatIsNotAnAr) {
+    std::shared_ptr<const Source> keep;
+    const Bytes junk(512, 0x41);
+    EXPECT_FALSE(make("ar")->open(span_of(junk, keep)));
+
+    // The magic with nothing behind it is not an archive.
+    const Bytes bare = ar_magic();
+    EXPECT_FALSE(make("ar")->open(span_of(bare, keep)));
+
+    // A first header whose fields are not numbers is not one either.
+    Bytes bad = ar_magic();
+    std::string h(58, ' ');
+    h += "`\n";
+    for (std::size_t i = 0; i < 16; ++i) h[i] = 'x';
+    for (std::size_t i = 48; i < 58; ++i) h[i] = 'z';  // size is not decimal
+    bad.insert(bad.end(), h.begin(), h.end());
+    EXPECT_FALSE(make("ar")->open(span_of(bad, keep)));
+}
+
+TEST(ArContainer, WalkBeforeOpenFails) {
+    auto reader = make("ar");
+    ListingSink sink(false, Limits{});
+    fs::WalkResult r;
+    const Status st = reader->walk(sink, fs::WalkOptions{}, r);
+    EXPECT_FALSE(st);
+    EXPECT_NE(st.error.find("container-not-open"), std::string::npos) << st.error;
+}
+
+TEST(ArContainer, TruncatedAtEveryOffsetIsSafe) {
+    Bytes img = ar_magic();
+    put_ar_member(img, "//", "long-name.o/\n", "", "", "", "");
+    put_ar_member(img, "/0", "DATA");
+    put_ar_member(img, "#1/9", std::string("bsd.o\0\0\0\0", 9) + "MORE");
+    for (std::size_t cut = 1; cut < img.size(); ++cut) {
+        const Bytes small(img.begin(), img.begin() + static_cast<std::ptrdiff_t>(cut));
+        std::shared_ptr<const Source> keep2;
+        auto reader = make("ar");
+        if (reader->open(span_of(small, keep2))) {
+            const Walked w = walk_it(*reader);  // must simply not crash
+            EXPECT_LE(w.r.files, 3u);
+        }
+    }
 }

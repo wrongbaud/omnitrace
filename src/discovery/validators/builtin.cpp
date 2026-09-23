@@ -6,6 +6,7 @@ namespace omnitrace::discovery::detail {
 #define OMNITRACE_DECLARE_ANCHOR(name) void omnitrace_validator_anchor_##name();
 #define OMNITRACE_TOUCH_ANCHOR(name) omnitrace_validator_anchor_##name();
 
+OMNITRACE_DECLARE_ANCHOR(ar)
 OMNITRACE_DECLARE_ANCHOR(squashfs)
 OMNITRACE_DECLARE_ANCHOR(jffs2)
 OMNITRACE_DECLARE_ANCHOR(ubi)
@@ -42,6 +43,7 @@ OMNITRACE_DECLARE_ANCHOR(super)
 void link_builtin_validators() {
     // Calling each (empty) anchor is enough to make the linker keep its object
     // file, and with it the static registrar defined next to the validator.
+    OMNITRACE_TOUCH_ANCHOR(ar)
     OMNITRACE_TOUCH_ANCHOR(squashfs)
     OMNITRACE_TOUCH_ANCHOR(jffs2)
     OMNITRACE_TOUCH_ANCHOR(ubi)

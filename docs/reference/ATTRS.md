@@ -16,7 +16,7 @@ All values are strings. Numbers are decimal unless the meaning says hex;
 lists use `;` between items and `:` between fields (`list_safe` replaces
 those characters inside evidence text).
 
-665 keys across 56 source files.
+675 keys across 58 source files.
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -27,6 +27,18 @@ Source: `src/containers/androidboot/AndroidBootReader.cpp` (3 keys)
 | `board_name` | `src/containers/androidboot/AndroidBootReader.cpp:135` | the board name the boot header records, sanitised |
 | `header_version` | `src/containers/androidboot/AndroidBootReader.cpp:133` | Android boot image header version (0-4) |
 | `page_size` | `src/containers/androidboot/AndroidBootReader.cpp:134` | page size the header declares, which every section is aligned to |
+
+## analysis driver (node attrs set by `analyze`)
+
+Source: `src/containers/ar/ArReader.cpp` (5 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `bsd_long_names` | `src/containers/ar/ArReader.cpp:236` | the archive uses the BSD '#1/<len>' dialect, where a long name is the first bytes of the member's data |
+| `data_bytes` | `src/containers/ar/ArReader.cpp:233` | member data bytes, the 60-byte headers and any padding excluded |
+| `members` | `src/containers/ar/ArReader.cpp:232` | members that are files; the symbol and string tables are counted separately |
+| `string_table` | `src/containers/ar/ArReader.cpp:235` | the archive has a '//' member holding the names too long for the 16-byte field |
+| `symbol_table` | `src/containers/ar/ArReader.cpp:234` | the archive has a '/' or '__.SYMDEF' member indexing its symbols |
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -256,6 +268,18 @@ Source: `src/discovery/validators/android_sparse.cpp` (10 keys)
 | `raw_chunks` | `src/discovery/validators/android_sparse.cpp:111` | number of raw chunks |
 | `total_blocks` | `src/discovery/validators/android_sparse.cpp:47` | total_blks from the header |
 | `total_chunks` | `src/discovery/validators/android_sparse.cpp:48` | total_chunks from the header |
+
+## validator `ar`
+
+Source: `src/discovery/validators/ar.cpp` (5 keys)
+
+| key | first set at | meaning |
+|---|---|---|
+| `bsd_long_names` | `src/discovery/validators/ar.cpp:143` | the archive uses the BSD '#1/<len>' dialect, where a long name is the first bytes of the member's data |
+| `data_bytes` | `src/discovery/validators/ar.cpp:140` | member data bytes, the 60-byte headers and any padding excluded |
+| `members` | `src/discovery/validators/ar.cpp:139` | members that are files; the symbol and string tables are counted separately |
+| `string_table` | `src/discovery/validators/ar.cpp:142` | the archive has a '//' member holding the names too long for the 16-byte field |
+| `symbol_table` | `src/discovery/validators/ar.cpp:141` | the archive has a '/' or '__.SYMDEF' member indexing its symbols |
 
 ## validator `bzip2`
 

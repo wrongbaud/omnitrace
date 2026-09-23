@@ -38,6 +38,7 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 | `android-sparse` | container | validated to consistent (`android-sparse`) | yes | yes (`src/containers/sparse/SparseReader.cpp:258`) | no | - | [android-sparse.md](../formats/android-sparse.md) | size is the chunk walk; no reader expands the image yet; signatures: `android-sparse` |
 | `android-super` | container | validated to verified (`android_super`) | yes | yes (`src/containers/super/SuperReader.cpp:176`) | no | - | [android-super.md](../formats/android-super.md) | signatures: `android-super` |
 | `android-vendor-boot` | container | validated to consistent (`android-boot`) | yes | yes (`src/containers/androidboot/AndroidBootReader.cpp:198`) | no | - | [android-boot.md](../formats/android-boot.md) | signatures: `android-vendor-boot` |
+| `ar` | container | validated to verified (`ar`) | yes | yes (`src/containers/ar/ArReader.cpp:330`) | no | - | [ar.md](../formats/ar.md) | signatures: `ar` |
 | `cpio` | container | validated to consistent (`cpio`) | yes | yes (`src/containers/cpio/CpioReader.cpp:295`) | no | - | [cpio.md](../formats/cpio.md) | signatures: `cpio-newc`, `cpio-crc`, `cpio-odc` |
 | `fit` | container | validated to verified (`fit`) | yes | yes (`src/containers/fit/FitReader.cpp:250`) | no | - | [fit.md](../formats/fit.md) | signatures: `fit` |
 | `tar` | container | validated to verified (`tar`) | yes | yes (`src/containers/tar/TarReader.cpp:342`) | no | - | [tar.md](../formats/tar.md) | signatures: `tar-ustar` |
@@ -64,6 +65,6 @@ code (the highest `Confidence::` tier it assigns and whether it sets `f.size`).
 
 ## Counts
 
-- 62 signatures over 41 format ids
-- 33 validators, 12 filesystem reader(s), 18 container reader(s)
+- 63 signatures over 42 format ids
+- 34 validators, 12 filesystem reader(s), 19 container reader(s)
 - mount.sh types: `cramfs` -> `cramfs`, `exfat` -> `exfat`, `ext` -> `ext4`, `ext2` -> `ext4`, `ext3` -> `ext4`, `ext4` -> `ext4`, `fat` -> `vfat`, `fat12` -> `vfat`, `fat16` -> `vfat`, `fat32` -> `vfat`, `ntfs` -> `ntfs3`, `qnx6` -> `qnx6`, `romfs` -> `romfs`, `squashfs` -> `squashfs`

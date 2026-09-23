@@ -116,6 +116,17 @@ validator = "cramfs"
 description = "cramfs superblock, big-endian; 'Compressed ROMFS' signature required, image CRC checked"
 
 [[signature]]
+name = "ar"
+format = "ar"
+category = "container"
+magic = "!<arch>\n"
+endian = "little"
+validator = "ar"
+max_members = 200000
+description = "ar archive (static library, .deb, .ipk); sized by walking member headers, each of which carries its own terminator"
+references = ["https://www.unix.com/man-page/opensolaris/3head/ar.h/", "https://en.wikipedia.org/wiki/Ar_(Unix)"]
+
+[[signature]]
 name = "fat32"
 format = "fat"
 category = "filesystem"
