@@ -345,6 +345,31 @@ Right sidebar is context-sensitive (node details, coverage warnings, job progres
 
 ## 11. Delivery roadmap
 
+> **Status, 2026-09-23.** Phases 0-2 are done; `docs/ROADMAP.md` describes what
+> the code supports today and is generated against the registries, so where
+> this section and that page differ, that page is right. Two corrections this
+> plan earned by contact with evidence:
+>
+> * **§7's port path is wrong.** v1's `src/omnitrace/reporting/{model,render}.py`
+>   does not exist. What OmniSonde has is `analysis/report_generator.py`, which
+>   builds Markdown by concatenation and shells out to pandoc in a container --
+>   the pipeline §7 itself says to replace. `src/report/` is therefore not a
+>   port but what this section describes, built fresh: a typed Document,
+>   rendered once, depending on `core` alone so it can still be lifted out as
+>   `omnireport`.
+> * **§5.5's list mostly already existed by the time it was reached.** The
+>   rules packs cover MACs, SSIDs and PSKs, IPs, URLs and PII; the analyzers
+>   cover passwd, shadow, group and network configuration. An artifact
+>   extractor earns its place by *parsing* something a pattern cannot reach,
+>   which is why certificates came first and SQLite, logs and ELF metadata are
+>   what remain.
+>
+> Phase 1's parity criterion (≥ 95 % vs unblob and moria) has **never been
+> measured**. The harness exists and the extraction work is done; the number
+> does not. It is listed as a task in `docs/ROADMAP.md` rather than quietly
+> treated as met.
+
+
 Weeks are estimates for one primary developer with agent assistance. Each phase ends with a tagged release and a CI-green matrix. **Core first: Phases 0 to 3 are CLI and library only. The web UI is Phase 4.**
 
 ### Phase 0 — Foundation (2 weeks)

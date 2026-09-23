@@ -2,119 +2,140 @@
 
 This page is for a contributor deciding what to build next. It states what the code supports today (taken from the registries, not the plan), the order of the next work, and a list of self-contained first improvements with the file to open for each. After reading it you can pick a task, find its starting point, and know what "done" means for it. `DEVELOPMENT_PLAN.md` at the repository root is the long form; where the two differ, this page describes the code.
 
-## Current state
+## What OmniTrace does today
 
-Phase 0 is complete. The pipeline in `src/discovery/Recurse.cpp:1203` (`analyze`) hashes the image, scans it, builds the evidence graph partition-first, walks every filesystem that has a reader, carves partitions and nested finds, generates `mount.sh`, and writes the case directory of `CASE_LAYOUT.md`. `INFO.yaml` round-trips through `output/Yaml.cpp` byte-identically, and the CLI refuses to exit 0 otherwise.
+Eight things, in the order a case moves through them. Counts come from the
+registries via `scripts/gen_docs.py`, so they cannot drift from the code;
+`docs/reference/FORMATS.md` is the per-format matrix and
+`docs/reference/DIAGNOSTICS.md` the 450-code catalogue.
 
-### Identification and extraction
+### 1. Identify — 58 signatures over 40 formats, 32 validators
 
-`docs/reference/FORMATS.md` is the matrix, per format id: whether a hit is
-magic-only or validated and to which tier, whether its extent is known, whether
-a reader extracts it, whether history is recovered, and how `partitions/mount.sh`
-treats it. It is generated from `signatures/*.toml`, the validators and the
-reader registries by `scripts/gen_docs.py` and checked by `scripts/check_docs.py`,
-so it cannot drift from the code the way a table written here would.
+A magic hit is a guess. A validator parses the structure behind it and places
+the finding on a confidence ladder (magic 25, structural 60, consistent 85,
+verified 99), sizes it when it can, and says why in `evidence`. A structure it
+walked but could not size carries `extent: unknown` and is never handed to a
+reader — an eMMC image holds hundreds of accidental magics.
 
-Today that is 56 signatures over 40 format ids, 32 validators, 11 filesystem
-readers (`squashfs`, `ext2`/`ext3`/`ext4`, `jffs2`, `qnx6`, `qnx-ifs`,
-`ubifs`, `yaffs2`, `cramfs`, `romfs`) and 18 container formats read by 12 readers: `gzip`,
-`bzip2`, `xz`, `lzma`, `lz4` and `zstd` (one `StreamReader`), `lzop`, `tar`,
-`cpio`, `zip`, `7z`, `uimage`, `fit`, `ubi`, `android-boot` and
-`android-vendor-boot` (one reader), `android-sparse` and `android-super`. **Every *container*
-format with a signature has a reader**, and since the full-corpus run flagged
-the last two gaps, so does every filesystem: `cramfs` and `romfs` are read
-now. `--history` is recovered by the ext, JFFS2, QNX6, UBIFS and
-YAFFS2 readers, and by the UBI reader for superseded logical erase blocks.
+**When a magic is too weak to trust, a checksum or an exhausted input is what
+earns an extent.** Four formats share that rule: a GPT header whose signature
+was cleared is read because its CRC32 covers the signature bytes; an
+unterminated `tar` claims only the bytes whose member checksums verified; an
+Android `super` map is described but claims nothing until its SHA-256 matches;
+and a compressed stream the data ran out underneath is sized because it
+consumed every available byte. The rule lives where both the validator and the
+reader call it, or they drift.
 
-Nested analysis runs for extracted files: every file a walk writes to the host
-is re-scanned, and one holding a filesystem or a partition table at Structural
-or better and at least `min_region_bytes` long is analysed again with the File node as its parent
-(`descend_into_file` in `src/discovery/Recurse.cpp`), bounded by
-`Limits::max_depth`. A container payload is walked into
-`containers/<node-id>/files` by `process_container` and then re-scanned the
-same way, so a `.tar.gz` holding a filesystem is followed to the end. Every
-container format with a signature has a reader now, so the `unsupported`
-Coverage row and its `analyze-no-reader` diagnostic are for a format that is
-identified but has none -- which today means none of them.
+### 2. Extract — 11 filesystem readers, 18 container formats
 
-Every stream format says what its payload is worth. `compress::stream_check`
-reads the check a gzip, zlib, bzip2, xz, lz4 or zstd stream records over
-itself, and because each library verifies that check while decoding, the
-`StreamReader` entry carries `checksum` = `ok`, `mismatch`, `none` or
-`unchecked` the way `LzopReader`'s does. A stream that decoded whole and then
-failed its own check is still sized, read and emitted, flagged
-`compressed-stream-checksum-mismatch` and `container-checksum-mismatch`:
-the router-wrt image has one, a damaged 1 MB gzip holding a tar that was previously
-reported only as an unmeasured magic. `docs/formats/compressed-streams.md`
-has the per-format table and the two limits.
+squashfs, ext2/3/4, jffs2, qnx6, qnx-ifs, ubifs, yaffs2, cramfs, romfs; gzip,
+bzip2, xz, lzma, lz4, zstd, lzop, tar, cpio, zip, 7z, uimage, fit, ubi,
+android-boot, android-vendor-boot, android-sparse, android-super. **Every
+format with a signature has a reader.**
 
-Every unidentified region says what its bytes look like: `omnitrace::entropy`
-(`src/core/Entropy.h`) profiles it in sampled windows and the node carries
-`entropy`, `entropy_chi2` and `entropy_class` (erased, sparse, text, binary,
-packed, random), with `region-high-entropy` on the two high classes. It is
-what turns "no signature matched" into something actionable -- the two IP camera
-images that yield nothing are one 8 MB region at 7.955 bits/byte and chi2/df
-1.2, uniform and magic-free end to end. `random` deliberately stops short of
-claiming encryption: xz output is statistically indistinguishable from AES
-(`docs/formats/entropy.md` has the measurements).
+Every extracted file is re-scanned, so chains resolve to the end:
+`boot.img → ramdisk → gzip → cpio → rootfs`. The router-wrt image resolves five
+levels deep to the router's OpenSSL libraries.
 
-Word-swapped dumps are detected by `detect_word_swap` (`src/core/Swap.cpp:334`)
-and analysed through a `SwappedSource` view; the Image node gets
-`image-word-swapped`, and the view the analysis actually read is written to
-`flash/<stem>-swap32.bin` with its own hashes in `flash/SOURCE.yaml`. Without
-that file every offset in the manifest, and every carved partition, would
-describe bytes that exist on no disk anywhere.
+### 3. Recover — `--history`, and partial structures
 
-### Test assets
+Superseded and deleted versions from ext, JFFS2, QNX6, UBIFS and YAFFS2, and
+superseded logical erase blocks from UBI. Damaged structures give up what they
+have rather than nothing: an archive with no end marker, a stream whose data
+ran out, a GPT readable only from its backup.
 
-18 fixture images with `expected.yaml` ground truth (`tests/fixtures/out/`, built by `tests/fixtures/generate.py`), a parity harness for unblob, binwalk, moria and OmniTrace (`tests/parity/run.py`), and unit tests per layer under `tests/unit/`.
+### 4. Understand the bytes — entropy, word-swap
+
+Every unidentified region is profiled (`erased`, `sparse`, `text`, `binary`,
+`packed`, `random`). `random` deliberately stops short of claiming encryption:
+xz output is statistically indistinguishable from AES. Word-swapped dumps are
+detected and analysed through a corrected view that is written to `flash/`, so
+every offset in the manifest refers to a file that exists.
+
+### 5. Understand the system — 3 platform analyzers
+
+Linux, QNX and Android. One report per filesystem, because an image routinely
+holds several systems. Every fact is `(key, value, source)` where source is the
+file it was read from, so an examiner can open it and disagree. Precedence is
+by **rank, not score**: a QNX root matches five Linux markers, and counting
+cannot settle which answer is more precise.
+
+### 6. Search — 4 rule packs, 52 rules
+
+network, credentials, pii, rtos. Compiled into one RE2 set — linear time
+regardless of the pattern, because a pack is untrusted input. Runs over every
+extracted file and every region no signature claimed.
+
+### 7. Parse — 1 artifact extractor
+
+Certificates: subject, issuer, validity, key type and length, SAN, and private
+keys. A search pack can say a `-----BEGIN CERTIFICATE-----` block is present;
+only a parser can say it is self-signed `CN=router` with its RSA-2048 private
+key in the same file.
+
+### 8. Report — a typed document, and an integrity gate
+
+`report.html` and `report.md`, built as data and rendered once rather than
+concatenated. Before rendering, every piece of evidence is **re-hashed** and
+the result stated in the first section. A mismatch is reported, not
+suppressed: every offset in a report refers to the bytes the case recorded.
+
+### Throughout
+
+Coverage rows state what was *not* done. 450 diagnostic codes, each catalogued
+with a meaning and an action. `analyze` will not fill the disk it writes to.
+867 tests across 9 suites; gcc, clang and ASan all green.
+
+## Phases
+
+| phase | state |
+|---|---|
+| 0 — Foundation | complete |
+| 1 — Discovery, extraction, parity | complete **except parity, which has never been measured** |
+| 2 — Recovery, artifacts, reporting | complete; exit criterion verified on both the router and the 7.8 GB auto-emmc eMMC corpora |
+| 3 — Hardening and release | not started |
+| 4 — Web UI | not started, and deliberately after a release (`core-before-ui`) |
+
+**Phase 1's parity gap is worth stating plainly.** Its exit criterion is
+"parity ≥ 95 % files recovered vs unblob and moria on fixtures and corpus".
+The harness exists (`tests/parity/run.py`) and the Windows and macOS CI
+builds do too, but no parity run is recorded anywhere in the tree. The
+extraction work is done and the corpus exercises it hard; the *number* has
+never been produced. Running it is a concrete task, not a formality — it is
+the only external check on whether the readers miss things nobody noticed.
 
 ## Next, in order
 
-Everything previously listed here is done: the ext4, JFFS2, QNX6 and QNX IFS
-readers, both halves of the container work (readers plus the payload
-recursion), and the unterminated-`tar` item — an archive with no end marker
-now claims the bytes its verified members account for, gated on the header
-checksums, so the router-wrt image's OpenWrt package inside a CRC-failed gzip is
-extracted instead of lost. See the section above.
+1. **A `listing.yaml` reader.** The highest-value single piece. `analyzers`,
+   `artifacts` and `report` were all built to take what the extraction
+   produced and nothing about how — they depend on `core` and `output` only,
+   so a finished case can in principle be re-examined without re-extracting
+   it. Nothing exercises that, because turning a case directory back into
+   entries needs this reader. It would take `omnitrace report <case>` from
+   four sections to seven, give the analyzers and extractors a standalone
+   entry point, and make the decoupling load-bearing rather than latent.
+   One job, three payoffs.
 
-That family is now closed. A compressed stream the data ran out underneath is
-recovered too (`compress::stream_ran_out`), so the router-wrt chain resolves to the
-router's OpenSSL libraries five levels down. The pattern the four share is
-worth carrying to the next format: **when a magic is too weak to trust, a
-checksum or an exhausted input is what earns an extent** — and the rule must
-live where both the validator and the reader can call it, or they drift.
+2. **Measure parity.** Close Phase 1's open criterion with a real number
+   against unblob, binwalk and moria on the fixtures and the corpus.
 
-**Phase 2 is complete.** The rules engine and packs, the platform analyzers
-(§5.4), a first artifact extractor (§5.5) and the report (§7) are all in. A
-case directory now carries `INFO.yaml`, `platform.yaml`, `certificates.yaml`,
-`artifacts.yaml` and `report.html`/`report.md`, and the report re-hashes the
-evidence before rendering and says in its first section whether it still
-matches.
+3. **Validate the Android analyzer against a real Android tree.** Its markers
+   come from documented AOSP layout, not evidence; the automotive Android unit's `la_super`
+   is the image to check them against. The QNX model *was* aimed at evidence
+   and the corpus still corrected six things its fixtures could not, including
+   a `Tree` bug that silently disabled its strongest marker.
+   `docs/ANALYZERS.md` says which parts are guesses.
 
-Three things were left deliberately, each written up where the code is:
+4. **More artifact extractors** (§5.5): SQLite with freelist recovery, logs
+   with a normalised timeline, ELF metadata. Certificates came first because
+   the corpus had 131 of them and most of the rest of §5.5 overlaps what the
+   packs and analyzers already do — an extractor earns its place by *parsing*
+   something, not by matching it.
 
-1. **A `listing.yaml` reader**, which is the single highest-value next piece.
-   `analyzers`, `artifacts` and `report` were all built to take what the
-   extraction produced and nothing about how — the layers depend on `core`
-   (and `output`) only, so a finished case can in principle be re-examined
-   without re-extracting it. Nothing exercises that yet, because turning a
-   case directory back into entries needs this reader. It would make
-   `omnitrace report` rebuild all seven sections instead of four, give
-   `analyzers` and `artifacts` a standalone entry point, and make the
-   decoupling load-bearing rather than latent.
-2. **The Android analyzer has never seen a real Android tree** (§5.4). Its
-   markers come from documented AOSP layout; the automotive Android unit's `la_super` is the
-   image to check it against. `docs/ANALYZERS.md` says which parts are
-   guesses.
-3. **More extractors** (§5.5): SQLite, logs with a normalised timeline, ELF
-   metadata. Certificates were done first because the corpus had 131 of them
-   and the rest of §5.5's list overlaps what the rules packs and analyzers
-   already do.
+5. **Phase 3**: fuzzing per reader under ASan/UBSan, a performance pass on
+   large images, signed release artifacts for all three platforms.
 
-Then **Phase 3** (fuzzing, a performance pass, Windows and macOS packaging,
-release) and **Phase 4**: web UI, only after the CLI and library are released
-(decision `core-before-ui`).
+6. **Phase 4**: web UI, only after the CLI and library are released.
 
 ## Good first improvements
 
