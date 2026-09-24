@@ -255,6 +255,44 @@ TEST(Kallsyms, DecodesAddressesInEitherByteOrderAndWordSize) {
     }
 }
 
+// An absolute array's last address sits exactly where `relative_base` would,
+// so reading it as base-relative "works": adding the array to itself still
+// ascends and still looks like addresses. What gives it away is the width --
+// a 32-bit kernel does not have a symbol above 4 GiB. The camera v1 is an
+// absolute table and was read as relative, putting its text at 0x10043b3c4,
+// until the resolved addresses were bounded to the word size.
+TEST(Kallsyms, AnAbsoluteTableIsNotReadAsRelative) {
+    const auto syms = made_up_symbols(600);
+    const Bytes blob = kallsyms_blob(syms, false, 4, Addrs::Absolute, 0x80010400ULL);
+    const kernel::Kallsyms ks = kernel::parse(blob);
+    ASSERT_TRUE(ks.found);
+    ASSERT_TRUE(ks.addressed);
+    EXPECT_EQ(ks.mode, kernel::AddressMode::Absolute) << "not relative";
+    EXPECT_EQ(ks.symbols[0].address, 0x80010400ULL);
+    for (const kernel::Symbol& sy : ks.symbols)
+        ASSERT_LE(sy.address, 0xFFFFFFFFULL) << "a 32-bit kernel has no symbol above 4 GiB";
+}
+
+// The count written next to the names is what says the word size was read
+// right. Reading an 8-byte marker array as 4-byte words can produce a short
+// chain that the real names blob then satisfies, decoding genuine symbols --
+// 511 of them, in a fixture that holds 600. Nothing in the names says
+// otherwise; `num_syms` does.
+TEST(Kallsyms, RequiresTheRecordedSymbolCountToAgree) {
+    Bytes blob = kallsyms_blob(made_up_symbols(600), false, 4, Addrs::Absolute, 0x80010400ULL);
+    const kernel::Kallsyms ok = kernel::parse(blob);
+    ASSERT_TRUE(ok.found);
+    ASSERT_EQ(ok.symbols.size(), 600u);
+
+    // Corrupt only the recorded count; the names and markers are untouched.
+    const std::size_t ns = static_cast<std::size_t>(ok.num_syms_at);
+    ASSERT_LT(ns + 4, blob.size());
+    blob[ns] = 0x11;
+    blob[ns + 1] = 0x22;
+    EXPECT_FALSE(kernel::parse(blob).found)
+        << "a table that disagrees with its own count is not decoded";
+}
+
 // The two halves are found separately, so a table whose addresses cannot be
 // read is still a table: losing them must not lose the symbols.
 TEST(Kallsyms, SymbolsSurviveAnUnreadableAddressArray) {

@@ -97,8 +97,8 @@ std::vector<std::size_t> token_base_candidates(std::span<const std::uint8_t> d,
 /// unusual VA split -- is not recognised, which costs the addresses and
 /// nothing else.
 bool address_like(std::uint64_t v, unsigned word) {
-    const std::uint64_t top = word == 4 ? 0x80000000ULL : 0x8000000000000000ULL;
-    return v >= top;
+    if (word == 4) return v >= 0x80000000ULL && v <= 0xFFFFFFFFULL;
+    return v >= 0x8000000000000000ULL;
 }
 
 /// Read the address array that precedes `num_syms`, in whichever of the three
@@ -126,6 +126,14 @@ AddressMode read_addresses(std::span<const std::uint8_t> d, std::size_t num_syms
         }
         // The highest symbol is always ordinary kernel text or data, whatever
         // the mode; per-cpu entries, which are small absolutes, sort first.
+        //
+        // `address_like` also bounds the value to the word size, and that is
+        // what keeps an absolute array from being read as a relative one. Its
+        // last address sits exactly where `relative_base` would, so adding
+        // the array to itself "works": it ascends, and it looks like an
+        // address until you notice a 32-bit kernel with a symbol at
+        // 0x10043b3c4. The camera is an absolute table and read that way
+        // until the width was checked.
         return address_like(resolve(static_cast<std::size_t>(num - 1)), word);
     };
 
@@ -247,7 +255,7 @@ Kallsyms parse(std::span<const std::uint8_t> image, std::size_t max_symbols) {
                         std::size_t p = m_end - word;
                         std::uint64_t prev = 0;
                         bool first_word = true, chain = true;
-                        std::size_t markers = 0;
+                        std::vector<std::uint64_t> marks;  // collected back to front
                         while (true) {
                             const std::uint64_t v = rdword(image.data() + p, be, word);
                             if (!first_word && v >= prev) {
@@ -256,90 +264,100 @@ Kallsyms parse(std::span<const std::uint8_t> image, std::size_t max_symbols) {
                             }
                             prev = v;
                             first_word = false;
-                            ++markers;
+                            marks.push_back(v);
                             if (v == 0) break;
-                            if (p < word || markers > max_symbols / 256 + 2) {
+                            if (p < word || marks.size() > max_symbols / 256 + 2) {
                                 chain = false;
                                 break;
                             }
                             p -= word;
                         }
-                        if (!chain || markers < 2) continue;
+                        if (!chain || marks.size() < 2) continue;
+                        std::reverse(marks.begin(), marks.end());
+                        const std::size_t markers = marks.size();
                         const std::size_t m_start = p;
-                        const std::uint64_t last_marker =
-                            rdword(image.data() + m_end - word, be, word);
+                        const std::uint64_t last_marker = marks.back();
 
-                        // num_syms sits immediately before the names blob. A
-                        // candidate is confirmed by decoding only the final block
-                        // of <=256 symbols and landing exactly on the markers.
-                        const std::size_t floor_at =
-                            m_start > kMaxNamesBytes ? m_start - kMaxNamesBytes : 0;
-                        for (std::size_t ns = m_start - word; ns + word > floor_at; ns -= word) {
-                            const std::uint64_t num = rdword(image.data() + ns, be, word);
-                            if (num < kMinSyms || num > max_symbols) {
-                                if (ns < word) break;
-                                continue;
-                            }
-                            if ((num + 255) / 256 != markers) {
-                                if (ns < word) break;
-                                continue;
-                            }
-                            const std::size_t names_at = ns + word;
-                            if (last_marker >= m_start - names_at) {
-                                if (ns < word) break;
-                                continue;
-                            }
-                            std::size_t q = names_at + static_cast<std::size_t>(last_marker);
-                            const std::uint64_t want = num - 256 * (markers - 1);
-                            std::uint64_t seen = 0;
-                            bool walked = true;
-                            while (seen < want) {
-                                if (q >= m_start) {
-                                    walked = false;
-                                    break;
-                                }
+                        // Where the names blob starts is settled by the
+                        // markers, not by hunting for `num_syms`.
+                        //
+                        // The first version anchored on num_syms and assumed
+                        // the names followed it immediately. The camera
+                        // camera's kernel puts *twelve* bytes of padding
+                        // between the two, so nothing lined up and the image
+                        // decoded to nothing with its token table in plain
+                        // sight. The markers are the better anchor: entry k
+                        // is the offset of symbol 256k, so a candidate start
+                        // has to reproduce all of them, and across 400,000
+                        // positions in that image exactly one did.
+                        //
+                        // The window is tight: the blob is at least
+                        // `last_marker` long and at most one more block of
+                        // 256 symbols, each of which is at most 256 bytes.
+                        const std::size_t span_hi = m_start - static_cast<std::size_t>(last_marker);
+                        const std::size_t span_lo = span_hi > 256 * 256 ? span_hi - 256 * 256 : 0;
+                        for (std::size_t names_at = span_lo; names_at <= span_hi; ++names_at) {
+                            std::size_t q = names_at;
+                            std::size_t i = 0;
+                            // Trailing zero-length entries are the padding
+                            // between the names and the markers, not symbols:
+                            // every real name carries at least its type
+                            // character. Counted as symbols they make
+                            // `num_syms` disagree with the table by exactly
+                            // the number of pad bytes -- four, on the camera
+                            // image.
+                            std::size_t trailing_empty = 0;
+                            bool ok = true;
+                            const auto step = [&]() {
                                 const std::size_t len = image[q];
-                                ++q;
-                                if (q + len > m_start) {
-                                    walked = false;
+                                if (q + 1 + len > m_start) return false;
+                                q += 1 + len;
+                                ++i;
+                                trailing_empty = len == 0 ? trailing_empty + 1 : 0;
+                                return true;
+                            };
+                            for (std::size_t k = 0; k < markers && ok; ++k) {
+                                if (q != names_at + marks[k]) {
+                                    ok = false;
                                     break;
                                 }
-                                q += len;
-                                ++seen;
+                                const std::size_t upto = (k + 1) * 256;
+                                while (i < upto && q < m_start) {
+                                    if (!step()) {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
                             }
-                            // `names` is padded up to the alignment `markers`
-                            // needs, so the walk lands within one word of it
-                            // rather than exactly on it. Counting `want` entries
-                            // first is also what stops a pad byte being read as a
-                            // zero-length symbol.
-                            if (!walked || q > m_start || m_start - q >= word) {
-                                if (ns < word) break;
-                                continue;
+                            if (!ok) continue;
+                            // Whatever is left after the last marker's block.
+                            while (q < m_start && i < max_symbols) {
+                                if (!step()) break;
                             }
+                            const std::size_t num = i - trailing_empty;
+                            if (num < kMinSyms || num > max_symbols) continue;
+                            if ((num + 255) / 256 != markers) continue;
 
-                            // Everything lines up. Decode, then judge the result:
-                            // a kernel image is megabytes of data and arithmetic
-                            // alone will eventually agree with itself.
                             std::vector<Symbol> syms;
-                            syms.reserve(static_cast<std::size_t>(num));
+                            syms.reserve(num);
                             q = names_at;
-                            for (std::uint64_t i = 0; i < num; ++i) {
+                            for (std::size_t n = 0; n < num; ++n) {
                                 const std::size_t len = image[q];
                                 ++q;
-                                std::string s;
-                                for (std::size_t k = 0; k < len; ++k) s += tokens[image[q + k]];
+                                std::string str;
+                                for (std::size_t k = 0; k < len; ++k) str += tokens[image[q + k]];
                                 q += len;
                                 Symbol sym;
-                                if (!s.empty()) {
-                                    sym.type = s[0];
-                                    sym.name = s.substr(1);
+                                if (!str.empty()) {
+                                    sym.type = str[0];
+                                    sym.name = str.substr(1);
                                 }
                                 syms.push_back(std::move(sym));
                             }
                             std::size_t good = 0;
                             const std::size_t sample = std::min(kScoreSample, syms.size());
-                            for (std::size_t i = 0; i < sample; ++i) {
-                                const Symbol& sy = syms[i];
+                            for (std::size_t n = 0; n < sample; ++n) {
+                                const Symbol& sy = syms[n];
                                 if (sy.name.empty()) continue;
                                 if (!is_type_char(static_cast<unsigned char>(sy.type))) continue;
                                 if (std::all_of(sy.name.begin(), sy.name.end(), [](char c) {
@@ -347,10 +365,36 @@ Kallsyms parse(std::span<const std::uint8_t> image, std::size_t max_symbols) {
                                     }))
                                     ++good;
                             }
-                            if (sample == 0 || good * 10 < sample * 9) {
-                                if (ns < word) break;
-                                continue;
+                            if (sample == 0 || good * 10 < sample * 9) continue;
+
+                            // `num_syms` must be a word shortly before the
+                            // names, holding exactly the count just decoded.
+                            //
+                            // This is required, not merely useful. Reading an
+                            // 8-byte marker array as 4-byte words can yield a
+                            // short chain that a real names blob then
+                            // satisfies -- a 64-bit fixture decoded as 511
+                            // symbols with a two-marker chain that way, every
+                            // name of it a genuine symbol. Nothing in the
+                            // names themselves says the word size was wrong.
+                            // The count written down next to them does.
+                            //
+                            // It also locates the address array, which is
+                            // whatever precedes it.
+                            std::size_t ns = 0;
+                            bool have_ns = false;
+                            for (std::size_t back = word; back <= 64 && back <= names_at;
+                                 back += word) {
+                                const std::size_t cand = names_at - back;
+                                if (cand % word != 0) continue;
+                                if (rdword(image.data() + cand, be, word) == num) {
+                                    ns = cand;
+                                    have_ns = true;
+                                    break;
+                                }
                             }
+                            if (!have_ns) continue;
+
                             // The names are good. Addresses live in a
                             // separate array found by arithmetic from here,
                             // and failing to read them loses the addresses,

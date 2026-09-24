@@ -143,6 +143,25 @@ symbols.
 | `loadable_modules` | whether `module_layout`/`load_module` is among the symbols |
 | `address_mode`, `load_address`, `text_start`, `address_span`, `relative_base` | the address array (below) |
 
+### Finding the names
+
+Where the names blob starts is settled by the **markers**, not by hunting for
+`num_syms`. Marker *k* is the offset of symbol 256*k*, so a candidate start has
+to reproduce every one of them; across 400,000 positions in the camera image
+exactly one did. Anchoring on `num_syms` instead assumes the names follow it
+immediately, and that kernel puts **twelve bytes of padding** between the two —
+so nothing lined up and the image decoded to nothing with its token table in
+plain sight.
+
+Two counts then have to agree. Trailing zero-length entries are the padding
+between the names and the markers rather than symbols, since every real name
+carries at least its type character; counting them made the camera table
+disagree with its own `num_syms` by exactly the four pad bytes. And the
+recorded count is **required**, not merely checked: reading an 8-byte marker
+array as 4-byte words can yield a short chain that a real names blob satisfies,
+decoding 511 genuine symbols out of a table of 600. Nothing in the names says
+the word size was wrong. The count written next to them does.
+
 ### Addresses
 
 The names alone say what a kernel contains; the addresses say where it runs.
@@ -169,9 +188,19 @@ check on the entries rejects exactly the form it was meant to find. The
 highest symbol must also look like a kernel address, which is the top half of
 the address space on every architecture this meets.
 
-Measured on the router-nand image: `relative`, `relative_base` `0xc0088000`,
-`load_address` and `text_start` both `0xc0100000` — the ARM text base — over a
-`0x9289ec` span.
+The width matters as much as the order. `address_like` bounds a resolved
+address to the word size, and that is what keeps an absolute array from being
+read as a relative one: adding the array to itself still ascends and still
+looks like addresses, right up until you notice a 32-bit kernel with a symbol
+at `0x10043b3c4`.
+
+| image | mode | load address | symbols |
+|---|---|---|---|
+| router-nand (ARM, 5.4.55) | `relative`, base `0xc0088000` | `0xc0100000` | 29,793 |
+| camera v1 (MIPS/RLX, 3.10.27) | `absolute` | `0x80010400` | 14,672 |
+
+The camera image's `0x41abc4` span is very nearly the 4.34 MB payload itself,
+which is the cross-check that the addresses are the right ones.
 
 The two halves are found separately on purpose. A table whose addresses cannot
 be read still yields its names, and `symbols` is reported without the address
@@ -186,13 +215,8 @@ W=195, D=1`), 32-bit little-endian, loadable modules yes.
 
 ## Known gaps
 
-* **Two of three corpus kernels have no symbols to read.** The router image
-  was built without `CONFIG_KALLSYMS` and says so
-  (`kernel-no-symbol-table`). The camera v1's 3.10 kernel *does* carry a
-  token table — its tokens read `_read`, `tion`, `attr`, `fs_`, `v4l` — and
-  its markers array is found, but the names do not validate against it, so
-  this build reports no symbols rather than guessing at some. That image is
-  the one to aim the next attempt at.
+* **One of three corpus kernels has no symbols to read**: the router image was
+  built without `CONFIG_KALLSYMS` and says so (`kernel-no-symbol-table`).
 * **Symbol names are not emitted, only counted.** Thirty thousand names is not
   a report, and the record has nowhere to put them; what an examiner gets is
   the histogram and the presence tests. Writing the table out as its own file
