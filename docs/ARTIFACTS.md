@@ -141,6 +141,41 @@ symbols.
 | `symbols`, `symbol_types` | the kallsyms table: a count, and a histogram of nm type letters |
 | `word_size`, `endian` | how the table was laid out, which is how the kernel was built |
 | `loadable_modules` | whether `module_layout`/`load_module` is among the symbols |
+| `address_mode`, `load_address`, `text_start`, `address_span`, `relative_base` | the address array (below) |
+
+### Addresses
+
+The names alone say what a kernel contains; the addresses say where it runs.
+They live in a second array immediately before `kallsyms_num_syms`, which is
+already known by the time the names decode, so this one is found by arithmetic
+rather than by searching. What has to be *decided* is which of three forms it
+is, because all three sit in the same place:
+
+| mode | layout |
+|---|---|
+| `absolute` | `kallsyms_addresses`: one word per symbol, the address itself |
+| `relative` | `kallsyms_offsets`: a u32 per symbol added to `kallsyms_relative_base`; the default since 4.6 |
+| `relative-percpu` | `--absolute-percpu`: a *positive* entry is an absolute address, a negative one is `relative_base - 1 - entry` |
+
+Base-relative is tested first because its `relative_base` word sits exactly
+where an absolute array's last address would be, and reading that word as an
+address is the obvious way to get this wrong.
+
+The test that decides between them is that the **resolved** addresses ascend —
+kallsyms is sorted by address — not that the stored entries do. They do not
+always: under `--absolute-percpu` an ordinary symbol is stored as
+`base - 1 - address`, so rising addresses are a *falling* raw array, and a
+check on the entries rejects exactly the form it was meant to find. The
+highest symbol must also look like a kernel address, which is the top half of
+the address space on every architecture this meets.
+
+Measured on the router-nand image: `relative`, `relative_base` `0xc0088000`,
+`load_address` and `text_start` both `0xc0100000` — the ARM text base — over a
+`0x9289ec` span.
+
+The two halves are found separately on purpose. A table whose addresses cannot
+be read still yields its names, and `symbols` is reported without the address
+fields rather than the whole table being discarded.
 
 `loadable_modules` is the one worth explaining. It decides what an empty
 `lib/modules` means: a kernel that cannot load modules at all has its drivers
@@ -162,9 +197,11 @@ W=195, D=1`), 32-bit little-endian, loadable modules yes.
   a report, and the record has nowhere to put them; what an examiner gets is
   the histogram and the presence tests. Writing the table out as its own file
   in the case directory would need a new output, which is not modelled.
-* **Addresses are not decoded.** `kallsyms_addresses`/`kallsyms_offsets` sit
-  before `num_syms` and would give every symbol its address, which is what
-  turns this into something a disassembler could use. Only the names are read.
+* **A kernel mapped low is not addressed.** Deciding which address array a
+  kernel has rests on kernel addresses living in the top half of the address
+  space, which is true of every architecture in the corpus and not of a nommu
+  build or an unusual VA split. Such an image reports its symbols without
+  addresses rather than reporting wrong ones.
 
 
 * **Compressed modules are not parsed by name.** `.ko.gz`, `.ko.xz` and

@@ -159,6 +159,46 @@ class LinuxKernelExtractor final : public Extractor {
         }
         a.fields["symbol_types"] = types;
 
+        // Where the kernel runs. An address array turns the symbol list into
+        // a map of the running system: the first symbol is the base the image
+        // was linked for, and the span to the last is how much of the address
+        // space it occupies. Nothing in the image says where it was loaded
+        // *physically*, so these are virtual addresses and are labelled as
+        // such.
+        if (ks.addressed && !ks.symbols.empty()) {
+            const auto hex = [](std::uint64_t v) {
+                static const char* kDigits = "0123456789abcdef";
+                std::string h;
+                for (int shift = 60; shift >= 0; shift -= 4) {
+                    const unsigned nib = static_cast<unsigned>((v >> shift) & 0xF);
+                    if (h.empty() && nib == 0 && shift != 0) continue;
+                    h += kDigits[nib];
+                }
+                return "0x" + h;
+            };
+            std::uint64_t lo = ks.symbols.front().address;
+            std::uint64_t hi = lo;
+            for (const kernel::Symbol& sy : ks.symbols) {
+                lo = std::min(lo, sy.address);
+                hi = std::max(hi, sy.address);
+            }
+            a.fields["address_mode"] = kernel::address_mode_name(ks.mode);
+            a.fields["load_address"] = hex(lo);
+            a.fields["address_span"] = hex(hi - lo);
+            if (ks.relative_base != 0) a.fields["relative_base"] = hex(ks.relative_base);
+            // `_text` or `_stext` is where the kernel's own code begins, and
+            // is the number an examiner needs to line a disassembly up.
+            for (const char* want : {"_text", "_stext", "stext"}) {
+                const auto it =
+                    std::find_if(ks.symbols.begin(), ks.symbols.end(),
+                                 [&](const kernel::Symbol& sy) { return sy.name == want; });
+                if (it != ks.symbols.end()) {
+                    a.fields["text_start"] = hex(it->address);
+                    break;
+                }
+            }
+        }
+
         // Whether this kernel can load modules at all is a property of the
         // image, and it decides whether an empty lib/modules means "drivers
         // are built in" or "the modules are missing".

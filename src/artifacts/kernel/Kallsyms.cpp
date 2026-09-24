@@ -87,7 +87,108 @@ std::vector<std::size_t> token_base_candidates(std::span<const std::uint8_t> d,
     return out;
 }
 
+/// Does this look like an address in a kernel's own address space?
+///
+/// Every mainstream kernel lives in the top half: 0x8000_0000 on 32-bit MIPS,
+/// 0xc000_0000 on 32-bit ARM and x86, 0xffff... on arm64 and x86-64. That is
+/// the whole test, and it is what separates `kallsyms_addresses` (addresses)
+/// from `kallsyms_offsets` (small numbers) when both are a run of
+/// non-decreasing words in the same place. A kernel mapped low -- nommu, or an
+/// unusual VA split -- is not recognised, which costs the addresses and
+/// nothing else.
+bool address_like(std::uint64_t v, unsigned word) {
+    const std::uint64_t top = word == 4 ? 0x80000000ULL : 0x8000000000000000ULL;
+    return v >= top;
+}
+
+/// Read the address array that precedes `num_syms`, in whichever of the three
+/// forms the kernel used, and fill in `Symbol::address`.
+///
+/// This array is found by arithmetic rather than by searching: `num_syms` is
+/// already known and the array is exactly `num` entries ending where it
+/// begins. What has to be decided is *which* array it is, and that is settled
+/// by whether the values look like addresses.
+AddressMode read_addresses(std::span<const std::uint8_t> d, std::size_t num_syms_at,
+                           std::uint64_t num, bool be, unsigned word, std::vector<Symbol>& syms,
+                           std::uint64_t& rel_base) {
+    // kallsyms is sorted by address, so the invariant to test is that the
+    // *resolved* addresses ascend -- not that the stored entries do. They do
+    // not always: with --absolute-percpu an ordinary symbol is stored as
+    // `base - 1 - address`, so rising addresses are a falling raw array, and a
+    // check on the entries rejects exactly the form it was meant to find.
+    const auto plausible = [&](const auto& resolve) {
+        const std::size_t sample = static_cast<std::size_t>(std::min<std::uint64_t>(num, 256));
+        std::uint64_t prev = 0;
+        for (std::size_t i = 0; i < sample; ++i) {
+            const std::uint64_t a = resolve(i);
+            if (i != 0 && a < prev) return false;
+            prev = a;
+        }
+        // The highest symbol is always ordinary kernel text or data, whatever
+        // the mode; per-cpu entries, which are small absolutes, sort first.
+        return address_like(resolve(static_cast<std::size_t>(num - 1)), word);
+    };
+
+    // Base-relative first: it is what every kernel since 4.6 builds by
+    // default, and its `relative_base` word sits immediately before
+    // `num_syms` -- exactly where an absolute array's last address would be.
+    // Testing it first stops that word being read as an address.
+    if (num_syms_at >= word) {
+        const std::size_t rb_at = num_syms_at - word;
+        const std::uint64_t rb = rdword(d.data() + rb_at, be, word);
+        const std::uint64_t bytes = num * 4;
+        if (address_like(rb, word) && rb_at >= bytes) {
+            const std::size_t at = rb_at - static_cast<std::size_t>(bytes);
+            for (const bool percpu : {false, true}) {
+                const auto resolve = [&](std::size_t i) -> std::uint64_t {
+                    const std::uint32_t raw =
+                        static_cast<std::uint32_t>(rdword(d.data() + at + i * 4, be, 4));
+                    const std::int32_t sv = static_cast<std::int32_t>(raw);
+                    if (!percpu) return rb + raw;
+                    return sv >= 0 ? static_cast<std::uint64_t>(raw)
+                                   : rb - 1 - static_cast<std::uint64_t>(sv);
+                };
+                if (!plausible(resolve)) continue;
+                for (std::uint64_t i = 0; i < num; ++i)
+                    syms[static_cast<std::size_t>(i)].address =
+                        resolve(static_cast<std::size_t>(i));
+                rel_base = rb;
+                return percpu ? AddressMode::RelativePercpu : AddressMode::Relative;
+            }
+        }
+    }
+
+    // Absolute: one word per symbol, ending where num_syms begins.
+    const std::uint64_t bytes = num * word;
+    if (num_syms_at >= bytes) {
+        const std::size_t at = num_syms_at - static_cast<std::size_t>(bytes);
+        const auto resolve = [&](std::size_t i) -> std::uint64_t {
+            return rdword(d.data() + at + i * word, be, word);
+        };
+        if (address_like(resolve(0), word) && plausible(resolve)) {
+            for (std::uint64_t i = 0; i < num; ++i)
+                syms[static_cast<std::size_t>(i)].address = resolve(static_cast<std::size_t>(i));
+            return AddressMode::Absolute;
+        }
+    }
+    return AddressMode::None;
+}
+
 }  // namespace
+
+const char* address_mode_name(AddressMode m) {
+    switch (m) {
+        case AddressMode::Absolute:
+            return "absolute";
+        case AddressMode::Relative:
+            return "relative";
+        case AddressMode::RelativePercpu:
+            return "relative-percpu";
+        case AddressMode::None:
+            break;
+    }
+    return "none";
+}
 
 Kallsyms parse(std::span<const std::uint8_t> image, std::size_t max_symbols) {
     Kallsyms result;
@@ -250,11 +351,21 @@ Kallsyms parse(std::span<const std::uint8_t> image, std::size_t max_symbols) {
                                 if (ns < word) break;
                                 continue;
                             }
+                            // The names are good. Addresses live in a
+                            // separate array found by arithmetic from here,
+                            // and failing to read them loses the addresses,
+                            // not the symbols.
+                            std::uint64_t rel_base = 0;
+                            const AddressMode mode =
+                                read_addresses(image, ns, num, be, word, syms, rel_base);
                             result.found = true;
                             result.big_endian = be;
                             result.word_size = word;
                             result.token_table = table_at;
                             result.num_syms_at = ns;
+                            result.mode = mode;
+                            result.addressed = mode != AddressMode::None;
+                            result.relative_base = rel_base;
                             result.symbols = std::move(syms);
                             return result;
                         }

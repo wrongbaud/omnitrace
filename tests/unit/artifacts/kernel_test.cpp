@@ -40,7 +40,11 @@ void putword(Bytes& b, std::uint64_t v, bool be, unsigned w) {
 /// The token alphabet is the identity -- token i is the single byte i -- so a
 /// name encodes as its own bytes. That is a legal table (tokens are arbitrary
 /// strings) and it keeps the fixture readable.
-Bytes kallsyms_blob(const std::vector<std::string>& symbols, bool be = false, unsigned word = 4) {
+/// Which address array to put in front of the table, if any.
+enum class Addrs { None, Absolute, Relative, RelativePercpu };
+
+Bytes kallsyms_blob(const std::vector<std::string>& symbols, bool be = false, unsigned word = 4,
+                    Addrs addrs = Addrs::None, std::uint64_t base = 0xc0000000ULL) {
     Bytes names;
     std::vector<std::uint64_t> markers;
     for (std::size_t i = 0; i < symbols.size(); ++i) {
@@ -62,6 +66,25 @@ Bytes kallsyms_blob(const std::vector<std::string>& symbols, bool be = false, un
     }
 
     Bytes out;
+    // The address array comes first, then (for the relative forms) the base
+    // word, then num_syms. That is the order the kernel emits.
+    if (addrs == Addrs::Absolute) {
+        for (std::size_t i = 0; i < symbols.size(); ++i) putword(out, base + i * 16, be, word);
+    } else if (addrs == Addrs::Relative) {
+        for (std::size_t i = 0; i < symbols.size(); ++i) putword(out, 0x1000 + i * 16, be, 4);
+        putword(out, base, be, word);
+    } else if (addrs == Addrs::RelativePercpu) {
+        // How a real --absolute-percpu table looks: an ordinary symbol is
+        // stored as the *negative* number that resolves to its address
+        // through `base - 1 - offset`. Only per-cpu variables are positive.
+        for (std::size_t i = 0; i < symbols.size(); ++i) {
+            const std::uint64_t addr = base + 0x1000 + i * 16;
+            const std::int32_t off = static_cast<std::int32_t>(static_cast<std::int64_t>(base) - 1 -
+                                                               static_cast<std::int64_t>(addr));
+            putword(out, static_cast<std::uint32_t>(off), be, 4);
+        }
+        putword(out, base, be, word);
+    }
     putword(out, symbols.size(), be, word);
     out.insert(out.end(), names.begin(), names.end());
     while (out.size() % word != 0) out.push_back(0);
@@ -172,6 +195,79 @@ TEST(Kallsyms, DecodesATableInEitherByteOrderAndWordSize) {
     }
 }
 
+// Addresses are a second array, found by arithmetic from `num_syms` rather
+// than by searching. Which of the three forms it is has to be decided by what
+// the values look like, because all three sit in the same place.
+TEST(Kallsyms, DecodesAbsoluteAddresses) {
+    const auto syms = made_up_symbols(600);
+    const Bytes blob = kallsyms_blob(syms, false, 4, Addrs::Absolute, 0xc0100000ULL);
+    const kernel::Kallsyms ks = kernel::parse(blob);
+    ASSERT_TRUE(ks.found);
+    ASSERT_TRUE(ks.addressed);
+    EXPECT_EQ(ks.mode, kernel::AddressMode::Absolute);
+    ASSERT_EQ(ks.symbols.size(), 600u);
+    EXPECT_EQ(ks.symbols[0].address, 0xc0100000ULL);
+    EXPECT_EQ(ks.symbols[1].address, 0xc0100010ULL);
+    EXPECT_EQ(ks.symbols[599].address, 0xc0100000ULL + 599 * 16);
+    EXPECT_EQ(ks.symbols[0].name, "sym_0_func") << "the names are still the names";
+}
+
+// What every kernel since 4.6 builds by default: a u32 offset per symbol and
+// one base word. The base sits exactly where an absolute array's last address
+// would be, which is why it is tested first.
+TEST(Kallsyms, DecodesBaseRelativeAddresses) {
+    const auto syms = made_up_symbols(600);
+    const Bytes blob = kallsyms_blob(syms, false, 4, Addrs::Relative, 0xc0088000ULL);
+    const kernel::Kallsyms ks = kernel::parse(blob);
+    ASSERT_TRUE(ks.found);
+    ASSERT_TRUE(ks.addressed);
+    EXPECT_EQ(ks.mode, kernel::AddressMode::Relative);
+    EXPECT_EQ(ks.relative_base, 0xc0088000ULL);
+    EXPECT_EQ(ks.symbols[0].address, 0xc0088000ULL + 0x1000);
+    EXPECT_EQ(ks.symbols[10].address, 0xc0088000ULL + 0x1000 + 160);
+}
+
+// --absolute-percpu: a positive entry is the address itself. Telling it from
+// the plain relative form is the reason `address_like` exists.
+TEST(Kallsyms, DecodesAbsolutePercpuAddresses) {
+    const auto syms = made_up_symbols(600);
+    const Bytes blob = kallsyms_blob(syms, false, 4, Addrs::RelativePercpu, 0xc0000000ULL);
+    const kernel::Kallsyms ks = kernel::parse(blob);
+    ASSERT_TRUE(ks.found);
+    ASSERT_TRUE(ks.addressed);
+    EXPECT_EQ(ks.mode, kernel::AddressMode::RelativePercpu);
+    EXPECT_EQ(ks.symbols[0].address, 0xc0001000ULL);
+}
+
+TEST(Kallsyms, DecodesAddressesInEitherByteOrderAndWordSize) {
+    for (const bool be : {false, true}) {
+        for (const unsigned word : {4u, 8u}) {
+            // A 64-bit kernel does not live at 0xc0100000, and the address
+            // test is right to refuse it there: the top half of a 64-bit
+            // address space starts a great deal higher.
+            const std::uint64_t base = word == 4 ? 0xc0100000ULL : 0xffffffff81000000ULL;
+            const Bytes blob = kallsyms_blob(made_up_symbols(600), be, word, Addrs::Absolute, base);
+            const kernel::Kallsyms ks = kernel::parse(blob);
+            ASSERT_TRUE(ks.found) << "be=" << be << " word=" << word;
+            ASSERT_TRUE(ks.addressed) << "be=" << be << " word=" << word;
+            EXPECT_EQ(ks.symbols[0].address, base) << "be=" << be << " word=" << word;
+        }
+    }
+}
+
+// The two halves are found separately, so a table whose addresses cannot be
+// read is still a table: losing them must not lose the symbols.
+TEST(Kallsyms, SymbolsSurviveAnUnreadableAddressArray) {
+    const Bytes blob = kallsyms_blob(made_up_symbols(600));  // no address array at all
+    const kernel::Kallsyms ks = kernel::parse(blob);
+    ASSERT_TRUE(ks.found);
+    EXPECT_FALSE(ks.addressed);
+    EXPECT_EQ(ks.mode, kernel::AddressMode::None);
+    ASSERT_EQ(ks.symbols.size(), 600u);
+    EXPECT_EQ(ks.symbols[0].name, "sym_0_func");
+    EXPECT_EQ(ks.symbols[0].address, 0u) << "absent, never invented";
+}
+
 // More than 256 symbols is what makes the markers array real: one entry per
 // block, and the decoder validates a candidate by walking only the last one.
 TEST(Kallsyms, HandlesManyBlocksOfSymbols) {
@@ -249,6 +345,32 @@ TEST(LinuxKernelExtractor, ReadsTheBannerAndTheSymbolTable) {
         << "the nested parentheses have to balance";
     EXPECT_EQ(k->fields.at("symbols"), "600");
     EXPECT_EQ(k->fields.at("symbol_types"), "T=200,d=200,t=200");
+}
+
+// With addresses the symbol list becomes a map of the running kernel: where it
+// was linked to live, and how much of the address space it takes.
+TEST(LinuxKernelExtractor, ReportsWhereTheKernelRuns) {
+    const TempDir tmp;
+    std::vector<std::string> syms = made_up_symbols(600);
+    syms[0] = "T_stext";  // the symbol an examiner lines a disassembly up on
+    std::string img(4096, '\0');
+    img += "Linux version 5.4.55 (b@h) (gcc version 8.4.0) #0 SMP Fri Aug 15 02:53:20 2025\n";
+    // kallsyms is word-aligned inside a real image, so the fixture aligns it
+    // too: dropped at an odd offset, the marker array cannot be read as words.
+    while (img.size() % 8 != 0) img.push_back('\0');
+    img += as_string(kallsyms_blob(syms, false, 4, Addrs::Relative, 0xc0088000ULL));
+    Fs fs(tmp.path());
+    fs.file("payload", img);
+
+    Collection c;
+    ASSERT_TRUE(collect(fs.entries(), {}, c));
+    const Artifact* k = of_kind(c, "linux-kernel");
+    ASSERT_NE(k, nullptr);
+    EXPECT_EQ(k->fields.at("address_mode"), "relative");
+    EXPECT_EQ(k->fields.at("relative_base"), "0xc0088000");
+    EXPECT_EQ(k->fields.at("load_address"), "0xc0089000");
+    EXPECT_EQ(k->fields.at("text_start"), "0xc0089000") << "_stext, found by name";
+    EXPECT_EQ(k->fields.at("address_span"), "0x2570") << "599 * 16 bytes";
 }
 
 // The whole reason `version_of` checks: the string is plain English and turns
