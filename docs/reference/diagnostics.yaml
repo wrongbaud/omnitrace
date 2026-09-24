@@ -1033,6 +1033,14 @@ platform-manifest-unreadable:
   meaning: a build manifest file is present but could not be read as a flat JSON document
   action: informational; the rest of the report is unaffected. Open the named file - it may be a format this build does not know, or deeper than the parser's limit
 
+platform-linux-kernel-mismatch:
+  meaning: a kernel module's vermagic names a different kernel release than the lib/modules directory it is installed under
+  action: modules that disagree with their kernel do not load; on a device this usually means a partial or mismatched vendor update, so check which kernel actually boots
+
+platform-linux-multiple-kernels:
+  meaning: lib/modules holds more than one kernel release, so the filesystem alone does not say which one boots
+  action: informational; every release found is reported as kernel.versions, and the bootloader configuration or a boot log decides which is running
+
 platform-linux-no-release:
   meaning: no os-release, lsb-release or openwrt_release, so the system does not name its own distribution
   action: informational; the version has to come from a banner, a kernel string or a binary instead

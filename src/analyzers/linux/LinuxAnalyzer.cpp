@@ -12,6 +12,9 @@
 // are KEY=VALUE, passwd and shadow are colon-separated, and that is the whole
 // of it. Anything richer belongs in an artifact extractor.
 #include <algorithm>
+#include <cctype>
+#include <map>
+#include <set>
 
 #include "../Common.h"
 #include "omnitrace/analyzers/Platform.h"
@@ -27,6 +30,64 @@ using common::parse_env;
 
 constexpr const char* kCodeNoRelease = "platform-linux-no-release";
 constexpr const char* kCodeShadowUnreadable = "platform-shadow-unreadable";
+constexpr const char* kCodeKernelMismatch = "platform-linux-kernel-mismatch";
+constexpr const char* kCodeKernelMulti = "platform-linux-multiple-kernels";
+
+// Modules are ELF, and their `.modinfo` section is NUL-separated `key=value`.
+// Reading that section properly means parsing section headers; the analyzer
+// wants one field out of one module to corroborate a version it already has,
+// so it looks the key up in the bytes instead. A wrong answer here is an
+// unrecognised vermagic, never a wrong kernel version: the version comes from
+// the directory name and this only agrees or disagrees with it. `artifacts`
+// parses the real section out of the raw bytes (docs/ARTIFACTS.md).
+//
+// `Tree::read` hands back text that has been through `sanitize_utf8`, so the
+// NUL between records arrives as the four characters `\x00` rather than a
+// byte. That is what separates a record here, and it is also what makes the
+// boundary check exact -- `depends=` must not match inside `pre_depends=`.
+constexpr std::string_view kNulEscape = "\\x00";
+
+std::string modinfo_value(const std::string& text, std::string_view key) {
+    const std::string needle = std::string(key) + "=";
+    std::size_t at = text.find(needle);
+    while (at != std::string::npos) {
+        const bool at_record_start =
+            at == 0 || (at >= kNulEscape.size() &&
+                        text.compare(at - kNulEscape.size(), kNulEscape.size(), kNulEscape) == 0);
+        if (at_record_start) {
+            const std::size_t from = at + needle.size();
+            std::size_t end = text.find(kNulEscape, from);
+            if (end == std::string::npos) end = text.size();
+            std::string v = text.substr(from, std::min<std::size_t>(end - from, 200));
+            while (!v.empty() && (v.back() == ' ' || v.back() == '\n')) v.pop_back();
+            return v;
+        }
+        at = text.find(needle, at + 1);
+    }
+    return {};
+}
+
+// "4.14.63" out of "lib/modules/4.14.63/kernel/net/foo.ko", and out of a
+// vermagic string like "5.4.55 SMP mod_unload ARMv7 p2v8".
+std::string leading_version(std::string_view s) {
+    std::size_t i = 0;
+    while (i < s.size() && (std::isdigit(static_cast<unsigned char>(s[i])) != 0 || s[i] == '.'))
+        ++i;
+    return std::string(s.substr(0, i));
+}
+
+constexpr std::string_view kModulesRoot = "lib/modules";
+
+// A module file, compressed or not. Every layout in the corpus uses one of
+// these four.
+bool is_module(std::string_view path) {
+    for (const char* ext : {".ko", ".ko.gz", ".ko.xz", ".ko.zst"}) {
+        const std::string_view e(ext);
+        if (path.size() > e.size() && path.compare(path.size() - e.size(), e.size(), e) == 0)
+            return true;
+    }
+    return false;
+}
 
 class LinuxAnalyzer final : public Analyzer {
    public:
@@ -62,12 +123,170 @@ class LinuxAnalyzer final : public Analyzer {
 
     void describe(const Tree& t, Report& r) const override {
         describe_os(t, r);
+        describe_kernel(t, r);
         describe_users(t, r);
         describe_network(t, r);
         describe_services(t, r);
     }
 
    private:
+    // The kernel a system was built to run, and the drivers it carries.
+    //
+    // `lib/modules/<release>/` is the answer for both: the directory name *is*
+    // `uname -r`, and everything under it is the module set. That beats every
+    // other source available inside a root filesystem -- the "Linux version"
+    // banner lives in the kernel image, which is a different node entirely
+    // (`docs/ANALYZERS.md`), and os-release says nothing about the kernel.
+    //
+    // A module's `vermagic` is then a second, independent witness. Agreement
+    // is worth nothing to report and disagreement is worth a lot: modules
+    // built against a different kernel than the one installed will not load,
+    // and on a device that is usually a vendor having shipped a mismatched
+    // update.
+    static void describe_kernel(const Tree& t, Report& r) {
+        // Both sources for the release name, because either one alone has a
+        // hole. `list_dir` sees only directories the listing records, and an
+        // archive built without directory members has none; the paths of the
+        // modules themselves always name the release, but a release directory
+        // holding no modules has no paths. The union has neither hole.
+        std::set<std::string> found;
+        for (const std::string& d : t.list_dir("lib/modules")) found.insert(d);
+        for (const std::string& f : t.files_under("lib/modules")) {
+            const std::string_view rest(f.c_str() + kModulesRoot.size() + 1);
+            const std::size_t slash = rest.find('/');
+            if (slash != std::string_view::npos) found.emplace(rest.substr(0, slash));
+        }
+        const std::vector<std::string> releases(found.begin(), found.end());
+        std::string release;
+        if (releases.size() == 1) {
+            release = releases.front();
+        } else if (releases.size() > 1) {
+            // More than one is normal on a system that kept an old kernel, and
+            // it means "which one is running" is not a question this can
+            // answer from the filesystem alone.
+            std::string all;
+            for (const std::string& v : releases) {
+                if (!all.empty()) all += ",";
+                all += v;
+            }
+            add(r, "kernel.versions", all.substr(0, 200), "lib/modules");
+            r.diagnostics.push_back({Severity::Info, kCodeKernelMulti,
+                                     "lib/modules holds " + std::to_string(releases.size()) +
+                                         " kernel release(s) (" + all.substr(0, 120) +
+                                         "); which one boots is not recorded in the filesystem"});
+            release = releases.back();  // the newest by sort order, reported as one of several
+        }
+        if (release.empty()) return;
+
+        const std::string root = std::string(kModulesRoot) + "/" + release;
+        add(r, "kernel.version", release, root);
+
+        const std::vector<std::string> under = t.files_under(root);
+        std::vector<std::string> modules;
+        std::map<std::string, unsigned> by_subsystem;
+        for (const std::string& p : under) {
+            if (!is_module(p)) continue;
+            modules.push_back(p);
+            // `kernel/drivers/net/wireless/foo.ko` -> `drivers/net/wireless`.
+            // A flat layout (OpenWrt installs every module in one directory)
+            // has no such path and is not guessed at from the module name.
+            const std::size_t k = p.find("/kernel/");
+            if (k == std::string::npos) continue;
+            const std::size_t from = k + 8;
+            const std::size_t slash = p.rfind('/');
+            if (slash != std::string::npos && slash > from)
+                ++by_subsystem[p.substr(from, slash - from)];
+        }
+        add(r, "kernel.modules.count", std::to_string(modules.size()), root);
+        if (modules.empty()) return;
+
+        if (!by_subsystem.empty()) {
+            std::vector<std::pair<std::string, unsigned>> sorted(by_subsystem.begin(),
+                                                                 by_subsystem.end());
+            std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
+                return a.second != b.second ? a.second > b.second : a.first < b.first;
+            });
+            std::string joined;
+            for (const auto& [dir, n] : sorted) {
+                if (joined.size() > 400) {
+                    joined += ",...";
+                    break;
+                }
+                if (!joined.empty()) joined += ",";
+                joined += dir + "=" + std::to_string(n);
+            }
+            add(r, "kernel.modules.subsystems", joined, root);
+        }
+
+        // The names themselves, which is what "what drivers are present"
+        // actually asks. Capped like every other list here; the full
+        // inventory, with each module's own description, is what the
+        // `kmodule` extractor produces (docs/ARTIFACTS.md).
+        std::string names;
+        for (const std::string& p : modules) {
+            std::string base = p.substr(p.rfind('/') + 1);
+            const std::size_t dot = base.find(".ko");
+            if (dot != std::string::npos) base.resize(dot);
+            if (names.size() > 600) {
+                names += ",...";
+                break;
+            }
+            if (!names.empty()) names += ",";
+            names += base;
+        }
+        add(r, "kernel.modules.names", names, root);
+
+        // One module's vermagic, read to corroborate the release above. The
+        // first module that has one is enough: they are all built together.
+        for (const std::string& p : modules) {
+            const auto bytes = t.read(p, 512 * 1024);
+            if (!bytes) continue;
+            const std::string vm = modinfo_value(*bytes, "vermagic");
+            if (vm.empty()) continue;
+            add(r, "kernel.vermagic", vm, p);
+            const std::string claimed = leading_version(vm);
+            if (!claimed.empty() && claimed != release)
+                r.diagnostics.push_back(
+                    {Severity::Warning, kCodeKernelMismatch,
+                     "'" + p + "' was built for kernel " + claimed + " but is installed under " +
+                         release + "; modules that disagree with their kernel do not load"});
+            break;
+        }
+
+        // What the system loads at boot, which is a much shorter and more
+        // telling list than what it ships: OpenWrt writes one file per module
+        // in etc/modules.d, Debian-style systems one line per module.
+        std::string autoload;
+        std::string autoload_src;
+        for (const std::string& f : t.list_dir("etc/modules.d")) {
+            if (const auto text = t.read("etc/modules.d/" + f, 16 * 1024)) {
+                for_each_line(*text, [&](std::string_view line) {
+                    if (line.empty() || line.front() == '#') return;
+                    if (autoload.size() > 400) return;
+                    if (!autoload.empty()) autoload += ",";
+                    autoload.append(line);
+                });
+                autoload_src = "etc/modules.d";
+            }
+        }
+        if (autoload.empty()) {
+            for (const char* f : {"etc/modules", "etc/modules.conf"}) {
+                const auto text = t.read(f, 64 * 1024);
+                if (!text) continue;
+                for_each_line(*text, [&](std::string_view line) {
+                    if (line.empty() || line.front() == '#') return;
+                    if (autoload.size() > 400) return;
+                    if (!autoload.empty()) autoload += ",";
+                    autoload.append(line);
+                });
+                autoload_src = f;
+                break;
+            }
+        }
+        if (!autoload.empty())
+            add(r, "kernel.modules.autoload", autoload.substr(0, 420), autoload_src);
+    }
+
     // What the distribution calls itself. os-release is the standard and is
     // usually a symlink into /usr/lib; OpenWrt also writes its own file, and
     // on the IP cameras that is the *only* one there is.

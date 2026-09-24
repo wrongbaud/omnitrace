@@ -197,4 +197,25 @@ std::vector<std::string> Tree::list_dir(std::string_view dir) const {
     return out;
 }
 
+std::vector<std::string> Tree::files_under(std::string_view dir, std::size_t max) const {
+    std::vector<std::string> out;
+    const EntryResult* e = nullptr;
+    const std::string base = resolve(dir, &e);
+    if (base.empty() && !dir.empty()) return out;
+    if (e != nullptr && e->meta.kind != EntryKind::Directory) return out;
+    // by_path_ is sorted, so everything under a directory is one contiguous
+    // run starting at its prefix. The trailing '/' is what keeps
+    // `lib/modules` from also matching `lib/modules-backup`.
+    const std::string prefix = base.empty() ? std::string{} : base + "/";
+    for (auto it = by_path_.lower_bound(prefix); it != by_path_.end(); ++it) {
+        if (it->first.compare(0, prefix.size(), prefix) != 0) break;
+        if (it->first.size() == prefix.size()) continue;
+        const EntryResult* r = it->second.e;
+        if (r == nullptr || r->meta.kind != EntryKind::Regular) continue;
+        out.push_back(it->first);
+        if (out.size() >= max) break;
+    }
+    return out;  // by_path_ is sorted, so this is too
+}
+
 }  // namespace omnitrace::analyzers

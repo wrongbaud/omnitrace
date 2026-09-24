@@ -125,6 +125,16 @@ class Tree {
     /// directory. Names only, not full paths.
     std::vector<std::string> list_dir(std::string_view dir) const;
 
+    /// Every regular file at or below `dir`, as full paths, sorted, capped at
+    /// `max`. Symlinks are not followed and directories are not returned.
+    ///
+    /// `list_dir` answers "what is in this directory"; a kernel's modules are
+    /// in *either* one flat directory or a `kernel/drivers/...` tree depending
+    /// on how they were installed, and an analyzer should not have to care
+    /// which. The cap is a guard, not a policy: a caller that hits it is
+    /// looking at something other than what it thought.
+    std::vector<std::string> files_under(std::string_view dir, std::size_t max = 8192) const;
+
     /// Entries in the tree, live ones only (a deleted or superseded version is
     /// history, not the system as it was running).
     std::size_t size() const;

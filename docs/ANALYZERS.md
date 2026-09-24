@@ -104,6 +104,52 @@ What it reports:
 | `users.count`, `users.with_password`, `user.uid0`, `user.<name>.password` | `etc/passwd`, `etc/shadow` |
 | `network.*` | `etc/config/network`, `etc/config/wireless`, `etc/resolv.conf` |
 | `init.dir`, `init.count`, `init.services`, `service.ssh`, `service.telnet`, `userland.busybox` | `etc/init.d`, `etc/rc.d`, binaries |
+| `kernel.version`, `kernel.vermagic`, `kernel.modules.*` | `lib/modules/<release>/`, a module's `.modinfo` |
+
+### The kernel, and the drivers it carries
+
+`lib/modules/<release>/` answers both questions at once: the directory name
+**is** `uname -r`, and everything under it is the module set. That beats the
+alternatives available inside a root filesystem — os-release says nothing about
+the kernel, and the `Linux version` banner lives in the kernel image, which is
+a *different node* and so outside what a per-filesystem analyzer can see.
+
+Two layouts exist and the corpus has both. `make modules_install` writes
+`lib/modules/<rel>/kernel/<subsystem>/…`, which classifies every driver for
+free and becomes `kernel.modules.subsystems`. OpenWrt installs every module
+into one flat directory, where there is no subsystem to report and the module
+name is **not** guessed at from a list of known driver names.
+
+The release is taken from the union of the directory entries under
+`lib/modules` and the first path component of the modules themselves, because
+either source alone has a hole: an archive built without directory members has
+no directories to list, and a release directory holding no modules has no
+module paths.
+
+A module's `vermagic` is then a second, independent witness:
+
+| image | `kernel.version` | `kernel.vermagic` |
+|---|---|---|
+| router-wrt-example | 2.6.22.19 | `2.6.22.19 mod_unload MIPS32_R2 32BIT` |
+| camera-example-1 | 3.10.27 | `3.10.27 preempt mod_unload RLX 32BIT` |
+| router-example | 4.14.63 | *(its modules carry none)* |
+| router-nand-example | 5.4.55 | `5.4.55 SMP mod_unload ARMv7 p2v8` |
+
+Agreement is worth nothing to report; **disagreement is the reason it is
+read**. Modules built against a different kernel than the one they are
+installed under do not load, and on a device that is a mismatched vendor
+update (`platform-linux-kernel-mismatch`). The string also carries the CPU
+architecture, which nothing else in the filesystem states — `RLX` on the camera is a Realtek Lexra core, and no release file says so.
+
+`kernel.modules.autoload` is a shorter and more telling list than the module
+set: it is what the system loads at boot, from `etc/modules.d/` (OpenWrt, one
+file per module) or `etc/modules`.
+
+The `.modinfo` lookup here is deliberately crude — it finds one key in the
+sanitised bytes rather than parsing ELF section headers — because it exists
+only to corroborate a version already established from the directory name. The
+full per-module inventory, parsed properly, is an artifact extractor's job
+(`docs/ARTIFACTS.md`).
 
 **The password field means different things in the two files**, and getting
 that wrong misreports whether a system could be logged into. In `passwd`, `x`

@@ -324,6 +324,154 @@ TEST(PlatformLinux, ReadsWhatTheSystemSaysAboutItself) {
     EXPECT_EQ(fact(r, "init.count")->value, "2");
 }
 
+// A module's `.modinfo` is NUL-separated `key=value`, and `Tree::read` hands
+// the analyzer text that has already been through `sanitize_utf8` -- so the
+// separator arrives as the four characters `\x00`. Build the fixture the same
+// way a real module is laid out, with the NUL bytes, and let the reader see
+// what the sanitiser makes of them.
+std::string modinfo_blob(const std::vector<std::string>& records) {
+    std::string out;
+    for (const std::string& rec : records) {
+        out += rec;
+        out.push_back('\0');
+    }
+    return out;
+}
+
+// The kernel a system was built to run and the drivers it carries. Both come
+// out of lib/modules/<release>/: the directory name is `uname -r`, and
+// everything under it is the module set. Two layouts exist in the corpus and
+// this is the flat one (OpenWrt installs every module in one directory).
+TEST(PlatformLinux, ReportsTheKernelReleaseAndItsModules) {
+    const TempDir tmp;
+    Fs fs = openwrt(tmp.path(), "root:*:0:0:99999:7:::\n");
+    fs.dir("lib/modules")
+        .dir("lib/modules/4.14.63")
+        .file("lib/modules/4.14.63/usbnet.ko", modinfo_blob({"license=GPL", "depends=usbcore,mii"}))
+        .file("lib/modules/4.14.63/cfg80211.ko",
+              modinfo_blob({"vermagic=4.14.63 SMP mod_unload MIPS32_R2 32BIT",
+                            "description=wireless configuration support", "license=GPL"}))
+        .file("etc/modules.d/15-mii", "mii\n")
+        .file("etc/modules.d/20-usb", "# a comment\nusbcore\nusbnet\n");
+
+    auto a = AnalyzerRegistry::instance().create(Platform::Linux);
+    Report r;
+    a->describe(fs.tree(), r);
+
+    ASSERT_NE(fact(r, "kernel.version"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.version")->value, "4.14.63");
+    EXPECT_EQ(fact(r, "kernel.version")->source, "lib/modules/4.14.63")
+        << "the directory an examiner would open";
+    ASSERT_NE(fact(r, "kernel.modules.count"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.modules.count")->value, "2");
+    ASSERT_NE(fact(r, "kernel.modules.names"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.modules.names")->value, "cfg80211,usbnet")
+        << "the .ko suffix is not part of a module's name";
+
+    // vermagic is the second, independent witness to the release. It also
+    // carries the architecture, which nothing else in the filesystem states.
+    ASSERT_NE(fact(r, "kernel.vermagic"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.vermagic")->value, "4.14.63 SMP mod_unload MIPS32_R2 32BIT");
+    EXPECT_FALSE(has_code(r.diagnostics, "platform-linux-kernel-mismatch"));
+
+    // A flat layout gives no subsystem to group by, and the module name is not
+    // guessed at.
+    EXPECT_EQ(fact(r, "kernel.modules.subsystems"), nullptr);
+
+    ASSERT_NE(fact(r, "kernel.modules.autoload"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.modules.autoload")->value, "mii,usbcore,usbnet")
+        << "comments are not modules";
+}
+
+// The other layout: `make modules_install` puts them under kernel/<subsystem>,
+// which is a free classification of what the drivers are for.
+TEST(PlatformLinux, GroupsModulesBySubsystemWhenTheLayoutSaysOne) {
+    const TempDir tmp;
+    Fs fs = openwrt(tmp.path(), "root:*:0:0:99999:7:::\n");
+    fs.file("lib/modules/2.6.22.19/kernel/drivers/usb/usbcore.ko", "")
+        .file("lib/modules/2.6.22.19/kernel/drivers/usb/usbnet.ko", "")
+        .file("lib/modules/2.6.22.19/kernel/drivers/net/wl.ko", "")
+        .file("lib/modules/2.6.22.19/kernel/fs/ext4.ko", "");
+
+    auto a = AnalyzerRegistry::instance().create(Platform::Linux);
+    Report r;
+    a->describe(fs.tree(), r);
+
+    ASSERT_NE(fact(r, "kernel.version"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.version")->value, "2.6.22.19");
+    ASSERT_NE(fact(r, "kernel.modules.count"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.modules.count")->value, "4");
+    ASSERT_NE(fact(r, "kernel.modules.subsystems"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.modules.subsystems")->value, "drivers/usb=2,drivers/net=1,fs=1")
+        << "most populated first, then alphabetical";
+}
+
+// Modules built against a different kernel than the one they are installed
+// under do not load. Agreement is worth nothing to report; disagreement is the
+// whole reason the second witness is read.
+TEST(PlatformLinux, SaysSoWhenAModuleWasBuiltForADifferentKernel) {
+    const TempDir tmp;
+    Fs fs = openwrt(tmp.path(), "root:*:0:0:99999:7:::\n");
+    fs.file("lib/modules/4.14.63/wrong.ko",
+            modinfo_blob({"vermagic=4.9.198 SMP mod_unload ARMv7", "license=GPL"}));
+
+    auto a = AnalyzerRegistry::instance().create(Platform::Linux);
+    Report r;
+    a->describe(fs.tree(), r);
+
+    ASSERT_NE(fact(r, "kernel.version"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.version")->value, "4.14.63");
+    ASSERT_NE(fact(r, "kernel.vermagic"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.vermagic")->value, "4.9.198 SMP mod_unload ARMv7");
+    EXPECT_TRUE(has_code(r.diagnostics, "platform-linux-kernel-mismatch"));
+}
+
+// A `depends=` inside `pre_depends=` is not a `depends=`. The record boundary
+// is what makes the difference, and after sanitising it is four characters
+// rather than a byte -- so this is the test that catches the boundary check
+// rotting if the sanitiser ever changes.
+TEST(PlatformLinux, ModinfoKeysMatchOnlyAtARecordBoundary) {
+    const TempDir tmp;
+    Fs fs = openwrt(tmp.path(), "root:*:0:0:99999:7:::\n");
+    fs.file("lib/modules/5.4.55/m.ko",
+            modinfo_blob({"xvermagic=DECOY", "vermagic=5.4.55 SMP mod_unload ARMv7"}));
+
+    auto a = AnalyzerRegistry::instance().create(Platform::Linux);
+    Report r;
+    a->describe(fs.tree(), r);
+
+    ASSERT_NE(fact(r, "kernel.vermagic"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.vermagic")->value, "5.4.55 SMP mod_unload ARMv7");
+}
+
+// A system that kept an old kernel has two, and which one boots is not a
+// question the filesystem answers.
+TEST(PlatformLinux, MoreThanOneKernelIsReportedAsMoreThanOne) {
+    const TempDir tmp;
+    Fs fs = openwrt(tmp.path(), "root:*:0:0:99999:7:::\n");
+    fs.file("lib/modules/4.14.63/a.ko", "").file("lib/modules/5.4.55/b.ko", "");
+
+    auto a = AnalyzerRegistry::instance().create(Platform::Linux);
+    Report r;
+    a->describe(fs.tree(), r);
+
+    ASSERT_NE(fact(r, "kernel.versions"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.versions")->value, "4.14.63,5.4.55");
+    EXPECT_TRUE(has_code(r.diagnostics, "platform-linux-multiple-kernels"));
+}
+
+// A Linux system with no modules at all is normal (everything built in), and
+// says nothing about the kernel rather than guessing.
+TEST(PlatformLinux, NoModulesDirectoryMeansNoKernelFacts) {
+    const TempDir tmp;
+    const Fs fs = openwrt(tmp.path(), "root:*:0:0:99999:7:::\n");
+    auto a = AnalyzerRegistry::instance().create(Platform::Linux);
+    Report r;
+    a->describe(fs.tree(), r);
+    EXPECT_EQ(fact(r, "kernel.version"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.modules.count"), nullptr);
+}
+
 TEST(PlatformLinux, TheSameFieldMeansDifferentThingsInPasswdAndShadow) {
     const TempDir tmp;
     // `root::` is the router corpus image exactly: an empty field, so the
