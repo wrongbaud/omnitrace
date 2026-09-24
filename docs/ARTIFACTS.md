@@ -109,7 +109,63 @@ Two things are worth a diagnostic:
 Measured across the corpus: 207 modules on the router image, 174 on router-nand,
 116 on router-wrt, 14 on the camera v1.
 
+## linux-kernel
+
+A kernel image says two things about itself, and the first is the more widely
+useful.
+
+**The banner** is a plain string: `Linux version 5.4.55 (jenkins@...) (gcc
+version 8.4.0 (OpenWrt GCC 8.4.0 unknown)) #0 SMP Fri Aug 15 02:53:20 2025`.
+It names the kernel, the toolchain and the build date, and it is the *only*
+source for any of them when a system has no `lib/modules` to read a release
+out of. All four Linux images in the corpus give one up.
+
+`Linux version ` has no magic behind it, so it has to earn the claim: the text
+after it must parse as a release (digits, a dot, digits). Without that check
+the router-wrt image produced a kernel record from the sentence *"Linux version of
+the hub software for the Direct Connect network"*, whose version was `of`.
+Same rule as every weak magic here.
+
+**The symbol table.** A kernel that is not an ELF has no symbol table a normal
+reader can use, so `CONFIG_KALLSYMS` puts one inside the image — the kernel
+needs it to print names in an oops. `src/artifacts/kernel/Kallsyms.h` explains
+how it is found; the short version is that none of its four structures has a
+magic number, so it is read back to front from the one that is
+self-describing, and accepted only when the names it produces look like
+symbols.
+
+| field | from |
+|---|---|
+| `version`, `banner`, `compiler` | the build banner |
+| `arch` | the ELF header, when the image is an unstripped `vmlinux` |
+| `symbols`, `symbol_types` | the kallsyms table: a count, and a histogram of nm type letters |
+| `word_size`, `endian` | how the table was laid out, which is how the kernel was built |
+| `loadable_modules` | whether `module_layout`/`load_module` is among the symbols |
+
+`loadable_modules` is the one worth explaining. It decides what an empty
+`lib/modules` means: a kernel that cannot load modules at all has its drivers
+built in, and one that can is missing them.
+
+Measured: the router-nand image decodes to **29,793 symbols** (`T=15300, t=14297,
+W=195, D=1`), 32-bit little-endian, loadable modules yes.
+
 ## Known gaps
+
+* **Two of three corpus kernels have no symbols to read.** The router image
+  was built without `CONFIG_KALLSYMS` and says so
+  (`kernel-no-symbol-table`). The camera v1's 3.10 kernel *does* carry a
+  token table — its tokens read `_read`, `tion`, `attr`, `fs_`, `v4l` — and
+  its markers array is found, but the names do not validate against it, so
+  this build reports no symbols rather than guessing at some. That image is
+  the one to aim the next attempt at.
+* **Symbol names are not emitted, only counted.** Thirty thousand names is not
+  a report, and the record has nowhere to put them; what an examiner gets is
+  the histogram and the presence tests. Writing the table out as its own file
+  in the case directory would need a new output, which is not modelled.
+* **Addresses are not decoded.** `kallsyms_addresses`/`kallsyms_offsets` sit
+  before `num_syms` and would give every symbol its address, which is what
+  turns this into something a disassembler could use. Only the names are read.
+
 
 * **Compressed modules are not parsed by name.** `.ko.gz`, `.ko.xz` and
   `.ko.zst` are modules but are not ELF until something decompresses them.

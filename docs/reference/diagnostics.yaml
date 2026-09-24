@@ -1033,6 +1033,10 @@ platform-manifest-unreadable:
   meaning: a build manifest file is present but could not be read as a flat JSON document
   action: informational; the rest of the report is unaffected. Open the named file - it may be a format this build does not know, or deeper than the parser's limit
 
+kernel-no-symbol-table:
+  meaning: a Linux kernel image carries its build banner but no kallsyms table, so it was built without CONFIG_KALLSYMS
+  action: informational; the kernel's version and toolchain are still reported from the banner, but the image does not name its own functions, so what is compiled into it cannot be read from the symbols
+
 kmodule-proprietary-license:
   meaning: a kernel module declares a licence that is not GPL, BSD, MIT or dual, so it is a binary-only driver
   action: informational; the source was never published, so what the driver does to the hardware cannot be read. Vendor radio, NAT-offload and switch drivers are the usual ones

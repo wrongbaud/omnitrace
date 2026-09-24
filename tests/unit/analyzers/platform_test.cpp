@@ -460,6 +460,39 @@ TEST(PlatformLinux, MoreThanOneKernelIsReportedAsMoreThanOne) {
     EXPECT_TRUE(has_code(r.diagnostics, "platform-linux-multiple-kernels"));
 }
 
+// Drivers compiled into the kernel have no .ko and no .modinfo, so
+// modules.builtin is the only place they are named. A system whose drivers are
+// all built in has an empty module set, which is exactly when this matters --
+// so it must be read before the module set is found to be empty.
+TEST(PlatformLinux, ReadsTheDriversCompiledIntoTheKernel) {
+    const TempDir tmp;
+    Fs fs = openwrt(tmp.path(), "root:*:0:0:99999:7:::\n");
+    fs.dir("lib/modules")
+        .dir("lib/modules/5.4.55")
+        .file("lib/modules/5.4.55/modules.builtin",
+              "kernel/drivers/usb/host/ehci-hcd.ko\n"
+              "kernel/drivers/usb/host/ohci-hcd.ko\n"
+              "kernel/fs/ext4/ext4.ko\n"
+              "# a comment is not a driver\n"
+              "\n"
+              "kernel/net/ipv4/netfilter/iptable_nat.ko\n");
+
+    auto a = AnalyzerRegistry::instance().create(Platform::Linux);
+    Report r;
+    a->describe(fs.tree(), r);
+
+    ASSERT_NE(fact(r, "kernel.modules.count"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.modules.count")->value, "0") << "nothing is loadable here";
+    ASSERT_NE(fact(r, "kernel.builtin.count"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.builtin.count")->value, "4") << "blanks and comments are not drivers";
+    ASSERT_NE(fact(r, "kernel.builtin.names"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.builtin.names")->value, "ehci-hcd,ohci-hcd,ext4,iptable_nat");
+    ASSERT_NE(fact(r, "kernel.builtin.subsystems"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.builtin.subsystems")->value,
+              "drivers/usb/host=2,fs/ext4=1,net/ipv4/netfilter=1");
+    EXPECT_EQ(fact(r, "kernel.builtin.count")->source, "lib/modules/5.4.55/modules.builtin");
+}
+
 // A Linux system with no modules at all is normal (everything built in), and
 // says nothing about the kernel rather than guessing.
 TEST(PlatformLinux, NoModulesDirectoryMeansNoKernelFacts) {

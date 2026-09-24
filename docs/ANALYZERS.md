@@ -105,6 +105,7 @@ What it reports:
 | `network.*` | `etc/config/network`, `etc/config/wireless`, `etc/resolv.conf` |
 | `init.dir`, `init.count`, `init.services`, `service.ssh`, `service.telnet`, `userland.busybox` | `etc/init.d`, `etc/rc.d`, binaries |
 | `kernel.version`, `kernel.vermagic`, `kernel.modules.*` | `lib/modules/<release>/`, a module's `.modinfo` |
+| `kernel.builtin.count`, `.names`, `.subsystems` | `lib/modules/<release>/modules.builtin` |
 
 ### The kernel, and the drivers it carries
 
@@ -144,6 +145,21 @@ architecture, which nothing else in the filesystem states — `RLX` on the camer
 `kernel.modules.autoload` is a shorter and more telling list than the module
 set: it is what the system loads at boot, from `etc/modules.d/` (OpenWrt, one
 file per module) or `etc/modules`.
+
+**Drivers compiled into the kernel** have no `.ko` and no `.modinfo`, so
+`modules.builtin` is the only place they are named — and a system with no
+loadable modules at all is usually one that built everything in, not one with
+no drivers. It is therefore read *before* the module set is found to be empty,
+and reported as `kernel.builtin.count`, `.names` and `.subsystems`, which take
+the same shape as their loadable twins because the file uses the same
+`kernel/<subsystem>/…` paths.
+
+No corpus image ships one: kernels before 2.6.29 do not write it and OpenWrt
+strips it, so this is tested against fixtures the way cramfs and romfs are.
+Not finding the file says nothing either way, which is why its absence is not
+a diagnostic. What *does* say something is the kernel image itself — if it
+carries no `module_layout` symbol it cannot load modules at all, which is the
+`loadable_modules` field in `docs/ARTIFACTS.md`.
 
 The `.modinfo` lookup here is deliberately crude — it finds one key in the
 sanitised bytes rather than parsing ELF section headers — because it exists

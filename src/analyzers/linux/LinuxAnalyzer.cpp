@@ -198,6 +198,7 @@ class LinuxAnalyzer final : public Analyzer {
                 ++by_subsystem[p.substr(from, slash - from)];
         }
         add(r, "kernel.modules.count", std::to_string(modules.size()), root);
+        describe_builtin(t, r, root);
         if (modules.empty()) return;
 
         if (!by_subsystem.empty()) {
@@ -359,6 +360,60 @@ class LinuxAnalyzer final : public Analyzer {
             while (!best.empty() && (best.front() == ' ' || best.front() == '-')) best.erase(0, 1);
             while (!best.empty() && (best.back() == ' ' || best.back() == '-')) best.pop_back();
             add(r, "os.banner", best.substr(0, 200), "etc/banner");
+        }
+    }
+
+    // Drivers compiled into the kernel rather than built as modules.
+    // They have no .ko and no .modinfo, so this list is the only place they
+    // are named -- and a system with no loadable modules at all is usually one
+    // that built everything in, not one with no drivers, which is why this is
+    // read before the module set is found to be empty.
+    //
+    // Kernels before 2.6.29 do not write the file and OpenWrt strips it, so not
+    // finding one says nothing either way and is not a diagnostic.
+    static void describe_builtin(const Tree& t, Report& r, const std::string& root) {
+        if (const auto builtin = t.read(root + "/modules.builtin", 1u << 20)) {
+            unsigned count = 0;
+            std::map<std::string, unsigned> by_dir;
+            std::string names;
+            for_each_line(*builtin, [&](std::string_view line) {
+                while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+                    line.remove_suffix(1);
+                if (line.empty() || line.front() == '#') return;
+                ++count;
+                const std::size_t slash = line.rfind('/');
+                std::string base(slash == std::string_view::npos ? line : line.substr(slash + 1));
+                const std::size_t dot = base.find(".ko");
+                if (dot != std::string::npos) base.resize(dot);
+                if (names.size() <= 600) {
+                    if (!names.empty()) names += ",";
+                    names += base;
+                } else if (names.size() < 605) {
+                    names += ",...";
+                }
+                // `kernel/drivers/usb/foo.ko` -> `drivers/usb`.
+                if (line.rfind("kernel/", 0) == 0 && slash != std::string_view::npos && slash > 7)
+                    ++by_dir[std::string(line.substr(7, slash - 7))];
+            });
+            const std::string src = root + "/modules.builtin";
+            add(r, "kernel.builtin.count", std::to_string(count), src);
+            if (!names.empty()) add(r, "kernel.builtin.names", names, src);
+            if (!by_dir.empty()) {
+                std::vector<std::pair<std::string, unsigned>> sorted(by_dir.begin(), by_dir.end());
+                std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
+                    return a.second != b.second ? a.second > b.second : a.first < b.first;
+                });
+                std::string joined;
+                for (const auto& [dir, n] : sorted) {
+                    if (joined.size() > 400) {
+                        joined += ",...";
+                        break;
+                    }
+                    if (!joined.empty()) joined += ",";
+                    joined += dir + "=" + std::to_string(n);
+                }
+                add(r, "kernel.builtin.subsystems", joined, src);
+            }
         }
     }
 
