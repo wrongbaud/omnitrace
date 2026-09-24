@@ -62,6 +62,30 @@ struct FileRef {
     std::span<const std::uint8_t> bytes;
 };
 
+/// A file an extractor produced that is too big to be a field.
+///
+/// A kernel's symbol table is thirty thousand lines: it belongs in the case
+/// directory, not in a record and not in a report table. The extractor
+/// composes the bytes and names a path relative to the case root; it never
+/// writes anything, because this layer does not touch the host filesystem
+/// (docs/ARCHITECTURE.md rule 2) and has to keep working when the caller is
+/// re-examining a case rather than making one.
+///
+/// `path` is validated by whoever writes it: relative, no `..`, no absolute
+/// root. See `safe_relative_path`.
+struct ExtractedFile {
+    std::string path;     ///< Relative to the case directory, '/' separated.
+    std::string content;  ///< Written verbatim.
+};
+
+/// Is `p` a path an extractor may ask the caller to write?
+///
+/// Relative, non-empty, no component that is `.` or `..`, no drive letter or
+/// leading separator, and no NUL or backslash. An extractor is built in and
+/// not evidence, but what it names a file after can be -- a kernel image's own
+/// path reaches this -- so the check is on the path rather than on trust.
+bool safe_relative_path(std::string_view p);
+
 /// What one extractor produced.
 struct Yield {
     std::vector<Artifact> artifacts;
@@ -70,6 +94,8 @@ struct Yield {
     /// CA trust store is 253 certificates and 253 records is not a report;
     /// see `collect()`.
     std::uint64_t summarised = 0;
+    /// Files for the caller to write into the case directory.
+    std::vector<ExtractedFile> files;
 };
 
 /// A parser for one kind of file.
@@ -133,6 +159,10 @@ void link_builtin_extractors();
 struct CollectLimits {
     std::uint64_t max_bytes_per_file = 16U << 20;  ///< Read no more of one file than this.
     std::uint64_t max_artifacts = 100'000;         ///< Whole-run ceiling.
+    /// Bytes of `ExtractedFile` content kept across the run. A symbol table
+    /// is around a megabyte; this is the guard against an image that claims
+    /// hundreds of them.
+    std::uint64_t max_extracted_file_bytes = 64U << 20;
 };
 
 /// Everything the extractors produced.
@@ -142,6 +172,9 @@ struct Collection {
     std::uint64_t summarised = 0;      ///< Records counted rather than emitted.
     bool truncated = false;
     std::vector<Diagnostic> diagnostics;
+    /// Files the extractors want written into the case directory, already
+    /// checked against `safe_relative_path` and deduplicated by path.
+    std::vector<ExtractedFile> files;
 };
 
 /// Run every registered extractor over every extracted file.

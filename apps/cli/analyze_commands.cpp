@@ -102,6 +102,20 @@ void write_text(const std::filesystem::path& p, const std::string& text) {
     if (!f) fail("short write to '" + p.string() + "'");
 }
 
+// Files the extractors composed but did not write: this layer never touches
+// the host filesystem (docs/ARCHITECTURE.md rule 2), so the caller places
+// them. `collect` has already checked every path is inside the case.
+void write_extracted_files(const std::filesystem::path& root,
+                           const std::vector<artifacts::ExtractedFile>& files) {
+    for (const artifacts::ExtractedFile& f : files) {
+        const std::filesystem::path dest = root / std::filesystem::path(f.path);
+        std::error_code ec;
+        std::filesystem::create_directories(dest.parent_path(), ec);
+        if (ec) fail("cannot create '" + dest.parent_path().string() + "': " + ec.message());
+        write_text(dest, f.content);
+    }
+}
+
 // Column-aligned plain-text table for stdout.
 std::string text_table(const std::vector<std::string>& header,
                        const std::vector<std::vector<std::string>>& rows) {
@@ -483,8 +497,12 @@ void cmd_analyze(const AnalyzeArgs& a) {
         if (const Status st = artifacts::collect(listings, {}, extracted); !st) fail(st.error);
         write_text(out / "certificates.yaml", artifacts::to_yaml(extracted));
         write_text(out / "certificates.md", artifacts::to_markdown(extracted));
-        spdlog::info("artifacts: {} record(s) from {} parsed file(s)", extracted.artifacts.size(),
-                     extracted.files_examined);
+        write_extracted_files(out, extracted.files);
+        spdlog::info("artifacts: {} record(s) from {} parsed file(s){}", extracted.artifacts.size(),
+                     extracted.files_examined,
+                     extracted.files.empty()
+                         ? std::string{}
+                         : ", " + std::to_string(extracted.files.size()) + " table(s) written");
 
         rules::SweepResult swept;
         if (!a.no_rules) swept = run_rules(a, m, listings, file, out);
@@ -690,6 +708,10 @@ void run_report(const std::string& case_dir, const std::string& out_dir,
     }
     write_text(dest / "report.html", report::to_html(doc));
     write_text(dest / "report.md", report::to_markdown(doc));
+    // Beside the report rather than inside the case: with --out the case is
+    // not modified, and a symbol table the report points at should be
+    // wherever the report is.
+    write_extracted_files(dest, extracted.files);
     if (!integrity.verified)
         spdlog::warn("the evidence could not be verified; the report's first section says why");
     spdlog::info("report: {} section(s) written to {}/report.html and report.md",

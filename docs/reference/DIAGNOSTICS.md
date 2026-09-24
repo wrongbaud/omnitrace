@@ -17,7 +17,7 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 `INFO.yaml` uses). A code listed with two severities is emitted at both;
 `where` names every site, `message` is the literal with runtime parts as `...`.
 
-411 diagnostic codes, 76 status codes.
+413 diagnostic codes, 76 status codes.
 
 ## Diagnostics
 
@@ -47,8 +47,10 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 | `ar-truncated-member` | warning | `src/containers/ar/ArReader.cpp:307` | '...' claims ... bytes but the archive ends first | a member claims more bytes than the archive holds | what was read is real and is extracted; the archive is truncated |
 | `artifact-certificate-expired` | warning | `src/artifacts/certificates/CertificateExtractor.cpp:164` | '...': ...subject... is not valid after ...not_after... | a certificate's notAfter is before its notBefore, so it was never valid at any time | judged from the certificate's own dates only - the library does not read a clock, so "expired now" is the examiner's call against the record's not_after |
 | `artifact-certificate-unparsable` | info | `src/artifacts/certificates/CertificateExtractor.cpp:198` | '...' looks like PEM but holds no certificate, key or parameters this build can read | a file looks like PEM but holds no certificate, key or parameters this build can read | informational; open the named file. DER, PKCS#12 and JKS are not read yet |
-| `artifact-file-unreadable` | warning | `src/artifacts/Collect.cpp:91` | '...' was extracted but could not be read back for artifact extraction | an extracted file could not be read back for artifact extraction | it was extracted but is not parsed; check whether a limit truncated the run |
-| `artifact-limit-reached` | warning | `src/artifacts/Collect.cpp:115` | the extractors reached max_artifacts (...) and stopped | the extractors hit max_artifacts and stopped | raise the limit, or narrow what is extracted |
+| `artifact-file-bytes-reached` | warning | `src/artifacts/Collect.cpp:145` | the extractors reached max_extracted_file_bytes (...); later files were not kept | the extractors reached max_extracted_file_bytes and stopped keeping the tables they compose | the records are all still there and only the written-out tables are missing; raise the limit if a case holds an unusual number of kernels |
+| `artifact-file-path-refused` | warning | `src/artifacts/Collect.cpp:136` | an extractor asked for a file at '...', which is not a path inside the case; it was not written | an extractor asked for a file at a path that is not inside the case directory, and it was not written | a bug in that extractor rather than anything about the evidence; the path is checked because a file's name can be derived from evidence |
+| `artifact-file-unreadable` | warning | `src/artifacts/Collect.cpp:113` | '...' was extracted but could not be read back for artifact extraction | an extracted file could not be read back for artifact extraction | it was extracted but is not parsed; check whether a limit truncated the run |
+| `artifact-limit-reached` | warning | `src/artifacts/Collect.cpp:169` | the extractors reached max_artifacts (...) and stopped | the extractors hit max_artifacts and stopped | raise the limit, or narrow what is extracted |
 | `artifact-private-key-present` | warning | `src/artifacts/certificates/CertificateExtractor.cpp:279` | '...' holds an unencrypted ... private key; whatever it authenticates can be impersonated | a file holds an unencrypted private key | whatever it authenticates can be impersonated. The key itself is deliberately not recorded - read the named file if it is needed |
 | `artifact-weak-key` | info | `src/artifacts/certificates/CertificateExtractor.cpp:283` | '...': the ... key is ... bits | an RSA, DSA or DH key is shorter than 2048 bits | informational; noted beside the key's own record |
 | `bzip2-truncated-header` | warning | `src/discovery/validators/bzip2.cpp:37` | fewer than 4 bytes available for the header | fewer than 4 bytes were available for the bzip2 header | magic-tier hit at the end of the data; nothing was lost |

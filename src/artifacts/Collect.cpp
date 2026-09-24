@@ -15,6 +15,8 @@ namespace {
 
 constexpr const char* kCodeUnreadable = "artifact-file-unreadable";
 constexpr const char* kCodeLimit = "artifact-limit-reached";
+constexpr const char* kCodeFileRefused = "artifact-file-path-refused";
+constexpr const char* kCodeFileLimit = "artifact-file-bytes-reached";
 
 // The first bytes of a file, for the cheap `applies` screen. A path test needs
 // none of the file at all, so this is only read when an extractor asks for it.
@@ -67,6 +69,24 @@ std::unique_ptr<Extractor> ExtractorRegistry::create(const std::string& name) co
     return it == factories_.end() ? nullptr : it->second();
 }
 
+bool safe_relative_path(std::string_view p) {
+    if (p.empty() || p.size() > 1024) return false;
+    if (p.front() == '/' || p.front() == '\\') return false;
+    if (p.size() >= 2 && p[1] == ':') return false;  // a drive letter is not relative
+    std::size_t from = 0;
+    while (from <= p.size()) {
+        const std::size_t slash = p.find('/', from);
+        const std::string_view part =
+            p.substr(from, slash == std::string_view::npos ? std::string_view::npos : slash - from);
+        if (part.empty() || part == "." || part == "..") return false;
+        for (const char c : part)
+            if (c == '\0' || c == '\\') return false;
+        if (slash == std::string_view::npos) break;
+        from = slash + 1;
+    }
+    return true;
+}
+
 Status collect(const FilesystemEntries& filesystems, const CollectLimits& limits, Collection& out) {
     out = Collection{};
     detail::link_builtin_extractors();
@@ -74,6 +94,8 @@ Status collect(const FilesystemEntries& filesystems, const CollectLimits& limits
     if (extractors.empty()) return Status::success();
 
     std::vector<std::uint8_t> head, body;
+    std::uint64_t file_bytes = 0;
+    bool file_limit_said = false;
     for (const auto& [node_id, entries] : filesystems) {
         for (const EntryResult& e : entries) {
             if (out.artifacts.size() >= limits.max_artifacts) break;
@@ -105,6 +127,38 @@ Status collect(const FilesystemEntries& filesystems, const CollectLimits& limits
                 out.summarised += y.summarised;
                 for (Diagnostic& d : y.diagnostics) out.diagnostics.push_back(std::move(d));
                 for (Artifact& a : y.artifacts) out.artifacts.push_back(std::move(a));
+                for (ExtractedFile& f : y.files) {
+                    // The path is checked rather than trusted: an extractor is
+                    // built in, but what it names a file after is not -- a
+                    // kernel image's own path reaches this.
+                    if (!safe_relative_path(f.path)) {
+                        out.diagnostics.push_back(
+                            {Severity::Warning, kCodeFileRefused,
+                             "an extractor asked for a file at '" + sanitize_utf8(f.path) +
+                                 "', which is not a path inside the case; it was not written"});
+                        continue;
+                    }
+                    if (file_bytes + f.content.size() > limits.max_extracted_file_bytes) {
+                        if (!file_limit_said) {
+                            file_limit_said = true;
+                            out.diagnostics.push_back(
+                                {Severity::Warning, kCodeFileLimit,
+                                 "the extractors reached max_extracted_file_bytes (" +
+                                     std::to_string(limits.max_extracted_file_bytes) +
+                                     "); later files were not kept"});
+                        }
+                        continue;
+                    }
+                    // Same path twice is the same file: the first wins, so a
+                    // re-examined case is byte-identical to the one that made
+                    // it.
+                    const bool seen =
+                        std::any_of(out.files.begin(), out.files.end(),
+                                    [&](const ExtractedFile& g) { return g.path == f.path; });
+                    if (seen) continue;
+                    file_bytes += f.content.size();
+                    out.files.push_back(std::move(f));
+                }
             }
         }
     }

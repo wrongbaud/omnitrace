@@ -411,6 +411,81 @@ TEST(LinuxKernelExtractor, ReportsWhereTheKernelRuns) {
     EXPECT_EQ(k->fields.at("address_span"), "0x2570") << "599 * 16 bytes";
 }
 
+// Thirty thousand names do not belong in a record or a report table, and
+// counting them is not the same as having them. The table goes to the case
+// directory in `nm` format so the tools that read that format can read this.
+TEST(LinuxKernelExtractor, WritesTheSymbolTableToTheCaseDirectory) {
+    const TempDir tmp;
+    std::vector<std::string> syms = made_up_symbols(600);
+    syms[0] = "T_stext";
+    std::string img(4096, '\0');
+    img += "Linux version 5.4.55 (b@h) (gcc version 8.4.0) #0 SMP Fri Aug 15 02:53:20 2025\n";
+    while (img.size() % 8 != 0) img.push_back('\0');
+    img += as_string(kallsyms_blob(syms, false, 4, Addrs::Relative, 0xc0088000ULL));
+    Fs fs(tmp.path());
+    fs.file("payload", img);
+
+    Collection c;
+    ASSERT_TRUE(collect(fs.entries(), {}, c));
+    ASSERT_EQ(c.files.size(), 1u);
+    const ExtractedFile& f = c.files.front();
+    EXPECT_EQ(f.path, "symbols/n000001-payload.txt");
+    EXPECT_TRUE(safe_relative_path(f.path));
+
+    // The record points at it, so a reader of the report can find it.
+    const Artifact* k = of_kind(c, "linux-kernel");
+    ASSERT_NE(k, nullptr);
+    EXPECT_EQ(k->fields.at("symbols_file"), f.path);
+
+    // nm format: address, type, name -- one line per symbol, in table order.
+    std::vector<std::string> lines;
+    for (std::size_t at = 0; at < f.content.size();) {
+        const std::size_t nl = f.content.find('\n', at);
+        ASSERT_NE(nl, std::string::npos) << "every line is terminated";
+        lines.push_back(f.content.substr(at, nl - at));
+        at = nl + 1;
+    }
+    ASSERT_EQ(lines.size(), 600u);
+    EXPECT_EQ(lines[0], "c0089000 T _stext");
+    EXPECT_EQ(lines[1], "c0089010 t sym_1_func");
+    EXPECT_EQ(lines[599], "c008b570 d sym_599_func");
+}
+
+// A kernel with no readable address array still has names worth writing, and
+// nm leaves the address column blank rather than inventing one.
+TEST(LinuxKernelExtractor, WritesNamesEvenWithNoAddresses) {
+    const TempDir tmp;
+    std::string img(4096, '\0');
+    img += "Linux version 4.14.63 (l@h) (gcc version 7.3.0) #0\n";
+    while (img.size() % 8 != 0) img.push_back('\0');
+    img += as_string(kallsyms_blob(made_up_symbols(600)));  // no address array
+    Fs fs(tmp.path());
+    fs.file("boot/vmlinux", img);
+
+    Collection c;
+    ASSERT_TRUE(collect(fs.entries(), {}, c));
+    ASSERT_EQ(c.files.size(), 1u);
+    EXPECT_EQ(c.files.front().path, "symbols/n000001-boot-vmlinux.txt")
+        << "the separator is flattened, so one kernel per path";
+    EXPECT_EQ(c.files.front().content.substr(0, 21), "         T sym_0_func")
+        << "nm leaves the address blank";
+}
+
+// An extractor is built in, but what it names a file after is not: a kernel
+// image's own path reaches the name. The check is on the path, not on trust.
+TEST(ArtifactFiles, RefusesAPathOutsideTheCase) {
+    EXPECT_TRUE(safe_relative_path("symbols/n1-payload.txt"));
+    EXPECT_FALSE(safe_relative_path(""));
+    EXPECT_FALSE(safe_relative_path("/etc/passwd"));
+    EXPECT_FALSE(safe_relative_path("../escape.txt"));
+    EXPECT_FALSE(safe_relative_path("symbols/../../escape.txt"));
+    EXPECT_FALSE(safe_relative_path("symbols/./x.txt"));
+    EXPECT_FALSE(safe_relative_path("C:/windows/x.txt"));
+    EXPECT_FALSE(safe_relative_path("symbols\\x.txt")) << "a backslash is a separator too";
+    EXPECT_FALSE(safe_relative_path(std::string("sym\0bols/x.txt", 15)));
+    EXPECT_FALSE(safe_relative_path("symbols//x.txt")) << "an empty component";
+}
+
 // The whole reason `version_of` checks: the string is plain English and turns
 // up in writing. The router-wrt corpus image carries exactly this sentence, and it
 // produced a kernel record whose version was "of".

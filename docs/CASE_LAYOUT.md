@@ -17,6 +17,8 @@ DIR/
 ├── artifacts.yaml / .md      # search-pack hits over every extracted file and unclaimed region (docs/RULES.md); absent with --no-rules
 ├── certificates.yaml / .md   # files an extractor parsed into named records: certificates, private keys, trust stores (docs/ARTIFACTS.md)
 ├── report.html / report.md   # the case as a report: evidence and its integrity, structure, platforms, artifacts, hits, coverage, diagnostics (docs/REPORT.md)
+├── symbols/                  # one nm-format table per kernel image whose symbols were decoded (docs/ARTIFACTS.md)
+│   └── <node-id>-<entry>.txt # "c0100000 T _stext", in table order; the address column is blank when only the names were read
 ├── flash/
 │   ├── SOURCE.yaml           # path, size, md5/sha1/sha256, acquired_at of the evidence; `copy:` when --copy-image; `corrected:` when the analysis ran on a corrected view
 │   ├── <image>               # only with --copy-image (verified by hash after the copy)
@@ -35,6 +37,18 @@ DIR/
     ├── listing.md
     └── files/                # gzip and xz hold exactly one entry, "payload"
 ```
+
+`symbols/` exists only when a kernel image was found and its kallsyms table
+decoded. The file is named for the node and the entry it came from because a
+case routinely holds several kernels — a boot image and its recovery twin —
+and a single `symbols.txt` would keep only the last. The `linux-kernel` record
+in `certificates.yaml` names its table in `symbols_file`, so a report points at
+it.
+
+It is `nm` output, deliberately: address, type letter, name, one symbol per
+line in the table's own order. That is a format disassemblers and scripts
+already read, and re-inventing it would mean every consumer needed a parser
+for this tool alone.
 
 `--layout flat` writes the Phase 0 subset only: `manifest.yaml`, `summary.md`,
 `partitions.md`, `filesystems/`, `containers/`. Nothing is carved and no `INFO.*`, `flash/`

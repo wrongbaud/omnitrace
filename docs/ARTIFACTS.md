@@ -206,6 +206,25 @@ The two halves are found separately on purpose. A table whose addresses cannot
 be read still yields its names, and `symbols` is reported without the address
 fields rather than the whole table being discarded.
 
+### The table itself
+
+Counting symbols is not the same as having them: a symbol list is what an
+examiner loads into a disassembler, greps for a driver, or diffs against
+another unit's kernel. Thirty thousand names do not belong in a record or a
+report table, so the table is written to **`symbols/<node>-<entry>.txt`** in
+the case directory and the record names it in `symbols_file`.
+
+It is `nm` output — address, type letter, name, one per line in table order —
+because that is a format other tools already read. The address column is blank
+when only the names were decoded, which is what `nm` does too.
+
+Extractors do not write files. This layer never touches the host filesystem
+(`docs/ARCHITECTURE.md` rule 2) and has to keep working when a *finished* case
+is being re-examined, so an extractor composes the bytes and names a path, and
+the caller places them. Every path is checked against `safe_relative_path`
+before anything is written: an extractor is built in, but what it names a file
+after is not — a kernel image's own path reaches the name.
+
 `loadable_modules` is the one worth explaining. It decides what an empty
 `lib/modules` means: a kernel that cannot load modules at all has its drivers
 built in, and one that can is missing them.
@@ -217,10 +236,6 @@ W=195, D=1`), 32-bit little-endian, loadable modules yes.
 
 * **One of three corpus kernels has no symbols to read**: the router image was
   built without `CONFIG_KALLSYMS` and says so (`kernel-no-symbol-table`).
-* **Symbol names are not emitted, only counted.** Thirty thousand names is not
-  a report, and the record has nowhere to put them; what an examiner gets is
-  the histogram and the presence tests. Writing the table out as its own file
-  in the case directory would need a new output, which is not modelled.
 * **A kernel mapped low is not addressed.** Deciding which address array a
   kernel has rests on kernel addresses living in the top half of the address
   space, which is true of every architecture in the corpus and not of a nommu

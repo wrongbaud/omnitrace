@@ -199,6 +199,16 @@ class LinuxKernelExtractor final : public Extractor {
             }
         }
 
+        // The table itself, written out rather than summarised.
+        //
+        // Thirty thousand names do not belong in a record or a report table,
+        // and counting them is not the same as having them: a symbol list is
+        // what an examiner loads into a disassembler, greps for a driver, or
+        // diffs against another unit's kernel. It goes into the case
+        // directory in `nm` order and `nm` format, so the tools that already
+        // read that format can read this.
+        a.fields["symbols_file"] = emit_table(file, ks, out);
+
         // Whether this kernel can load modules at all is a property of the
         // image, and it decides whether an empty lib/modules means "drivers
         // are built in" or "the modules are missing".
@@ -210,6 +220,45 @@ class LinuxKernelExtractor final : public Extractor {
     }
 
    private:
+    /// `symbols/<node>-<file>.txt`, in `nm` format: address, type, name.
+    ///
+    /// `nm` prints spaces where an address is unknown and so does this, which
+    /// keeps the columns aligned whether or not the address array was read.
+    /// The width follows the kernel's own word size.
+    static std::string emit_table(const FileRef& file, const kernel::Kallsyms& ks, Yield& out) {
+        const unsigned digits = ks.word_size == 8 ? 16u : 8u;
+        std::string text;
+        // ~30 bytes a line; one allocation instead of thirty thousand.
+        text.reserve(ks.symbols.size() * 32);
+        for (const kernel::Symbol& sy : ks.symbols) {
+            if (ks.addressed) {
+                static const char* kHex = "0123456789abcdef";
+                for (unsigned i = digits; i-- > 0;) text += kHex[(sy.address >> (i * 4)) & 0xF];
+            } else {
+                text.append(digits, ' ');
+            }
+            text += ' ';
+            text += sy.type;
+            text += ' ';
+            text += sanitize_utf8(sy.name);
+            text += '\n';
+        }
+
+        // One file per kernel image, named for the node and the entry it came
+        // from: a case routinely holds several (a boot image and its
+        // recovery twin), and one `symbols.txt` would keep only the last.
+        std::string stem = file.path;
+        for (char& c : stem)
+            if (c == '/' || c == '\\' || c == ':') c = '-';
+        if (stem.size() > 80) stem.resize(80);
+        ExtractedFile ef;
+        ef.path = "symbols/" + file.node + "-" + stem + ".txt";
+        ef.content = std::move(text);
+        const std::string where = ef.path;
+        out.files.push_back(std::move(ef));
+        return where;
+    }
+
     static bool has(const kernel::Kallsyms& ks, std::string_view name) {
         return std::any_of(ks.symbols.begin(), ks.symbols.end(),
                            [&](const kernel::Symbol& s) { return s.name == name; });
