@@ -303,18 +303,27 @@ which is what turns a lost subtree into a partial one.
 
 Four gzip payloads moria finds (raw offsets 0x1E803000, 0x1E814000,
 0x26923000, 0x34CEE000) and three unblob finds decompress to QNX **slog
-device logs**. They are not a decompression gap either: all seven sit inside
-GPT partition 9 `storage`, which is one 15.2 GB QNX6 filesystem, and none of
-their bytes belong to any live file in it — a search of all 7,359 extracted
-files for the first stream's header finds nothing.
+device logs**. They are not a decompression gap either. Every one of them
+sits inside GPT partition 9 `storage`, which is a single 15.2 GB QNX6
+filesystem — and **none of their bytes are reachable through it**. A
+byte-exact search for two of the stream headers across everything the default
+run extracts (105,951 files, 20.2 GB) returns nothing: not in the QNX6 tree,
+not in `app.img` or `os_a.img`, not in any carved region.
 
-They are **unallocated space**. The baselines find them because they scan raw
-bytes and do not care what owns them; OmniTrace walks the filesystem and sees
-only what its metadata still points at. Recovering them is free-space carving
-inside a filesystem, which is a capability this tool does not have yet rather
-than a bug in one it does — and, since they are deleted device logs, a
-capability squarely inside what Phase 2 is for. That is the honest name for
-what this image still says to look at.
+So OmniTrace never holds these bytes at all. The baselines find them by
+scanning raw bytes without caring what owns them; OmniTrace walks the
+filesystem and sees only what its metadata still points at. Reading the bytes
+a filesystem's metadata has stopped claiming is free-space carving, a
+capability this tool does not have yet rather than a bug in one it does — and
+since what is sitting there is deleted device logs, it is squarely inside what
+Phase 2 is for. That is the honest name for what this image still says to look
+at.
+
+(The measurement to be careful with here is the search itself. A `grep -F` for
+a header written as a shell `$'...'` string is silently cut at the first NUL,
+which in a gzip header is byte 4 — it then matches every gzip in the image and
+"finds" the streams everywhere. The numbers above come from an exact
+byte-string search, which is the only kind that answers this question.)
 
 The same shape, less extremely, is why the per-image **mean** is reported
 beside the pooled figure. Pooling weights an image by how much is in it, which
