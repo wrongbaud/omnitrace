@@ -46,6 +46,48 @@ are identified by node id. A key a case states more than once keeps every
 value, so a disagreement *inside* one case is not mistaken for a difference
 *between* them; those show up as `a | b` in a cell.
 
+## Parsed records
+
+Certificates, private keys, kernel modules and kernels are compared by **what
+each kind says identifies it**, not by where the file sat. `Artifact::identity`
+is set by the extractor, because only the extractor knows:
+
+| kind | identity |
+|---|---|
+| `certificate` | the SHA-256 fingerprint of its DER |
+| `kernel-module` | the module name |
+| `linux-kernel` | the build banner |
+| anything else (`private-key`, `certificate-bundle`) | none; the path is used |
+
+A vendor moving `server.pem` has not issued a new certificate, so that is
+reported as the same record *moved* — where a key lives is part of what it
+protects. A **reissued** certificate has the same subject and a different
+fingerprint and is a different record; keying on the subject would hide
+exactly the event an examiner is looking for.
+
+A private key has no identity by design: its material is deliberately never
+recorded (`docs/ARTIFACTS.md`), so nothing distinguishes two of them but where
+they were found.
+
+For a record in both cases, every field is compared and the ones that disagree
+are listed. A module rebuilt against a new kernel keeps its name and changes
+its `srcversion`, which is what says it was rebuilt.
+
+**The count is of distinct records, not of rows.** Two files holding the same
+certificate are one certificate, so `same + changed + only-in-A` is exactly
+`records_a`; reporting the row count instead would leave a gap with nothing to
+explain it.
+
+### On two OpenWrt routers
+
+```
+parsed records: 211 in A, 181 in B; same 0, changed 66, only in A 145, only in B 115
+```
+
+`CN=router, O=vendor` on one and `CN=ROUTER, O=vendor.example` on the other; a CA
+trust store at the same path holding **252 certificates in one and 148 in the
+other**.
+
 ## Kernel symbols
 
 Compared **by name**, from the `symbols/*.txt` tables (`docs/ARTIFACTS.md`).
@@ -97,8 +139,8 @@ length as the count is how a diff comes to understate what it found.
   holding two unrelated roots with overlapping paths it merges them.
 * **Only live regular files.** Directories, symlinks and device nodes are not
   compared, so a file becoming a symlink reads as a removal.
-* **Artifacts are not diffed.** Certificates and kernel module records are
-  re-derived on both sides but only the platform facts and the symbols are
-  compared; a certificate that changed shows up only as its file changing.
+* **A record with no identity is keyed by path.** Private keys and trust
+  stores move as often as anything else, and one that did reads as a removal
+  and an addition rather than a move.
 * **No image-level diff.** Partition tables, carved regions and unidentified
   areas are not compared — only what was extracted.

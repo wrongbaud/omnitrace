@@ -6,6 +6,8 @@
 #include <map>
 #include <set>
 
+#include <utility>
+
 #include "omnitrace/core/Text.h"
 
 namespace omnitrace::diff {
@@ -26,9 +28,9 @@ constexpr const char* kCodeNoSymbols = "diff-symbols-one-sided";
 struct Flat {
     // path -> the digests found at it, and where
     std::map<std::string, std::set<std::string>> by_path;
-    std::map<std::string, std::string> node_of;   // path -> first node seen
-    std::map<std::string, std::uint64_t> size_of; // path -> first size seen
-    std::set<std::string> contents;               // every distinct sha256
+    std::map<std::string, std::string> node_of;    // path -> first node seen
+    std::map<std::string, std::uint64_t> size_of;  // path -> first size seen
+    std::set<std::string> contents;                // every distinct sha256
     std::uint64_t files = 0;
 };
 
@@ -83,6 +85,7 @@ void cap(std::vector<std::string>& v, std::size_t max) {
 
 CaseDiff compare(const analyzers::FilesystemEntries& a, const analyzers::FilesystemEntries& b,
                  const analyzers::Survey& survey_a, const analyzers::Survey& survey_b,
+                 const artifacts::Collection& records_a, const artifacts::Collection& records_b,
                  const std::string& symbols_a, const std::string& symbols_b,
                  const DiffLimits& limits) {
     CaseDiff d;
@@ -191,6 +194,99 @@ CaseDiff compare(const analyzers::FilesystemEntries& a, const analyzers::Filesys
             if (va == vb) continue;
             d.platform.push_back({k, join(va), join(vb)});
         }
+    }
+
+    // Records the extractors parsed, compared by what each kind says
+    // identifies it rather than by where the file sat. A vendor moving
+    // `server.pem` has not issued a new certificate, and a module whose path
+    // carries a new kernel release is still the same driver.
+    {
+        // (kind, identity) -> the record. A kind with no identity falls back
+        // to the path, which is the best available answer for a private key:
+        // its material is deliberately never recorded, so nothing else
+        // distinguishes two of them.
+        std::map<std::pair<std::string, std::string>, const artifacts::Artifact*> ra, rb;
+        const auto key_of = [](const artifacts::Artifact& x) {
+            return std::make_pair(x.kind, x.identity.empty() ? x.path : x.identity);
+        };
+        for (const artifacts::Artifact& x : records_a.artifacts) ra.emplace(key_of(x), &x);
+        for (const artifacts::Artifact& x : records_b.artifacts) rb.emplace(key_of(x), &x);
+        // The count is of *distinct* records, not of rows: two files holding
+        // the same certificate are one certificate, and keying on identity
+        // merges them. Reporting the row count instead would leave
+        // same + changed + only-in-A short of it with nothing to explain the
+        // gap, which is how a total stops being checkable.
+        d.artifacts.records_a = ra.size();
+        d.artifacts.records_b = rb.size();
+
+        // What to call a record in a report. The first field a kind offers
+        // that a person would recognise; the identity otherwise.
+        // `banner` before `version` because a kernel's version does not
+        // distinguish it: the camera images are both 3.10.27 and differ in the
+        // revision their banner names, so labelling by version shows one
+        // record added and one removed with the same name on both.
+        const auto label_of = [](const artifacts::Artifact& x) {
+            for (const char* k : {"subject", "module", "banner", "version", "first_subject"}) {
+                const auto it = x.fields.find(k);
+                if (it != x.fields.end() && !it->second.empty())
+                    return it->second.size() > 120 ? it->second.substr(0, 120) + "..." : it->second;
+            }
+            return x.identity.empty() ? x.path : x.identity;
+        };
+
+        for (const auto& [k, xa] : ra) {
+            const auto it = rb.find(k);
+            if (it == rb.end()) {
+                ArtifactChange c;
+                c.kind = k.first;
+                c.identity = k.second;
+                c.label = label_of(*xa);
+                c.path_a = xa->path;
+                d.artifacts.removed.push_back(std::move(c));
+                continue;
+            }
+            const artifacts::Artifact& xb = *it->second;
+            ArtifactChange c;
+            c.kind = k.first;
+            c.identity = k.second;
+            c.label = label_of(*xa);
+            c.path_a = xa->path;
+            c.path_b = xb.path;
+            c.moved = xa->path != xb.path;
+            std::set<std::string> keys;
+            for (const auto& [fk, fv] : xa->fields) keys.insert(fk);
+            for (const auto& [fk, fv] : xb.fields) keys.insert(fk);
+            for (const std::string& fk : keys) {
+                const auto ia = xa->fields.find(fk);
+                const auto ib = xb.fields.find(fk);
+                const std::string va = ia == xa->fields.end() ? std::string{} : ia->second;
+                const std::string vb = ib == xb.fields.end() ? std::string{} : ib->second;
+                if (va != vb) c.fields.push_back({fk, va, vb});
+            }
+            if (c.fields.empty() && !c.moved) {
+                ++d.artifacts.same;
+                continue;
+            }
+            d.artifacts.changed.push_back(std::move(c));
+        }
+        for (const auto& [k, xb] : rb) {
+            if (ra.count(k) != 0) continue;
+            ArtifactChange c;
+            c.kind = k.first;
+            c.identity = k.second;
+            c.label = label_of(*xb);
+            c.path_b = xb->path;
+            d.artifacts.added.push_back(std::move(c));
+        }
+        d.artifacts.added_total = d.artifacts.added.size();
+        d.artifacts.removed_total = d.artifacts.removed.size();
+        d.artifacts.changed_total = d.artifacts.changed.size();
+        const auto cap_records = [&](std::vector<ArtifactChange>& v) {
+            if (v.size() > limits.max_listed) v.resize(limits.max_listed);
+        };
+        cap_records(d.artifacts.added);
+        cap_records(d.artifacts.removed);
+        cap_records(d.artifacts.changed);
     }
 
     // Symbols, by name. Addresses move whenever anything is recompiled, so

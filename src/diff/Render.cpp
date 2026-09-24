@@ -49,14 +49,13 @@ void listing(std::string& out, const char* title, const std::vector<FileChange>&
     std::vector<std::vector<std::string>> rows;
     for (const FileChange& c : v) {
         if (with_both)
-            rows.push_back({esc(c.path), dec(c.size_a), dec(c.size_b), shortsha(c.sha_a),
-                            shortsha(c.sha_b)});
+            rows.push_back(
+                {esc(c.path), dec(c.size_a), dec(c.size_b), shortsha(c.sha_a), shortsha(c.sha_b)});
         else
             rows.push_back({esc(c.path), dec(c.size_a != 0 ? c.size_a : c.size_b)});
     }
     out += output::md_table(header, rows);
-    if (v.size() < total)
-        out += "\n" + dec(total - v.size()) + " more, in `diff.yaml`.\n";
+    if (v.size() < total) out += "\n" + dec(total - v.size()) + " more, in `diff.yaml`.\n";
     out += "\n";
 }
 
@@ -92,9 +91,59 @@ std::string to_markdown(const CaseDiff& d) {
         out += "## What each system says about itself\n\n";
         std::vector<std::vector<std::string>> rows;
         for (const FactChange& f : d.platform)
-            rows.push_back({esc(f.key), esc(f.a.empty() ? "—" : f.a), esc(f.b.empty() ? "—" : f.b)});
+            rows.push_back(
+                {esc(f.key), esc(f.a.empty() ? "—" : f.a), esc(f.b.empty() ? "—" : f.b)});
         out += output::md_table({"Fact", "A", "B"}, rows);
         out += "\n";
+    }
+
+    if (d.artifacts.records_a != 0 || d.artifacts.records_b != 0) {
+        out += "## Parsed records\n\n";
+        out +=
+            "Certificates, keys, kernel modules and kernels, compared by what each kind says "
+            "identifies it rather than by where the file sat: a vendor moving `server.pem` has "
+            "not issued a new certificate.\n\n";
+        out += "| | A | B |\n|---|---:|---:|\n";
+        out += "| Records | " + dec(d.artifacts.records_a) + " | " + dec(d.artifacts.records_b) +
+               " |\n\n";
+        out += "| | |\n|---|---:|\n";
+        out += "| Same record, unchanged | " + dec(d.artifacts.same) + " |\n";
+        out += "| Same record, something differs | " + dec(d.artifacts.changed_total) + " |\n";
+        out += "| Only in A | " + dec(d.artifacts.removed_total) + " |\n";
+        out += "| Only in B | " + dec(d.artifacts.added_total) + " |\n\n";
+
+        const auto one_sided = [&](const char* title, const std::vector<ArtifactChange>& v,
+                                   std::uint64_t total, bool in_a) {
+            if (total == 0) return;
+            out += "### " + std::string(title) + " (" + dec(total) + ")\n\n";
+            std::vector<std::vector<std::string>> rows;
+            for (const ArtifactChange& c : v)
+                rows.push_back({esc(c.kind), esc(c.label), esc(in_a ? c.path_a : c.path_b)});
+            out += output::md_table({"Kind", "What", "Path"}, rows);
+            if (v.size() < total) out += "\n" + dec(total - v.size()) + " more, in `diff.yaml`.\n";
+            out += "\n";
+        };
+        one_sided("Only in A", d.artifacts.removed, d.artifacts.removed_total, true);
+        one_sided("Only in B", d.artifacts.added, d.artifacts.added_total, false);
+
+        if (d.artifacts.changed_total != 0) {
+            out += "### The same record, changed (" + dec(d.artifacts.changed_total) + ")\n\n";
+            for (const ArtifactChange& c : d.artifacts.changed) {
+                out += "**" + esc(c.kind) + "** — " + esc(c.label) + "\n\n";
+                if (c.moved) out += "Moved: `" + esc(c.path_a) + "` → `" + esc(c.path_b) + "`\n\n";
+                if (!c.fields.empty()) {
+                    std::vector<std::vector<std::string>> rows;
+                    for (const FactChange& f : c.fields)
+                        rows.push_back({esc(f.key), esc(f.a.empty() ? "—" : f.a),
+                                        esc(f.b.empty() ? "—" : f.b)});
+                    out += output::md_table({"Field", "A", "B"}, rows);
+                    out += "\n";
+                }
+            }
+            if (d.artifacts.changed.size() < d.artifacts.changed_total)
+                out += dec(d.artifacts.changed_total - d.artifacts.changed.size()) +
+                       " more, in `diff.yaml`.\n\n";
+        }
     }
 
     if (d.symbols.present_a || d.symbols.present_b) {
@@ -104,8 +153,8 @@ std::string to_markdown(const CaseDiff& d) {
             "those would report every kernel as entirely different; a name appearing or "
             "disappearing is what says a driver was added or removed.\n\n";
         out += "| | A | B |\n|---|---:|---:|\n";
-        out += "| Symbols | " + dec(d.symbols.symbols_a) + " | " + dec(d.symbols.symbols_b) +
-               " |\n";
+        out +=
+            "| Symbols | " + dec(d.symbols.symbols_a) + " | " + dec(d.symbols.symbols_b) + " |\n";
         out += "| In both | " + dec(d.symbols.common) + " | " + dec(d.symbols.common) + " |\n";
         out += "| Only here | " + dec(d.symbols.only_a_total) + " | " +
                dec(d.symbols.only_b_total) + " |\n\n";
@@ -190,6 +239,37 @@ std::string to_yaml(const CaseDiff& d) {
         y += "    a: " + yaml_quote(f.a) + "\n";
         y += "    b: " + yaml_quote(f.b) + "\n";
     }
+
+    y += "artifacts:\n";
+    y += "  records_a: " + dec(d.artifacts.records_a) + "\n";
+    y += "  records_b: " + dec(d.artifacts.records_b) + "\n";
+    y += "  same: " + dec(d.artifacts.same) + "\n";
+    const auto emit_records = [&](const char* key, const std::vector<ArtifactChange>& v,
+                                  std::uint64_t total) {
+        y += std::string("  ") + key + ":\n";
+        y += "    total: " + dec(total) + "\n";
+        y += "    listed:\n";
+        if (v.empty()) y += "      []\n";
+        for (const ArtifactChange& c : v) {
+            y += "      - kind: " + yaml_quote(c.kind) + "\n";
+            y += "        identity: " + yaml_quote(c.identity) + "\n";
+            y += "        label: " + yaml_quote(c.label) + "\n";
+            if (!c.path_a.empty()) y += "        path_a: " + yaml_quote(c.path_a) + "\n";
+            if (!c.path_b.empty()) y += "        path_b: " + yaml_quote(c.path_b) + "\n";
+            if (c.moved) y += "        moved: true\n";
+            if (!c.fields.empty()) {
+                y += "        fields:\n";
+                for (const FactChange& f : c.fields) {
+                    y += "          - key: " + yaml_quote(f.key) + "\n";
+                    y += "            a: " + yaml_quote(f.a) + "\n";
+                    y += "            b: " + yaml_quote(f.b) + "\n";
+                }
+            }
+        }
+    };
+    emit_records("changed", d.artifacts.changed, d.artifacts.changed_total);
+    emit_records("only_a", d.artifacts.removed, d.artifacts.removed_total);
+    emit_records("only_b", d.artifacts.added, d.artifacts.added_total);
 
     y += "symbols:\n";
     y += std::string("  present_a: ") + (d.symbols.present_a ? "true" : "false") + "\n";

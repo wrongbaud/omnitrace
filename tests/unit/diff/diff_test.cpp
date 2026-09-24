@@ -53,6 +53,31 @@ analyzers::Survey survey_with(const std::vector<std::pair<std::string, std::stri
     return s;
 }
 
+artifacts::Artifact cert(const std::string& fingerprint, const std::string& subject,
+                         const std::string& path, const std::string& not_after = "2036-01-01") {
+    artifacts::Artifact a;
+    a.kind = "certificate";
+    a.node = "n1";
+    a.path = path;
+    a.identity = fingerprint;
+    a.fields["fingerprint"] = fingerprint;
+    a.fields["subject"] = subject;
+    a.fields["not_after"] = not_after;
+    return a;
+}
+
+artifacts::Collection records(std::vector<artifacts::Artifact> v) {
+    artifacts::Collection c;
+    c.artifacts = std::move(v);
+    return c;
+}
+
+const ArtifactChange* record_for(const std::vector<ArtifactChange>& v, const std::string& label) {
+    for (const ArtifactChange& c : v)
+        if (c.label == label) return &c;
+    return nullptr;
+}
+
 const FileChange* change_for(const std::vector<FileChange>& v, const std::string& path) {
     for (const FileChange& c : v)
         if (c.path == path) return &c;
@@ -66,13 +91,15 @@ const FileChange* change_for(const std::vector<FileChange>& v, const std::string
 // and n000021 in the other as soon as anything earlier in the image differs.
 TEST(Diff, MatchesFilesAcrossCasesWithDifferentNodeIds) {
     const analyzers::FilesystemEntries a = {
-        {"n000018", {file("etc/passwd", sha('a')), file("bin/busybox", sha('b')),
-                     file("etc/only-in-a", sha('c'))}}};
+        {"n000018",
+         {file("etc/passwd", sha('a')), file("bin/busybox", sha('b')),
+          file("etc/only-in-a", sha('c'))}}};
     const analyzers::FilesystemEntries b = {
-        {"n000021", {file("etc/passwd", sha('a')), file("bin/busybox", sha('d')),
-                     file("etc/only-in-b", sha('e'))}}};
+        {"n000021",
+         {file("etc/passwd", sha('a')), file("bin/busybox", sha('d')),
+          file("etc/only-in-b", sha('e'))}}};
 
-    const CaseDiff d = compare(a, b, {}, {}, {}, {});
+    const CaseDiff d = compare(a, b, {}, {}, {}, {}, {}, {});
     EXPECT_EQ(d.files.files_a, 3u);
     EXPECT_EQ(d.files.files_b, 3u);
     EXPECT_EQ(d.files.same, 1u) << "etc/passwd, same path and same bytes";
@@ -95,7 +122,7 @@ TEST(Diff, ContentViewSeesAFileThatOnlyMoved) {
     const analyzers::FilesystemEntries a = {{"n1", {file("usr/bin/tool", sha('a'))}}};
     const analyzers::FilesystemEntries b = {{"n9", {file("bin/tool", sha('a'))}}};
 
-    const CaseDiff d = compare(a, b, {}, {}, {}, {});
+    const CaseDiff d = compare(a, b, {}, {}, {}, {}, {}, {});
     EXPECT_EQ(d.files.removed_total, 1u) << "by path it is gone";
     EXPECT_EQ(d.files.added_total, 1u) << "and new";
     EXPECT_EQ(d.files.contents_common, 1u) << "by content it is the same file";
@@ -109,7 +136,7 @@ TEST(Diff, TwoCopiesOfACaseAreIdentical) {
     const analyzers::FilesystemEntries b = {
         {"n7", {dir("etc"), file("etc/passwd", sha('a')), file("bin/sh", sha('b'))}}};
     const CaseDiff d = compare(a, b, survey_with({{"os.id", "openwrt"}}),
-                               survey_with({{"os.id", "openwrt"}}, "n7"), {}, {});
+                               survey_with({{"os.id", "openwrt"}}, "n7"), {}, {}, {}, {});
     EXPECT_TRUE(d.identical());
     EXPECT_EQ(d.files.same, 2u);
     EXPECT_TRUE(d.platform.empty()) << "the same fact from a different node is the same fact";
@@ -118,10 +145,10 @@ TEST(Diff, TwoCopiesOfACaseAreIdentical) {
 // History is not the system as it was running. A deleted file recovered from
 // one case and not the other says something about recovery, not the device.
 TEST(Diff, DeletedAndSupersededEntriesAreNotCompared) {
-    analyzers::FilesystemEntries a = {{"n1", {file("etc/passwd", sha('a')),
-                                              deleted("etc/shadow.old", sha('z'))}}};
+    analyzers::FilesystemEntries a = {
+        {"n1", {file("etc/passwd", sha('a')), deleted("etc/shadow.old", sha('z'))}}};
     const analyzers::FilesystemEntries b = {{"n1", {file("etc/passwd", sha('a'))}}};
-    const CaseDiff d = compare(a, b, {}, {}, {}, {});
+    const CaseDiff d = compare(a, b, {}, {}, {}, {}, {}, {});
     EXPECT_TRUE(d.identical());
     EXPECT_EQ(d.files.files_a, 1u) << "the deleted entry is not a file of the running system";
 }
@@ -134,7 +161,7 @@ TEST(Diff, ReportsPlatformFactsThatDisagree) {
         e, e, survey_with({{"os.version", "18.06.1"}, {"os.id", "openwrt"}}),
         survey_with({{"os.version", "21.02.0"}, {"os.id", "openwrt"}, {"service.telnet", "y"}},
                     "n5"),
-        {}, {});
+        {}, {}, {}, {});
     ASSERT_EQ(d.platform.size(), 2u) << "os.id agrees and is not reported";
     EXPECT_EQ(d.platform[0].key, "os.version");
     EXPECT_EQ(d.platform[0].a, "18.06.1");
@@ -145,6 +172,122 @@ TEST(Diff, ReportsPlatformFactsThatDisagree) {
     EXPECT_FALSE(d.identical());
 }
 
+// A certificate is the same certificate when its fingerprint is, whatever a
+// vendor did with the file. The path is not an identity: moving `server.pem`
+// is not issuing a new certificate.
+TEST(Diff, MatchesCertificatesByFingerprintNotPath) {
+    const analyzers::FilesystemEntries e = {{"n1", {file("etc/passwd", sha('a'))}}};
+    const auto ra = records({cert(sha('1'), "CN=router", "etc/lighttpd/server.pem")});
+    const auto rb = records({cert(sha('1'), "CN=router", "etc/ssl/server.pem")});
+
+    const CaseDiff d = compare(e, e, {}, {}, ra, rb, {}, {});
+    EXPECT_EQ(d.artifacts.records_a, 1u);
+    EXPECT_EQ(d.artifacts.added_total, 0u) << "not a new certificate";
+    EXPECT_EQ(d.artifacts.removed_total, 0u);
+    ASSERT_EQ(d.artifacts.changed_total, 1u);
+    const ArtifactChange& c = d.artifacts.changed.front();
+    EXPECT_EQ(c.kind, "certificate");
+    EXPECT_TRUE(c.moved) << "where a key lives is part of what it protects";
+    EXPECT_EQ(c.path_a, "etc/lighttpd/server.pem");
+    EXPECT_EQ(c.path_b, "etc/ssl/server.pem");
+    EXPECT_TRUE(c.fields.empty()) << "nothing about the certificate itself changed";
+    EXPECT_FALSE(d.identical());
+}
+
+// A reissued certificate has the same subject and a different fingerprint,
+// and is a different certificate. Keying on the subject would hide exactly
+// the event an examiner is looking for.
+TEST(Diff, AReissuedCertificateIsNotTheSameCertificate) {
+    const analyzers::FilesystemEntries e = {{"n1", {file("etc/passwd", sha('a'))}}};
+    const auto ra = records({cert(sha('1'), "CN=router", "etc/server.pem", "2024-01-01")});
+    const auto rb = records({cert(sha('2'), "CN=router", "etc/server.pem", "2034-01-01")});
+
+    const CaseDiff d = compare(e, e, {}, {}, ra, rb, {}, {});
+    EXPECT_EQ(d.artifacts.changed_total, 0u);
+    ASSERT_EQ(d.artifacts.removed_total, 1u);
+    ASSERT_EQ(d.artifacts.added_total, 1u);
+    EXPECT_EQ(d.artifacts.removed.front().label, "CN=router");
+    EXPECT_EQ(d.artifacts.removed.front().identity, sha('1'));
+    EXPECT_EQ(d.artifacts.added.front().identity, sha('2'));
+}
+
+// Identity is per kind, so a module and a certificate that happened to share
+// one are still two records.
+TEST(Diff, IdentityIsScopedToTheKind) {
+    const analyzers::FilesystemEntries e = {{"n1", {file("etc/passwd", sha('a'))}}};
+    artifacts::Artifact m;
+    m.kind = "kernel-module";
+    m.identity = sha('1');
+    m.path = "lib/modules/4.14/x.ko";
+    m.fields["module"] = "x";
+    const auto ra = records({cert(sha('1'), "CN=router", "etc/server.pem"), m});
+
+    const CaseDiff d = compare(e, e, {}, {}, ra, ra, {}, {});
+    EXPECT_EQ(d.artifacts.records_a, 2u);
+    EXPECT_EQ(d.artifacts.same, 2u);
+    EXPECT_TRUE(d.identical());
+}
+
+// A private key has no identity: its material is deliberately never recorded,
+// so nothing distinguishes two of them but where they were found.
+TEST(Diff, ARecordWithNoIdentityIsKeyedByItsPath) {
+    const analyzers::FilesystemEntries e = {{"n1", {file("etc/passwd", sha('a'))}}};
+    artifacts::Artifact ka;
+    ka.kind = "private-key";
+    ka.path = "etc/nginx/cert.key";
+    ka.fields["key_type"] = "rsa";
+    artifacts::Artifact kb = ka;
+    kb.path = "etc/ssl/cert.key";
+
+    const CaseDiff d = compare(e, e, {}, {}, records({ka}), records({kb}), {}, {});
+    EXPECT_EQ(d.artifacts.removed_total, 1u) << "by path, it is somewhere else";
+    EXPECT_EQ(d.artifacts.added_total, 1u);
+    EXPECT_EQ(d.artifacts.removed.front().label, "etc/nginx/cert.key");
+}
+
+// Two files holding the same certificate are one certificate, and the totals
+// have to say so or `same + changed + only-in-A` does not add up to the count
+// the report prints.
+TEST(Diff, DuplicateRecordsAreOneRecord) {
+    const analyzers::FilesystemEntries e = {{"n1", {file("etc/passwd", sha('a'))}}};
+    const auto ra =
+        records({cert(sha('1'), "CN=x", "etc/a.pem"), cert(sha('1'), "CN=x", "etc/b.pem"),
+                 cert(sha('2'), "CN=y", "etc/c.pem")});
+    const CaseDiff d = compare(e, e, {}, {}, ra, ra, {}, {});
+    EXPECT_EQ(d.artifacts.records_a, 2u) << "three rows, two certificates";
+    EXPECT_EQ(d.artifacts.same + d.artifacts.changed_total + d.artifacts.removed_total,
+              d.artifacts.records_a)
+        << "the totals have to account for every record counted";
+}
+
+// The fields of a record that is in both cases are compared one by one: a
+// module rebuilt against a new kernel keeps its name and changes its
+// srcversion, which is what says it was rebuilt.
+TEST(Diff, ReportsWhichFieldsOfARecordChanged) {
+    const analyzers::FilesystemEntries e = {{"n1", {file("etc/passwd", sha('a'))}}};
+    artifacts::Artifact ma;
+    ma.kind = "kernel-module";
+    ma.identity = "8188fu";
+    ma.path = "lib/modules/3.10.27/8188fu.ko";
+    ma.fields["module"] = "8188fu";
+    ma.fields["srcversion"] = "C2678BB";
+    ma.fields["parameters"] = "49";
+    artifacts::Artifact mb = ma;
+    mb.fields["srcversion"] = "95449FF";
+    mb.fields["parameters"] = "47";
+
+    const CaseDiff d = compare(e, e, {}, {}, records({ma}), records({mb}), {}, {});
+    ASSERT_EQ(d.artifacts.changed_total, 1u);
+    const ArtifactChange* c = record_for(d.artifacts.changed, "8188fu");
+    ASSERT_NE(c, nullptr);
+    EXPECT_FALSE(c->moved);
+    ASSERT_EQ(c->fields.size(), 2u);
+    EXPECT_EQ(c->fields[0].key, "parameters");
+    EXPECT_EQ(c->fields[0].a, "49");
+    EXPECT_EQ(c->fields[0].b, "47");
+    EXPECT_EQ(c->fields[1].key, "srcversion");
+}
+
 // Addresses move whenever anything is recompiled, so the comparison is by
 // name: a name appearing or disappearing is what says a driver changed.
 TEST(Diff, ComparesKernelSymbolsByNameNotAddress) {
@@ -152,7 +295,7 @@ TEST(Diff, ComparesKernelSymbolsByNameNotAddress) {
     const std::string sa = "c0100000 T _stext\nc0100010 t shared_fn\nc0100020 T only_in_a\n";
     // Every address differs; two of the three names do not.
     const std::string sb = "c0200000 T _stext\nc0200040 t shared_fn\nc0200080 T only_in_b\n";
-    const CaseDiff d = compare(e, e, {}, {}, sa, sb, {});
+    const CaseDiff d = compare(e, e, {}, {}, {}, {}, sa, sb, {});
     EXPECT_TRUE(d.symbols.present_a);
     EXPECT_TRUE(d.symbols.present_b);
     EXPECT_EQ(d.symbols.symbols_a, 3u);
@@ -169,7 +312,7 @@ TEST(Diff, ComparesKernelSymbolsByNameNotAddress) {
 TEST(Diff, OneSidedSymbolTablesAreCountedNotListed) {
     const analyzers::FilesystemEntries e = {{"n1", {file("etc/passwd", sha('a'))}}};
     const std::string sa = "c0100000 T _stext\nc0100010 t a_fn\n";
-    const CaseDiff d = compare(e, e, {}, {}, sa, {}, {});
+    const CaseDiff d = compare(e, e, {}, {}, {}, {}, sa, {}, {});
     EXPECT_TRUE(d.symbols.present_a);
     EXPECT_FALSE(d.symbols.present_b);
     EXPECT_EQ(d.symbols.only_a_total, 2u) << "counted";
@@ -184,7 +327,7 @@ TEST(Diff, OneSidedSymbolTablesAreCountedNotListed) {
 // still the last field.
 TEST(Diff, ReadsSymbolLinesWithNoAddress) {
     const analyzers::FilesystemEntries e = {{"n1", {file("etc/passwd", sha('a'))}}};
-    const CaseDiff d = compare(e, e, {}, {}, "         T with_no_address\n",
+    const CaseDiff d = compare(e, e, {}, {}, {}, {}, "         T with_no_address\n",
                                "c0100000 T with_no_address\n", {});
     EXPECT_EQ(d.symbols.common, 1u);
     EXPECT_EQ(d.symbols.only_a_total, 0u);
@@ -201,7 +344,7 @@ TEST(Diff, TotalsAreExactWhenTheListsAreCapped) {
 
     DiffLimits lim;
     lim.max_listed = 5;
-    const CaseDiff d = compare(a, b, {}, {}, {}, {}, lim);
+    const CaseDiff d = compare(a, b, {}, {}, {}, {}, {}, {}, lim);
     EXPECT_EQ(d.files.removed_total, 50u) << "exact";
     EXPECT_EQ(d.files.removed.size(), 5u) << "listed";
     EXPECT_EQ(d.files.added_total, 1u);
@@ -212,7 +355,7 @@ TEST(Diff, TotalsAreExactWhenTheListsAreCapped) {
 TEST(Diff, SaysSoWhenOneCaseHasNoFilesAtAll) {
     const analyzers::FilesystemEntries a = {{"n1", {file("etc/passwd", sha('a'))}}};
     const analyzers::FilesystemEntries b = {{"n1", {dir("etc")}}};
-    const CaseDiff d = compare(a, b, {}, {}, {}, {});
+    const CaseDiff d = compare(a, b, {}, {}, {}, {}, {}, {});
     bool said = false;
     for (const Diagnostic& g : d.diagnostics)
         if (g.code == "diff-case-empty") said = true;
@@ -222,7 +365,7 @@ TEST(Diff, SaysSoWhenOneCaseHasNoFilesAtAll) {
 TEST(Diff, RendersBothFormsWithoutLosingTheTotals) {
     const analyzers::FilesystemEntries a = {{"n1", {file("a", sha('a')), file("both", sha('c'))}}};
     const analyzers::FilesystemEntries b = {{"n2", {file("b", sha('b')), file("both", sha('c'))}}};
-    CaseDiff d = compare(a, b, {}, {}, {}, {});
+    CaseDiff d = compare(a, b, {}, {}, {}, {}, {}, {});
     d.label_a = "case-a";
     d.label_b = "case-b";
 
@@ -241,7 +384,7 @@ TEST(Diff, RendersBothFormsWithoutLosingTheTotals) {
 TEST(Diff, EscapesPathsForTheFormatTheyAreRenderedIn) {
     const analyzers::FilesystemEntries a = {{"n1", {file("etc/we|rd\"name", sha('a'))}}};
     const analyzers::FilesystemEntries b = {{"n1", {file("plain", sha('b'))}}};
-    const CaseDiff d = compare(a, b, {}, {}, {}, {});
+    const CaseDiff d = compare(a, b, {}, {}, {}, {}, {}, {});
     const std::string md = to_markdown(d);
     EXPECT_EQ(md.find("etc/we|rd"), std::string::npos) << "a raw pipe would break the row";
     EXPECT_NE(md.find("we\\|rd"), std::string::npos);

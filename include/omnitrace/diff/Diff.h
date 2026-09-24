@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "omnitrace/analyzers/Platform.h"
+#include "omnitrace/artifacts/Artifact.h"
 #include "omnitrace/core/Diagnostics.h"
 
 /// @namespace omnitrace::diff
@@ -54,7 +55,7 @@ struct FileDiff {
     std::uint64_t added_total = 0, removed_total = 0, changed_total = 0;
     std::uint64_t same = 0;  ///< Path in both, identical contents.
 
-    std::uint64_t files_a = 0, files_b = 0;      ///< Live regular files per case.
+    std::uint64_t files_a = 0, files_b = 0;        ///< Live regular files per case.
     std::uint64_t contents_a = 0, contents_b = 0;  ///< Distinct sha256 per case.
     std::uint64_t contents_common = 0;             ///< Distinct sha256 in both.
     /// Contents in both cases that no shared path accounts for: a file that
@@ -67,6 +68,33 @@ struct FactChange {
     std::string key;
     std::string a;  ///< Empty when only the other case states it.
     std::string b;
+};
+
+/// One parsed record that is not the same in both cases.
+struct ArtifactChange {
+    std::string kind;      ///< "certificate", "kernel-module", ...
+    std::string identity;  ///< What matched it, or the path when the kind has none.
+    std::string label;     ///< For a person: a certificate's subject, a module's name.
+    std::string path_a;    ///< Where it was found, per case; empty on the absent side.
+    std::string path_b;
+    /// Fields that disagree, for a record present in both. A certificate that
+    /// moved has none of these and is still worth reporting, because where a
+    /// key lives is part of what it protects.
+    std::vector<FactChange> fields;
+    bool moved = false;  ///< Same record, different path.
+};
+
+/// Records the extractors parsed, compared by what each kind says identifies
+/// it (`Artifact::identity`) rather than by where the file sat.
+struct ArtifactDiff {
+    std::vector<ArtifactChange> added;    ///< Capped; see the totals.
+    std::vector<ArtifactChange> removed;  ///< Capped.
+    std::vector<ArtifactChange> changed;  ///< In both, and something differs. Capped.
+    std::uint64_t added_total = 0, removed_total = 0, changed_total = 0;
+    std::uint64_t same = 0;  ///< In both, identical, same path.
+    /// Distinct records per case, so `same + changed + only-in-A` is exactly
+    /// `records_a`. Two files holding the same certificate are one record.
+    std::uint64_t records_a = 0, records_b = 0;
 };
 
 /// Kernel symbol tables, compared by name.
@@ -84,13 +112,16 @@ struct CaseDiff {
     std::string label_a, label_b;
     FileDiff files;
     std::vector<FactChange> platform;  ///< Facts that differ or are one-sided.
+    ArtifactDiff artifacts;
     SymbolDiff symbols;
     std::vector<Diagnostic> diagnostics;
     /// Nothing at all differs. Worth stating plainly: an examiner who diffs
     /// two acquisitions of one device wants to be told they match.
     bool identical() const {
         return files.added_total == 0 && files.removed_total == 0 && files.changed_total == 0 &&
-               platform.empty() && symbols.only_a_total == 0 && symbols.only_b_total == 0;
+               platform.empty() && artifacts.added_total == 0 && artifacts.removed_total == 0 &&
+               artifacts.changed_total == 0 && symbols.only_a_total == 0 &&
+               symbols.only_b_total == 0;
     }
 };
 
@@ -108,6 +139,7 @@ struct DiffLimits {
 /// filesystem.
 CaseDiff compare(const analyzers::FilesystemEntries& a, const analyzers::FilesystemEntries& b,
                  const analyzers::Survey& survey_a, const analyzers::Survey& survey_b,
+                 const artifacts::Collection& records_a, const artifacts::Collection& records_b,
                  const std::string& symbols_a, const std::string& symbols_b,
                  const DiffLimits& limits = {});
 

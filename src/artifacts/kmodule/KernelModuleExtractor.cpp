@@ -126,6 +126,10 @@ class KernelModuleExtractor final : public Extractor {
             if (dot != std::string::npos) mod.resize(dot);
         }
         a.fields["module"] = mod;
+        // A module is the same module in another case when it drives the same
+        // hardware, which is its name -- not its path, which carries the
+        // kernel release, and not its bytes, which change on every rebuild.
+        a.identity = mod;
         for (const auto& [key, field] : {std::pair{"description", "description"},
                                          {"license", "license"},
                                          {"author", "author"},

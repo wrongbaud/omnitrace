@@ -203,11 +203,33 @@ class CertificateExtractor final : public Extractor {
     }
 
    private:
+    /// Lowercase hex SHA-256 of the certificate's DER encoding -- the same
+    /// number `openssl x509 -fingerprint -sha256` prints, without the colons.
+    static std::string sha256_fingerprint(X509* cert) {
+        unsigned char md[EVP_MAX_MD_SIZE];
+        unsigned int len = 0;
+        if (X509_digest(cert, EVP_sha256(), md, &len) != 1 || len == 0) return {};
+        static const char* kHex = "0123456789abcdef";
+        std::string out;
+        out.reserve(static_cast<std::size_t>(len) * 2);
+        for (unsigned int i = 0; i < len; ++i) {
+            out += kHex[md[i] >> 4];
+            out += kHex[md[i] & 0x0F];
+        }
+        return out;
+    }
+
     static Artifact describe(const FileRef& file, X509* cert, unsigned& expired_pairs) {
         Artifact a;
         a.kind = "certificate";
         a.node = file.node;
         a.path = file.path;
+        // SHA-256 over the DER: the fingerprint an examiner compares by hand,
+        // and what says a certificate in another case is *this* certificate.
+        // The subject is not an identity -- a vendor reissues under the same
+        // CN -- and neither is the path.
+        a.identity = sha256_fingerprint(cert);
+        if (!a.identity.empty()) a.fields["fingerprint"] = a.identity;
         a.fields["subject"] = name_line(X509_get_subject_name(cert));
         a.fields["issuer"] = name_line(X509_get_issuer_name(cert));
         a.fields["not_before"] = time_iso(X509_get0_notBefore(cert));

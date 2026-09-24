@@ -232,6 +232,21 @@ built in, and one that can is missing them.
 Measured: the router-nand image decodes to **29,793 symbols** (`T=15300, t=14297,
 W=195, D=1`), 32-bit little-endian, loadable modules yes.
 
+## What identifies a record
+
+Every extractor sets `Artifact::identity`: what makes this record *the same
+record* in another case, within its kind. Only the extractor knows — a
+certificate's is the SHA-256 fingerprint of its DER (also reported as the
+`fingerprint` field, the number `openssl x509 -fingerprint -sha256` prints),
+a module's is its name, a kernel's is its build banner.
+
+It exists for `omnitrace diff` (`docs/DIFF.md`), and what it must *not* be is
+the path: a vendor moving `server.pem` has not issued a new certificate, and a
+module whose path carries a new kernel release is still the same driver.
+Neither can it be the subject, since a reissued certificate keeps one. Empty
+means the kind has no identity beyond where it was found, which is the honest
+answer for a private key whose material is deliberately never recorded.
+
 ## Known gaps
 
 * **One of three corpus kernels has no symbols to read**: the router image was

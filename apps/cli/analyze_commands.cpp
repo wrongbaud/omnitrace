@@ -34,13 +34,13 @@
 #include "omnitrace/core/Source.h"
 #include "omnitrace/core/Span.h"
 #include "omnitrace/core/Text.h"
+#include "omnitrace/diff/Diff.h"
 #include "omnitrace/discovery/Recurse.h"
 #include "omnitrace/discovery/Signature.h"
 #include "omnitrace/filesystems/Filesystem.h"
 #include "omnitrace/output/Markdown.h"
 #include "omnitrace/output/Yaml.h"
 #include "omnitrace/report/Document.h"
-#include "omnitrace/diff/Diff.h"
 #include "omnitrace/rules/Sweep.h"
 #include "report_document.h"
 
@@ -733,7 +733,7 @@ void run_report(const std::string& case_dir, const std::string& out_dir,
 void run_diff(const std::string& case_a, const std::string& case_b, const std::string& out_dir) {
     const auto load = [](const std::string& dir,
                          std::vector<std::pair<std::string, std::vector<EntryResult>>>& out,
-                         analyzers::Survey& survey) {
+                         analyzers::Survey& survey, artifacts::Collection& records) {
         std::error_code ec;
         if (!std::filesystem::exists(std::filesystem::path(dir) / "INFO.yaml", ec))
             fail("no INFO.yaml in '" + dir + "': not a case directory");
@@ -742,6 +742,10 @@ void run_diff(const std::string& case_a, const std::string& case_b, const std::s
         for (const Diagnostic& d : diags)
             if (d.severity == Severity::Warning) spdlog::warn("{}: {}", d.code, d.message);
         if (const Status st = analyzers::survey(out, survey); !st) fail(st.error);
+        // The extractors are re-run rather than read out of certificates.yaml:
+        // what a record *is* comes from parsing the file, and the file is
+        // still in the case.
+        if (const Status st = artifacts::collect(out, {}, records); !st) fail(st.error);
     };
 
     // Every symbol table a case holds, concatenated. A case with two kernels
@@ -766,15 +770,17 @@ void run_diff(const std::string& case_a, const std::string& case_b, const std::s
 
     std::vector<std::pair<std::string, std::vector<EntryResult>>> ea, eb;
     analyzers::Survey sa, sb;
-    load(case_a, ea, sa);
-    load(case_b, eb, sb);
+    artifacts::Collection ra, rb;
+    load(case_a, ea, sa, ra);
+    load(case_b, eb, sb, rb);
 
-    diff::CaseDiff d = diff::compare(ea, eb, sa, sb, read_symbols(case_a), read_symbols(case_b));
+    diff::CaseDiff d =
+        diff::compare(ea, eb, sa, sb, ra, rb, read_symbols(case_a), read_symbols(case_b));
     d.label_a = case_a;
     d.label_b = case_b;
 
-    const std::filesystem::path dest = out_dir.empty() ? std::filesystem::current_path()
-                                                       : std::filesystem::path(out_dir);
+    const std::filesystem::path dest =
+        out_dir.empty() ? std::filesystem::current_path() : std::filesystem::path(out_dir);
     if (!out_dir.empty()) {
         std::error_code ec;
         std::filesystem::create_directories(dest, ec);
@@ -783,8 +789,7 @@ void run_diff(const std::string& case_a, const std::string& case_b, const std::s
     write_text(dest / "diff.md", diff::to_markdown(d));
     write_text(dest / "diff.yaml", diff::to_yaml(d));
 
-    std::printf("files: %llu in A, %llu in B\n",
-                static_cast<unsigned long long>(d.files.files_a),
+    std::printf("files: %llu in A, %llu in B\n", static_cast<unsigned long long>(d.files.files_a),
                 static_cast<unsigned long long>(d.files.files_b));
     std::printf("same %llu, changed %llu, only in A %llu, only in B %llu, moved %llu\n",
                 static_cast<unsigned long long>(d.files.same),
@@ -792,8 +797,17 @@ void run_diff(const std::string& case_a, const std::string& case_b, const std::s
                 static_cast<unsigned long long>(d.files.removed_total),
                 static_cast<unsigned long long>(d.files.added_total),
                 static_cast<unsigned long long>(d.files.moved));
-    if (!d.platform.empty())
-        std::printf("platform facts that differ: %zu\n", d.platform.size());
+    if (!d.platform.empty()) std::printf("platform facts that differ: %zu\n", d.platform.size());
+    if (d.artifacts.records_a != 0 || d.artifacts.records_b != 0)
+        std::printf(
+            "parsed records: %llu in A, %llu in B; same %llu, changed %llu, only in A %llu, "
+            "only in B %llu\n",
+            static_cast<unsigned long long>(d.artifacts.records_a),
+            static_cast<unsigned long long>(d.artifacts.records_b),
+            static_cast<unsigned long long>(d.artifacts.same),
+            static_cast<unsigned long long>(d.artifacts.changed_total),
+            static_cast<unsigned long long>(d.artifacts.removed_total),
+            static_cast<unsigned long long>(d.artifacts.added_total));
     if (d.symbols.present_a || d.symbols.present_b)
         std::printf("kernel symbols: %llu shared, %llu only in A, %llu only in B\n",
                     static_cast<unsigned long long>(d.symbols.common),

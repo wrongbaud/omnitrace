@@ -119,6 +119,10 @@ class LinuxKernelExtractor final : public Extractor {
         a.path = file.path;
         a.fields["banner"] = banner.size() > 300 ? banner.substr(0, 300) : banner;
         a.fields["version"] = version;
+        // One kernel per image, and the banner is what distinguishes two of
+        // them: a case holding a boot image and its recovery twin has two
+        // records that differ only in what they were built from.
+        a.identity = banner.size() > 300 ? banner.substr(0, 300) : banner;
         const std::string cc = compiler_of(banner);
         if (!cc.empty()) a.fields["compiler"] = cc.size() > 200 ? cc.substr(0, 200) : cc;
 

@@ -51,6 +51,15 @@ struct Artifact {
     std::string kind;  ///< "certificate", "private-key", "dh-parameters", ...
     std::string node;  ///< Filesystem node the file came from.
     std::string path;  ///< Entry path inside that filesystem.
+    /// What makes this record *the same record* in another case, within its
+    /// kind: a certificate's fingerprint, a module's name, a kernel's version.
+    ///
+    /// The extractor sets it because only the extractor knows. Comparing two
+    /// cases needs an identity that survives the file moving and the node ids
+    /// changing (`docs/DIFF.md`), and the path is not one -- a vendor moving
+    /// `server.pem` has not issued a new certificate. Empty means the kind has
+    /// no identity beyond where it was found, and the path is used instead.
+    std::string identity;
     Severity severity = Severity::Info;
     std::map<std::string, std::string> fields;
 };
