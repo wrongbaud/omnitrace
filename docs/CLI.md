@@ -313,6 +313,31 @@ rather than a second opinion about it. A case with no `artifacts.yaml` simply
 has no such section; one whose `artifacts.yaml` is there and does not parse
 says so (`report-hits-unreadable`) instead of quietly dropping it.
 
+## `omnitrace diff <case-a> <case-b>`
+
+What changed between two finished cases — two units of the same model, or one
+device acquired twice. Both sides are read back from their case directories,
+so it works on evidence that is no longer attached, and neither case is
+modified. `--out DIR` places `diff.md` and `diff.yaml`; the default is the
+working directory.
+
+```
+omnitrace diff case-c100v1 case-c100v2
+```
+
+```
+files: 697 in A, 740 in B
+same 499, changed 182, only in A 5, only in B 48, moved 0
+platform facts that differ: 5
+```
+
+Files are compared by path *and* by content — a file that moved is one removal
+and one addition by path and neither by content — and nothing is matched on
+node id, which is assigned in discovery order and does not survive a byte
+changing earlier in the image. Kernel symbols are compared by name, since
+addresses move whenever anything is recompiled. `docs/DIFF.md` has the rules
+and the known gaps.
+
 ## Case identity
 
 `analyze` and `report` both take `--case-id`, `--examiner` and `--notes`.

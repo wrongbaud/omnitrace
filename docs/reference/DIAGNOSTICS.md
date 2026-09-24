@@ -17,7 +17,7 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 `INFO.yaml` uses). A code listed with two severities is emitted at both;
 `where` names every site, `message` is the literal with runtime parts as `...`.
 
-413 diagnostic codes, 76 status codes.
+415 diagnostic codes, 76 status codes.
 
 ## Diagnostics
 
@@ -89,6 +89,8 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 | `cramfs-unknown-flags` | info | `src/discovery/validators/cramfs.cpp:48` | flags ... are not defined by cramfs | flag bits outside the ones cramfs defines are set | informational; may be a vendor variant |
 | `cramfs-unsupported-flags` | warning | `src/filesystems/cramfs/CramfsReader.cpp:258` | EXT_BLOCK_POINTERS is set: block pointers carry uncompressed and direct-block bits this reader does not decode, so file contents may be wrong | the image sets EXT_BLOCK_POINTERS, whose high pointer bits this build does not decode | file contents may be wrong; compare against the vendor's tooling before relying on them |
 | `cramfs-v1-no-size` | info | `src/discovery/validators/cramfs.cpp:52` | FSID_VERSION_2 flag clear: size and fsid fields are not valid; size unknown | FSID_VERSION_2 is clear, so the size and fsid fields are not valid and the extent is unknown | old cramfs; carve manually if needed |
+| `diff-case-empty` | warning | `src/diff/Diff.cpp:102` | one case holds no extracted files (... and ...), so every difference below is an artefact of that rather than of the devices; check whether it was analysed with --no-extract | one of the two cases being compared holds no extracted files, so every difference reported is an artefact of the run rather than of the devices | check whether that case was analysed with --no-extract or had its files/ deleted; the comparison is not meaningful until both sides have contents |
+| `diff-symbols-one-sided` | info | `src/diff/Diff.cpp:228` | only one case has a kernel symbol table, so its symbols are counted rather than compared and are not listed: the other kernel may have been built without CONFIG_KALLSYMS, or not been found at all | only one of the two cases has a kernel symbol table, so its symbols are counted rather than compared and are not listed | the other kernel may have been built without CONFIG_KALLSYMS, or not been found at all; check that case's linux-kernel record before reading the counts as a difference |
 | `dtb-is-fit` | info | `src/discovery/validators/fit.cpp:128` | root has an /images node: this is a FIT image (see the fit finding) | the device tree has an /images node, so it is a FIT image; the fit finding at the same offset wins | informational; read the fit node |
 | `dtb-truncated` | warning | `src/discovery/validators/fit.cpp:109` | totalsize ... extends past the available data | totalsize extends past the available data; size clamped | the dump or partition is short |
 | `elf-extended-numbering` | info | `src/discovery/validators/elf.cpp:196` | header counts use the extended (section 0) numbering; tables not walked | header counts use the extended numbering (PN_XNUM / section 0); the tables were not walked | size may be understated; use readelf on the carved bytes |

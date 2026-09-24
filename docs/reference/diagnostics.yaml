@@ -349,6 +349,14 @@ dtb-truncated:
   meaning: totalsize extends past the available data; size clamped
   action: the dump or partition is short
 
+diff-case-empty:
+  meaning: one of the two cases being compared holds no extracted files, so every difference reported is an artefact of the run rather than of the devices
+  action: check whether that case was analysed with --no-extract or had its files/ deleted; the comparison is not meaningful until both sides have contents
+
+diff-symbols-one-sided:
+  meaning: only one of the two cases has a kernel symbol table, so its symbols are counted rather than compared and are not listed
+  action: the other kernel may have been built without CONFIG_KALLSYMS, or not been found at all; check that case's linux-kernel record before reading the counts as a difference
+
 elf-extended-numbering:
   meaning: header counts use the extended numbering (PN_XNUM / section 0); the tables were not walked
   action: size may be understated; use readelf on the carved bytes

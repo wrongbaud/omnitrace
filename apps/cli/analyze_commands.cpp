@@ -40,6 +40,7 @@
 #include "omnitrace/output/Markdown.h"
 #include "omnitrace/output/Yaml.h"
 #include "omnitrace/report/Document.h"
+#include "omnitrace/diff/Diff.h"
 #include "omnitrace/rules/Sweep.h"
 #include "report_document.h"
 
@@ -718,6 +719,92 @@ void run_report(const std::string& case_dir, const std::string& out_dir,
                  doc.sections.size(), dest.string());
 }
 
+// `omnitrace diff <a> <b>` — what changed between two finished cases.
+//
+// The question is "these are two units of the same model, what is different
+// about this one?". It is asked of cases rather than of images, so it works
+// months later on evidence that is no longer attached, and it spends the same
+// decoupling `report` does: both sides are read back with
+// `load_case_listings` and the analyzers re-run over the entries.
+//
+// Nothing is matched on node id. Those are assigned in discovery order and do
+// not survive a byte changing earlier in the image, so the same filesystem is
+// n000018 in one case and n000021 in the other.
+void run_diff(const std::string& case_a, const std::string& case_b, const std::string& out_dir) {
+    const auto load = [](const std::string& dir,
+                         std::vector<std::pair<std::string, std::vector<EntryResult>>>& out,
+                         analyzers::Survey& survey) {
+        std::error_code ec;
+        if (!std::filesystem::exists(std::filesystem::path(dir) / "INFO.yaml", ec))
+            fail("no INFO.yaml in '" + dir + "': not a case directory");
+        std::vector<Diagnostic> diags;
+        if (const Status st = output::load_case_listings(dir, out, diags); !st) fail(st.error);
+        for (const Diagnostic& d : diags)
+            if (d.severity == Severity::Warning) spdlog::warn("{}: {}", d.code, d.message);
+        if (const Status st = analyzers::survey(out, survey); !st) fail(st.error);
+    };
+
+    // Every symbol table a case holds, concatenated. A case with two kernels
+    // is compared as the union of what they contain, which is the honest
+    // answer to "does this unit have that driver" when neither case says
+    // which kernel is the one that boots.
+    const auto read_symbols = [](const std::string& dir) {
+        std::string all;
+        std::error_code ec;
+        const std::filesystem::path root = std::filesystem::path(dir) / "symbols";
+        if (!std::filesystem::is_directory(root, ec)) return all;
+        std::vector<std::filesystem::path> files;
+        for (const auto& e : std::filesystem::directory_iterator(root, ec))
+            if (e.is_regular_file()) files.push_back(e.path());
+        std::sort(files.begin(), files.end());  // deterministic
+        for (const std::filesystem::path& f : files) {
+            std::ifstream in(f, std::ios::binary);
+            all.append((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        }
+        return all;
+    };
+
+    std::vector<std::pair<std::string, std::vector<EntryResult>>> ea, eb;
+    analyzers::Survey sa, sb;
+    load(case_a, ea, sa);
+    load(case_b, eb, sb);
+
+    diff::CaseDiff d = diff::compare(ea, eb, sa, sb, read_symbols(case_a), read_symbols(case_b));
+    d.label_a = case_a;
+    d.label_b = case_b;
+
+    const std::filesystem::path dest = out_dir.empty() ? std::filesystem::current_path()
+                                                       : std::filesystem::path(out_dir);
+    if (!out_dir.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(dest, ec);
+        if (ec) fail("cannot create '" + out_dir + "': " + ec.message());
+    }
+    write_text(dest / "diff.md", diff::to_markdown(d));
+    write_text(dest / "diff.yaml", diff::to_yaml(d));
+
+    std::printf("files: %llu in A, %llu in B\n",
+                static_cast<unsigned long long>(d.files.files_a),
+                static_cast<unsigned long long>(d.files.files_b));
+    std::printf("same %llu, changed %llu, only in A %llu, only in B %llu, moved %llu\n",
+                static_cast<unsigned long long>(d.files.same),
+                static_cast<unsigned long long>(d.files.changed_total),
+                static_cast<unsigned long long>(d.files.removed_total),
+                static_cast<unsigned long long>(d.files.added_total),
+                static_cast<unsigned long long>(d.files.moved));
+    if (!d.platform.empty())
+        std::printf("platform facts that differ: %zu\n", d.platform.size());
+    if (d.symbols.present_a || d.symbols.present_b)
+        std::printf("kernel symbols: %llu shared, %llu only in A, %llu only in B\n",
+                    static_cast<unsigned long long>(d.symbols.common),
+                    static_cast<unsigned long long>(d.symbols.only_a_total),
+                    static_cast<unsigned long long>(d.symbols.only_b_total));
+    if (d.identical()) std::printf("the two cases are the same in every way this compares\n");
+    for (const Diagnostic& g : d.diagnostics)
+        spdlog::warn("{}: {}", g.code, sanitize_utf8(g.message));
+    std::printf("written: %s/diff.md and diff.yaml\n", dest.string().c_str());
+}
+
 }  // namespace
 
 void register_analyze_commands(CLI::App& app) {
@@ -743,6 +830,21 @@ void register_analyze_commands(CLI::App& app) {
     rep->add_option("--notes", rep_case->notes, "Free text carried into the report header")
         ->group("Case");
     rep->callback([case_dir, rep_out, rep_case]() { run_report(*case_dir, *rep_out, *rep_case); });
+
+    auto* dif = app.add_subcommand("diff", "Compare two finished case directories");
+    auto diff_a = std::make_shared<std::string>();
+    auto diff_b = std::make_shared<std::string>();
+    auto diff_out = std::make_shared<std::string>();
+    dif->add_option("case-a", *diff_a, "The first case directory")
+        ->required()
+        ->check(CLI::ExistingDirectory);
+    dif->add_option("case-b", *diff_b, "The second case directory")
+        ->required()
+        ->check(CLI::ExistingDirectory);
+    dif->add_option("--out", *diff_out,
+                    "Directory to write diff.md and diff.yaml to (default: the working "
+                    "directory). Neither case is modified");
+    dif->callback([diff_a, diff_b, diff_out]() { run_diff(*diff_a, *diff_b, *diff_out); });
 
     auto scan_args = std::make_shared<std::pair<std::string, bool>>();
     auto* scan = app.add_subcommand("scan", "Find format signatures in an image");

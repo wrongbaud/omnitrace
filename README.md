@@ -70,8 +70,11 @@ The coverage table is the honest part: a format the scanner recognises but canno
 - `platform.yaml` / `.md`: what each filesystem says about itself — OpenWrt 18.06.1, ramips/mt76x8, seven accounts, root with an empty password ([docs/ANALYZERS.md](docs/ANALYZERS.md)).
 - `artifacts.yaml` / `.md`: search-pack hits, and `certificates.yaml` / `.md`: files a parser recognised, with what they are for and when they expire ([docs/RULES.md](docs/RULES.md), [docs/ARTIFACTS.md](docs/ARTIFACTS.md)).
 - `report.html` / `report.md`: the case as a report — evidence and its integrity, structure, platforms, artifacts, hits, coverage, diagnostics ([docs/REPORT.md](docs/REPORT.md)).
+- `symbols/<node>-<entry>.txt`: one `nm`-format table per kernel image whose symbols were decoded ([docs/ARTIFACTS.md](docs/ARTIFACTS.md)).
 
 `omnitrace report <case>` re-examines a finished case later: it reads the listings back, re-hashes the evidence against what the case recorded, and runs the analyzers and extractors again without re-scanning the image. A case that has been copied to another machine still works.
+
+`omnitrace diff <case-a> <case-b>` compares two of them — two units of the same model, or one device acquired twice — by path and by content, never by node id. On the two camera firmware releases in the corpus it reports 182 files changed and a telnet daemon in the newer one that the older does not ship ([docs/DIFF.md](docs/DIFF.md)).
 
 The full contract is [docs/CASE_LAYOUT.md](docs/CASE_LAYOUT.md); the commands and flags are in [docs/CLI.md](docs/CLI.md).
 
