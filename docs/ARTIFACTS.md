@@ -68,8 +68,59 @@ What the corpus holds, all of it found by this extractor:
 | router-nand | `etc/nginx/cert.key` — the web server's private key |
 | camera-1 | `etc/vendor_mgmt/priv-key.pem` — RSA, **1024 bits** |
 
+## kmodule
+
+A Linux kernel module is an ELF relocatable object carrying a `.modinfo`
+section of NUL-separated `key=value` records. That section is where a driver
+states what hardware it is for, who wrote it, what licence it ships under and
+which kernel it was built against, and it is the only place any of that is
+written down.
+
+This is the division of labour with the Linux analyzer, which also looks at
+modules (`docs/ANALYZERS.md`). The analyzer answers *how many drivers and what
+are they called* from the paths alone, and reads one `vermagic` to corroborate
+the kernel release it took from the directory name. It stops there on purpose:
+an analyzer that opened two hundred files to describe a platform would be
+doing an extractor's job. This opens all of them.
+
+| field | from |
+|---|---|
+| `module` | `name=`, or the file name, which is what modprobe would use |
+| `description`, `author`, `license`, `depends`, `vermagic`, `firmware`, `srcversion` | the matching `.modinfo` record |
+| `arch` | the ELF header's `e_machine`, so it is there even when the module carries no vermagic |
+| `aliases`, `parameters` | **counts** of the repeating `alias=` and `parm=` records |
+
+`alias` is how the kernel matches a module to hardware and a wireless driver
+carries hundreds of them; a table of every alias is not a report, so they are
+counted. The count is still a rough measure of how much a driver claims to
+drive.
+
+Two things are worth a diagnostic:
+
+* `kmodule-vermagic-path-mismatch` — a module built for one kernel and
+  installed under another **cannot load**. The platform report says a
+  filesystem has the problem; this names the module, which is what an examiner
+  needs to act on it.
+* `kmodule-proprietary-license` — a licence that is not GPL, BSD, MIT or dual
+  means the source was never published. The router-nand image has four
+  (`ae_wan`, `eth`, `hw_nat`, `mt_wifi` — MediaTek's radio, switch and
+  NAT-offload drivers), on a router whose firmware is otherwise GPL.
+
+Measured across the corpus: 207 modules on the router image, 174 on router-nand,
+116 on router-wrt, 14 on the camera v1.
+
 ## Known gaps
 
+* **Compressed modules are not parsed by name.** `.ko.gz`, `.ko.xz` and
+  `.ko.zst` are modules but are not ELF until something decompresses them.
+  Nested analysis does decompress them, and the payload reaches this extractor
+  on its own; what is lost is the original path, so such a record names the
+  payload rather than `lib/modules/…`. No corpus image ships compressed
+  modules.
+* **Built-in drivers are invisible.** A driver compiled into the kernel rather
+  than built as a module has no `.ko` and no `.modinfo`; `modules.builtin`
+  lists them by name and is not read yet. A system with no `lib/modules` at
+  all is usually this, not a system with no drivers.
 * **DER, PKCS#12 and JKS are not read.** Only PEM. A binary certificate store
   is passed over silently, which is why `applies()` also accepts a `.crt` or
   `.cer` by extension and reports `artifact-certificate-unparsable` when it

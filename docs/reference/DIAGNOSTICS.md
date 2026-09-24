@@ -17,7 +17,7 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 `INFO.yaml` uses). A code listed with two severities is emitted at both;
 `where` names every site, `message` is the literal with runtime parts as `...`.
 
-408 diagnostic codes, 76 status codes.
+410 diagnostic codes, 76 status codes.
 
 ## Diagnostics
 
@@ -199,6 +199,8 @@ Severity is the value as emitted (`info` / `warning` / `error`, the names
 | `jffs2-truncated` | warning | `src/discovery/validators/jffs2.cpp:246` | last node extends past the end of the data | the last node's totlen runs past the data | the dump or partition is short |
 | `jffs2-unknown-nodetype` | info | `src/discovery/validators/jffs2.cpp:268`, `src/filesystems/jffs2/Jffs2Reader.cpp:779` | ... node(s) with a nodetype this scanner does not know | nodes with a type this scanner does not know were counted | informational; may be xattr, summary or vendor nodes |
 | `jffs2-unsupported-compression` | warning | `src/filesystems/jffs2/Jffs2Reader.cpp:999`, `src/filesystems/jffs2/Jffs2Reader.cpp:1810` | (assigned to `code`; emitted at src/filesystems/jffs2/Jffs2Reader.cpp:1075) | data nodes compressed with rubinmips or dynrubin, which this reader does not decode; ranges zero-filled, entries marked truncated | rare mkfs.jffs2 -X modes; mount the carved copy on Linux to read them |
+| `kmodule-proprietary-license` | info | `src/artifacts/kmodule/KernelModuleExtractor.cpp:155` | '...' is licensed '...': a binary-only driver, so its source is not public | a kernel module declares a licence that is not GPL, BSD, MIT or dual, so it is a binary-only driver | informational; the source was never published, so what the driver does to the hardware cannot be read. Vendor radio, NAT-offload and switch drivers are the usual ones |
+| `kmodule-vermagic-path-mismatch` | warning | `src/artifacts/kmodule/KernelModuleExtractor.cpp:169` | '...' was built for kernel ... but is installed under ...; it cannot load there | a module's vermagic names a different kernel release than the lib/modules directory holding it | that module cannot load on the kernel it is installed under; check whether an update was applied partially. The platform report says a filesystem has the problem, this names which module |
 | `luks-bad-hdr-size` | warning | `src/discovery/validators/luks.cpp:167` | hdr_size ... is not a power of two in 16 KiB..4 MiB | LUKS2 hdr_size is not a power of two in 16 KiB..4 MiB | magic-tier hit; not a usable LUKS2 header |
 | `luks-bad-header` | warning | `src/discovery/validators/luks.cpp:84`, `src/discovery/validators/luks.cpp:94`, `src/discovery/validators/luks.cpp:163` | cipher, mode, hash or uuid field is not a printable token | a cipher, mode, hash, uuid, checksum or label field is not a printable token | magic-tier hit; probably not a LUKS header |
 | `luks-bad-json` | warning | `src/discovery/validators/luks.cpp:219` | JSON area does not start with '{' or lacks keyslots/segments | the LUKS2 JSON area does not start with { or lacks keyslots/segments | header damaged; cryptsetup luksDump will confirm |

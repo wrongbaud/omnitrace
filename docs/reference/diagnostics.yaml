@@ -1033,6 +1033,14 @@ platform-manifest-unreadable:
   meaning: a build manifest file is present but could not be read as a flat JSON document
   action: informational; the rest of the report is unaffected. Open the named file - it may be a format this build does not know, or deeper than the parser's limit
 
+kmodule-proprietary-license:
+  meaning: a kernel module declares a licence that is not GPL, BSD, MIT or dual, so it is a binary-only driver
+  action: informational; the source was never published, so what the driver does to the hardware cannot be read. Vendor radio, NAT-offload and switch drivers are the usual ones
+
+kmodule-vermagic-path-mismatch:
+  meaning: a module's vermagic names a different kernel release than the lib/modules directory holding it
+  action: that module cannot load on the kernel it is installed under; check whether an update was applied partially. The platform report says a filesystem has the problem, this names which module
+
 platform-linux-kernel-mismatch:
   meaning: a kernel module's vermagic names a different kernel release than the lib/modules directory it is installed under
   action: modules that disagree with their kernel do not load; on a device this usually means a partial or mismatched vendor update, so check which kernel actually boots
