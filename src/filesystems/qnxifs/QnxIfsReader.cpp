@@ -652,6 +652,7 @@ void QnxIfsReader::Impl::emit_regular(FileMeta meta, std::uint64_t off, std::uin
         if (r.meta.path.empty()) return;
     }
     if (truncated) r.truncated = true;
+    if (r.truncated) w.out->truncated = true;
     for (Diagnostic& d : diags) r.diagnostics.push_back(std::move(d));
     w.out->bytes += r.digests.bytes;
     count_entry(*w.out, r.meta);

@@ -633,6 +633,7 @@ void FatReader::Impl::emit_file(const Entry& e, const std::string& path, Walk& w
     }
     std::uint64_t left = e.size;
     bool short_read = false;
+    bool limited = false;
     for (const std::uint32_t c : cl) {
         if (left == 0) break;
         const std::uint64_t n = std::min<std::uint64_t>(left, cluster_bytes);
@@ -643,6 +644,7 @@ void FatReader::Impl::emit_file(const Entry& e, const std::string& path, Walk& w
         }
         if (const Status s = w.sink->write(*raw); !s) {
             // A limit is the Sink's to report; it already kept the prefix.
+            limited = true;
             break;
         }
         left -= n;
@@ -650,13 +652,20 @@ void FatReader::Impl::emit_file(const Entry& e, const std::string& path, Walk& w
     EntryResult r;
     if (const Status s = w.sink->end_file(r); !s) {
         diag(*w.out, Severity::Warning, kCodeSinkError, "'" + path + "': " + s.error);
-        return;
+        // The sink may still have produced a (truncated) result; keep it if it
+        // names the entry, or the bytes on disk have nothing in the listing.
+        if (r.meta.path.empty()) return;
     }
-    if (short_read || left != 0) {
+    if (limited) {
+        // The chain was fine; a Sink limit stopped the copy. Saying it "ran
+        // out" would send an examiner looking for corruption that is not there.
+        r.truncated = true;
+    } else if (short_read || left != 0) {
         r.truncated = true;
         diag(*w.out, Severity::Warning, kCodeShortRead,
              "'" + path + "': the chain ran out " + dec(left) + " bytes before the recorded size");
     }
+    if (r.truncated) w.out->truncated = true;
     w.out->bytes += e.size - left;
     w.out->entries_out.push_back(std::move(r));
     ++w.out->entries;
@@ -719,7 +728,8 @@ void FatReader::Impl::emit_deleted(const Entry& e, const std::string& path, Walk
     EntryResult r;
     if (const Status s = w.sink->end_file(r); !s) {
         diag(*w.out, Severity::Warning, kCodeSinkError, "'" + path + "': " + s.error);
-        return;
+        // Keep a result the sink still named: see emit_recovered above.
+        if (r.meta.path.empty()) return;
     }
     if (e.size > cluster_bytes) {
         diag(*w.out, Severity::Info, kCodeDeletedFragmented,
@@ -729,6 +739,7 @@ void FatReader::Impl::emit_deleted(const Entry& e, const std::string& path, Walk
                  "after the first cluster are only correct if it was never fragmented");
     }
     if (left != 0) r.truncated = true;
+    if (r.truncated) w.out->truncated = true;
     w.out->bytes += e.size - left;
     w.out->entries_out.push_back(std::move(r));
     ++w.out->entries;

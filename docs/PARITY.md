@@ -11,7 +11,7 @@ up to a 15.7 GB eMMC — counting distinct regular-file contents by sha256:
 |---|---:|---:|---:|---|
 | **moria** 0.2.1 | **99.9 %** | 98.7 % | 31 / 32 | **criterion met** |
 | **ground truth** (`expected.yaml`) | **100.0 %** | 100.0 % | 19 / 19 | every file of every fixture |
-| **unblob** 26.6.4 | **99.5 %** | 96.4 % | 26 / 32 | **criterion met** |
+| **unblob** 26.6.4 | **99.5 %** | 96.8 % | 26 / 32 | **criterion met** |
 | binwalk 3.1.0 | 16.0 % | 66.8 % | 9 / 17 | not a like-for-like baseline (§6) |
 
 The unblob figure was **65.7 %** when this was first measured, and ground
@@ -227,28 +227,94 @@ still a useful cross-check.
 
 ### 7. A ratio needs a denominator: the QNX unit
 
-The 15.7 GB QNX infotainment image is the worst score in the set — **50.0 % of
+The 15.7 GB QNX infotainment image is the worst score in the set — **62.5 % of
 unblob, 63.6 % of moria** — and it is the one number here that should not be
 read as a score at all.
 
 | tool | distinct regular-file contents |
 |---|---:|
-| **OmniTrace** | **23,833** |
+| **OmniTrace** | **62,352** |
 | moria 0.2.1 | 11 |
 | unblob 26.6.4 | 8 |
 
 Neither baseline reads QNX6 or QNX-IFS, so neither gets into the filesystems
-that hold the unit's 31,454 files; what they recover is a handful of
-compressed streams they found by scanning raw bytes. "50 % of unblob" means
-four of unblob's eight, and it is arithmetic on a denominator of eight.
+that hold the unit's 105,645 files; what they recover is a handful of
+compressed streams they found by scanning raw bytes. "62.5 % of unblob" means
+five of unblob's eight, and it is arithmetic on a denominator of eight.
 
-The four are real, though, and worth naming: three gzip payloads and one LZMA
-payload that unblob and moria decompress out of the middle of the QNX
-filesystems (unblob finds them at raw offsets around 6 GB). OmniTrace reads
-those filesystems properly and extracts the files, but does not appear to
-decompress these particular streams. That is a small, specific gap in the
-nested pass rather than a missing reader, and it is the one thing this image
-says to look at.
+#### The gap that was hiding behind those streams
+
+The missing contents were first read as a decompression gap — OmniTrace
+extracted the filesystems but "did not appear to decompress these particular
+streams". **That diagnosis was wrong**, and how it was wrong is the useful
+part.
+
+`--max-file-bytes` defaulted to a flat 1 GiB, and this image holds two
+1054 MiB SquashFS images (`app.img` and `os_a.img`) stored as ordinary files
+inside its QNX6 filesystem. Both were cut at exactly 1,073,741,824 bytes. A
+SquashFS keeps the tables naming its contents at the *end*, so a truncated
+copy is not a partial filesystem — it is no filesystem at all. Both walked to
+**zero files**, and everything inside them went with them.
+
+Nothing said so out loud. The cap is a `Limits` field with a warning behind
+it and the warning fired, but what an examiner saw downstream was two
+SquashFS nodes reporting `entries=0 files=0`, which reads like an empty
+filesystem rather than a decapitated one.
+
+The cap now tracks the evidence the way `--max-bytes` already did
+(`core/Limits.h`): the default is the larger of 1 GiB and the image size,
+because **a stored entry cannot be larger than the image that holds it**, so
+any cap below the image size can only ever cut real content. The bomb guard
+this appears to loosen was never this field's job — a stored entry's size is
+known from its metadata before a byte is written, and a *decompressed* entry,
+whose size is not, is bounded by `max_decompress_ratio` instead (widest real
+expansion measured across the corpus: 32x, against a 1000x cap).
+
+The same command with no flags now recovers **62,352** contents where it
+recovered 23,833, and **105,645** files where it recovered 31,454 — and one
+more of unblob's eight streams, which is the whole of the 50.0 % → 62.5 %
+move. The cost of a cap that does not track the evidence was about two thirds
+of this image.
+
+#### A truncated entry that was not an entry
+
+Reproducing that cap on a fixture turned up a worse defect standing behind
+it. A tar holding a 319 KiB SquashFS, analysed with `--max-file-bytes
+200000`, left a 200,000-byte file in the case directory while its
+`listing.yaml` said `entries: []` and the manifest said `files=0`.
+
+`emit_span_file` closed the cut entry correctly and filled in an
+`EntryResult` — host path, digests over the bytes that landed, `truncated`
+set — and then returned the failed write Status. Every container reader
+follows "a refusal applies to that entry only: record the Status and
+continue", so all eight of them dropped it. `Sink::file` had the same shape,
+and so did the cramfs and FAT readers.
+
+A file in a case directory that the listing does not name has no hash, no
+source offset and no provenance, which is the one thing a forensic output may
+not produce. The rule is now stated in `Sink.h`: **only `begin_file` can
+refuse an entry outright.** Once it succeeds, bytes may already be on disk, so
+a limit tripping mid-`write` is not a reason to skip the entry. A cut entry is
+counted, listed with digests over what was recovered, marked `truncated`,
+carries the `sink-limit-*` diagnostic naming the cap — and is descended into,
+which is what turns a lost subtree into a partial one.
+
+#### What the remaining streams actually are
+
+Four gzip payloads moria finds (raw offsets 0x1E803000, 0x1E814000,
+0x26923000, 0x34CEE000) and three unblob finds decompress to QNX **slog
+device logs**. They are not a decompression gap either: all seven sit inside
+GPT partition 9 `storage`, which is one 15.2 GB QNX6 filesystem, and none of
+their bytes belong to any live file in it — a search of all 7,359 extracted
+files for the first stream's header finds nothing.
+
+They are **unallocated space**. The baselines find them because they scan raw
+bytes and do not care what owns them; OmniTrace walks the filesystem and sees
+only what its metadata still points at. Recovering them is free-space carving
+inside a filesystem, which is a capability this tool does not have yet rather
+than a bug in one it does — and, since they are deleted device logs, a
+capability squarely inside what Phase 2 is for. That is the honest name for
+what this image still says to look at.
 
 The same shape, less extremely, is why the per-image **mean** is reported
 beside the pooled figure. Pooling weights an image by how much is in it, which
@@ -268,13 +334,16 @@ image alike, which is what catches an image going wrong.
 exact, every named format gap is closed, the one open decision is made, and
 every image in the corpus has been measured.** The criterion is closed.
 
-What is left is 153 contents out of 32,467. Of the six images below 95 % of
+What is left is 152 contents out of 32,467. Of the six images below 95 % of
 unblob, three are the history fixtures of §5, where unblob's jefferson
 resurrects deleted nodes into the live tree and OmniTrace records them as
 deleted — all **100 % of ground truth**; one is `ubi.img` for the same
 reason; one is the dongle dongle at 91.6 %, the remainder of §3's carving
 difference; and one is the QNX unit of §7, where the denominator is eight.
 
-The only thing in that list that names work to do is §7's four compressed
-streams: three gzip and one LZMA payload that both baselines decompress out of
-the middle of the QNX filesystems and OmniTrace does not.
+The only thing in that list that names work to do is §7's remaining compressed
+streams, and §7 now says what they are: gzipped QNX device logs sitting in the
+**unallocated space** of a 15.2 GB QNX6 filesystem, which both baselines reach
+by scanning raw bytes and OmniTrace does not reach at all, because it walks the
+filesystem's metadata. Free-space carving inside a filesystem is the capability
+that would close it.

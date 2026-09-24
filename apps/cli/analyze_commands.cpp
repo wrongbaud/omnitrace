@@ -729,16 +729,25 @@ void register_analyze_commands(CLI::App& app) {
                          "Extraction budget as a multiple of the image size; 0 uses --max-bytes "
                          "exactly, which is also what passing --max-bytes alone does")
             ->capture_default_str();
-    analyze->parse_complete_callback([args, max_bytes, ratio]() {
+    // Given explicitly, --max-file-bytes is the cap exactly: clearing the
+    // ratio stops analyze() raising it to the image size (core/Limits.h).
+    CLI::Option* max_file_bytes =
+        analyze
+            ->add_option("--max-file-bytes", args->limits.max_file_bytes,
+                         "Largest single extracted entry (bytes; suffixes K/M/G/T are "
+                         "1024-based); a larger entry is cut there with a "
+                         "<fmt>-limit-file-bytes warning. The default is the larger of this "
+                         "and the image size, since a stored entry cannot exceed the image "
+                         "that holds it")
+            ->transform(CLI::AsSizeValue(false))
+            ->capture_default_str();
+    analyze->parse_complete_callback([args, max_bytes, ratio, max_file_bytes]() {
         // --max-bytes alone means "that budget, exactly". Given both, the
         // examiner said what they wanted twice and both are honoured.
         if (max_bytes->count() > 0 && ratio->count() == 0) args->limits.max_bytes_ratio = 0;
+        // Same for one entry; there is no --max-file-bytes-ratio to combine
+        // with, so naming the cap always means it exactly.
+        if (max_file_bytes->count() > 0) args->limits.max_file_bytes_ratio = 0;
     });
-    analyze
-        ->add_option("--max-file-bytes", args->limits.max_file_bytes,
-                     "Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a "
-                     "larger entry is cut there with a <fmt>-limit-file-bytes warning")
-        ->transform(CLI::AsSizeValue(false))
-        ->capture_default_str();
     analyze->callback([args] { cmd_analyze(*args); });
 }

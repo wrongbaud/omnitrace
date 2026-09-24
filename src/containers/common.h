@@ -32,7 +32,11 @@ inline Status emit_span_file(Sink& sink, const WalkOptions& opts, const FileMeta
                              const Span& span, std::uint64_t off, std::uint64_t len,
                              EntryResult& out, bool& short_read) {
     short_read = false;
+    // A refused `begin_file` is the one failure with no entry behind it:
+    // nothing was opened and nothing landed, so there is nothing to report but
+    // the Status.
     if (Status st = sink.begin_file(meta); !st) return st;
+    bool limited = false;
     if (opts.extract_data && len != 0) {
         std::vector<std::uint8_t> buf(
             static_cast<std::size_t>(std::min<std::uint64_t>(kCopyChunk, len)));
@@ -40,19 +44,15 @@ inline Status emit_span_file(Sink& sink, const WalkOptions& opts, const FileMeta
         while (done < len) {
             const std::size_t want =
                 static_cast<std::size_t>(std::min<std::uint64_t>(buf.size(), len - done));
-            const std::size_t got = span.read(off + done, std::span<std::uint8_t>(buf.data(), want));
+            const std::size_t got =
+                span.read(off + done, std::span<std::uint8_t>(buf.data(), want));
             if (got == 0) {
                 short_read = true;
                 break;
             }
             if (Status st = sink.write(std::span<const std::uint8_t>(buf.data(), got)); !st) {
-                // A tripped Sink limit still closes the entry, so the listing
-                // shows what was recovered (Sink.h).
-                EntryResult partial;
-                static_cast<void>(sink.end_file(partial));
-                out = std::move(partial);
-                out.truncated = true;
-                return st;
+                limited = true;
+                break;
             }
             done += got;
             if (got < want) {
@@ -61,7 +61,17 @@ inline Status emit_span_file(Sink& sink, const WalkOptions& opts, const FileMeta
             }
         }
     }
-    return sink.end_file(out);
+    // A tripped Sink limit still closes the entry (Sink.h), and the bytes that
+    // landed are on the disk whether or not the caller hears about it. So this
+    // returns *success*: `out` names a real file, and a caller that treats a
+    // failed Status as "skip this entry" -- which every one of them did --
+    // leaves the case directory holding a file the listing does not mention.
+    // The Sink has already attached its own `sink-limit-*` diagnostic to the
+    // entry and set `truncated`, so nothing is lost by saying the entry
+    // happened; `count_entry` carries the flag up to the WalkResult.
+    const Status st = sink.end_file(out);
+    if (limited) out.truncated = true;
+    return st;
 }
 
 /// Count one emitted entry into `out`, by kind.
@@ -82,6 +92,7 @@ inline void count_entry(WalkResult& out, const EntryResult& r) {
             break;
     }
     out.bytes += r.digests.bytes != 0 ? r.digests.bytes : r.meta.size;
+    if (r.truncated) out.truncated = true;
 }
 
 }  // namespace omnitrace::container

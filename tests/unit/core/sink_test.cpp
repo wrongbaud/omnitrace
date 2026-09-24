@@ -463,11 +463,13 @@ TEST(DiskSink, LimitMaxFileBytesTruncates) {
     EXPECT_EQ(r.digests.sha256, Hasher::of(bytes_of("abcd")).sha256);
     EXPECT_EQ(sink->bytes_emitted(), 4u);
 
-    // Sink::file reports the limit but still hands back the result.
+    // Sink::file *succeeds*: the prefix it accepted is on the disk, so the
+    // caller has to record the entry or the case directory holds a file the
+    // listing never names. The limit is reported on the result.
     s = sink->file(regular("u"), bytes_of("0123456789"), r);
-    EXPECT_FALSE(s.ok);
-    EXPECT_TRUE(starts_with(s.error, "sink-limit-file-bytes")) << s.error;
+    EXPECT_TRUE(s.ok) << s.error;
     EXPECT_TRUE(r.truncated);
+    EXPECT_TRUE(has_code(r.diagnostics, "sink-limit-file-bytes"));
     EXPECT_EQ(slurp(r.host_path), "0123");
 }
 
@@ -479,14 +481,16 @@ TEST(DiskSink, LimitMaxBytesAcrossFiles) {
     EntryResult r;
     ASSERT_TRUE(sink->file(regular("a"), bytes_of("1234"), r).ok);
     Status s = sink->file(regular("b"), bytes_of("5678"), r);
-    EXPECT_FALSE(s.ok);
-    EXPECT_TRUE(starts_with(s.error, "sink-limit-bytes")) << s.error;
+    EXPECT_TRUE(s.ok) << s.error;
     EXPECT_TRUE(r.truncated);
+    EXPECT_TRUE(has_code(r.diagnostics, "sink-limit-bytes"));
     EXPECT_EQ(slurp(r.host_path), "56");
     EXPECT_EQ(sink->bytes_emitted(), 6u);
-    // Further data is refused outright; zero-length files still succeed.
+    // Past the budget an entry still lands, empty and marked truncated: it
+    // names a file that was there, which is what a listing is for.
     s = sink->file(regular("c"), bytes_of("9"), r);
-    EXPECT_TRUE(starts_with(s.error, "sink-limit-bytes")) << s.error;
+    EXPECT_TRUE(s.ok) << s.error;
+    EXPECT_TRUE(r.truncated);
     EXPECT_EQ(slurp(r.host_path), "");
     EXPECT_TRUE(sink->file(regular("empty"), {}, r).ok);
     EXPECT_FALSE(r.truncated);
@@ -841,7 +845,8 @@ TEST(ListingSink, RefusesUnsafePathsAndEnforcesLimits) {
     ASSERT_TRUE(sink.file(regular("CON"), bytes_of(""), r).ok);  // legal; listing keeps it
     EXPECT_EQ(r.meta.path, "CON");
     s = sink.file(regular("big"), bytes_of("abcdef"), r);
-    EXPECT_TRUE(starts_with(s.error, "sink-limit-file-bytes")) << s.error;
+    EXPECT_TRUE(s.ok) << s.error;
+    EXPECT_TRUE(has_code(r.diagnostics, "sink-limit-file-bytes"));
     EXPECT_TRUE(r.truncated);
     EXPECT_EQ(r.digests.sha256, Hasher::of(bytes_of("abc")).sha256);
     EXPECT_EQ(r.digests.bytes, 3u);
@@ -865,7 +870,7 @@ TEST(ListingSink, MaxBytesTotal) {
     EntryResult r;
     ASSERT_TRUE(sink.file(regular("a"), bytes_of("123"), r).ok);
     const Status s = sink.file(regular("b"), bytes_of("456"), r);
-    EXPECT_TRUE(starts_with(s.error, "sink-limit-bytes")) << s.error;
+    EXPECT_TRUE(s.ok) << s.error;
     EXPECT_TRUE(r.truncated);
     EXPECT_TRUE(has_code(r.diagnostics, "sink-limit-bytes"));
     EXPECT_EQ(sink.bytes_emitted(), 5u);

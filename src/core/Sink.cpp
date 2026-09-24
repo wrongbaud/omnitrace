@@ -276,13 +276,18 @@ Status check_file_count(const Limits& lim, std::uint64_t files_so_far) {
 
 Status Sink::file(const FileMeta& meta, std::span<const std::uint8_t> data, EntryResult& out) {
     Status s = begin_file(meta);
-    if (!s) return s;
-    // A limit tripping mid-write still leaves a (truncated) entry to finish and
-    // report; end_file runs regardless so the caller gets the EntryResult.
-    Status w = write(data);
-    Status e = end_file(out);
-    if (!e) return e;
-    return w;
+    if (!s) return s;  // nothing opened; there is no entry to report
+    // A limit tripping mid-write still leaves a (truncated) entry to finish
+    // and report; end_file runs regardless so the caller gets the EntryResult.
+    //
+    // The write's Status is deliberately *not* returned. The bytes it did
+    // accept are on the disk, and every caller treats a failed Status as
+    // "skip this entry" -- which would leave the case directory holding a file
+    // the listing never names. `out.truncated` and the `sink-limit-*`
+    // diagnostic end_file attached say what happened without denying that it
+    // happened at all.
+    static_cast<void>(write(data));
+    return end_file(out);
 }
 
 // ---------------------------------------------------------------------------

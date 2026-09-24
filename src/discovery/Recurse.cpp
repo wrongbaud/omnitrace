@@ -1714,16 +1714,32 @@ std::uint64_t extraction_budget(const Limits& lim, std::uint64_t image_size) {
     return std::max(lim.max_bytes, scaled);
 }
 
+// The same rule for one entry (`core/Limits.h`). A *stored* entry cannot be
+// larger than the image that holds it, so the image size is the tightest cap
+// that never cuts legitimate content -- and a cut here is not a partial
+// recovery when the entry is itself a filesystem image, because the tables
+// that name its contents live at its end.
+std::uint64_t entry_budget(const Limits& lim, std::uint64_t image_size) {
+    if (lim.max_file_bytes_ratio == 0) return lim.max_file_bytes;  // set exactly; do not raise
+    const std::uint64_t scaled =
+        image_size > std::numeric_limits<std::uint64_t>::max() / lim.max_file_bytes_ratio
+            ? std::numeric_limits<std::uint64_t>::max()
+            : image_size * lim.max_file_bytes_ratio;
+    return std::max(lim.max_file_bytes, scaled);
+}
+
 Status analyze(const std::shared_ptr<const Source>& image, const std::string& evidence_path,
                const AnalyzeOptions& opts, Manifest& out, Listings& listings) {
     if (!image) return Status::fail("analyze-no-image: image source is null");
     if (opts.extract && opts.out_dir.empty())
         return Status::fail("analyze-no-out-dir: extraction needs out_dir");
 
-    // Size the extraction budget to the evidence before any walk reads it.
-    // `scaled` is a local the Ctx below borrows, so it has to outlive the run.
+    // Size the extraction budgets -- the run's and one entry's -- to the
+    // evidence before any walk reads it. `scaled` is a local the Ctx below
+    // borrows, so it has to outlive the run.
     AnalyzeOptions scaled = opts;
     scaled.limits.max_bytes = extraction_budget(opts.limits, image->size());
+    scaled.limits.max_file_bytes = entry_budget(opts.limits, image->size());
 
     // ...then to the disk, which is the harder limit of the two. Reported
     // before anything is written, because an examiner choosing a budget wants

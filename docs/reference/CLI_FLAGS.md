@@ -30,7 +30,7 @@ extracted from the CLI11 `add_option` / `add_flag` calls in `apps/cli/*.cpp`
 | `analyze` | `--max-files` | option | Entries per run | - | `500000` | `apps/cli/analyze_commands.cpp:715` |
 | `analyze` | `--max-bytes` | option | Total bytes written per run; the default is the larger of this and --max-bytes-ratio x the image, so it tracks the evidence | AsSizeValue | `4294967296` | `apps/cli/analyze_commands.cpp:719` |
 | `analyze` | `--max-bytes-ratio` | option | Extraction budget as a multiple of the image size; 0 uses --max-bytes exactly, which is also what passing --max-bytes alone does | - | `4` | `apps/cli/analyze_commands.cpp:726` |
-| `analyze` | `--max-file-bytes` | option | Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a larger entry is cut there with a <fmt>-limit-file-bytes warning | AsSizeValue | `1073741824` | `apps/cli/analyze_commands.cpp:737` |
+| `analyze` | `--max-file-bytes` | option | Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a larger entry is cut there with a <fmt>-limit-file-bytes warning. The default is the larger of this and the image size, since a stored entry cannot exceed the image that holds it | AsSizeValue | `1073741824` | `apps/cli/analyze_commands.cpp:734` |
 | `hash` | `file` | positional | Path to image | required | - | `apps/cli/main.cpp:46` |
 | `report` | `case` | positional | Case directory written by analyze | required, ExistingDirectory | - | `apps/cli/analyze_commands.cpp:661` |
 | `scan` | `image` | positional | Path to image | required, ExistingFile | - | `apps/cli/analyze_commands.cpp:668` |

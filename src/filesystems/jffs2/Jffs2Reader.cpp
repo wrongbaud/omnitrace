@@ -1216,6 +1216,9 @@ void Jffs2Reader::Impl::emit_regular(const FileMeta& meta, const Plan& p, Walk& 
         if (r.meta.path.empty()) return;
     }
     if (!sink_ok || truncated) r.truncated = true;
+    // The walk has to admit it: a coverage row saying "supported" over a
+    // cut entry reads as a clean extraction.
+    if (r.truncated) w.out->truncated = true;
     for (Diagnostic& d : diags) r.diagnostics.push_back(std::move(d));
     w.out->bytes += r.digests.bytes;
     count_entry(*w.out, r.meta);

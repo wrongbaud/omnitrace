@@ -107,9 +107,9 @@ Source: `src/containers/stream/StreamReader.cpp` (3 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `checksum_kind` | `src/containers/stream/StreamReader.cpp:80` | the check the stream records over its own payload (crc32, adler32, crc64, sha256, xxh32, xxh64 or none) |
-| `payload_bytes` | `src/containers/stream/StreamReader.cpp:78` | bytes the stream decoded to |
-| `stream_bytes` | `src/containers/stream/StreamReader.cpp:77` | bytes of the input the decoder consumed |
+| `checksum_kind` | `src/containers/stream/StreamReader.cpp:98` | the check the stream records over its own payload (crc32, adler32, crc64, sha256, xxh32, xxh64 or none) |
+| `payload_bytes` | `src/containers/stream/StreamReader.cpp:96` | bytes the stream decoded to |
+| `stream_bytes` | `src/containers/stream/StreamReader.cpp:95` | bytes of the input the decoder consumed |
 
 ## analysis driver (node attrs set by `analyze`)
 
@@ -198,7 +198,7 @@ Source: `src/discovery/Recurse.cpp` (46 keys)
 | `entropy` | `src/discovery/Recurse.cpp:868` | mean Shannon entropy of the region in bits per byte, 0.000 to 8.000, over sampled windows |
 | `entropy_chi2` | `src/discovery/Recurse.cpp:876` | reduced chi-square of the sampled byte histogram against a uniform distribution; about 1.0 is uniform, far above it is structured |
 | `entropy_class` | `src/discovery/Recurse.cpp:869` | erased, sparse, text, binary, packed or random - what the region's bytes look like statistically (core/Entropy.h) |
-| `evidence` | `src/discovery/Recurse.cpp:1768` | id of the Evidence row (e1) on the Image node |
+| `evidence` | `src/discovery/Recurse.cpp:1784` | id of the Evidence row (e1) on the Image node |
 | `files` | `src/discovery/Recurse.cpp:649` | regular-file entries emitted (WalkResult::files) |
 | `fill` | `src/discovery/Recurse.cpp:867` | 0xff / 0x00 (or 0x..) when every byte of an unidentified region is that value: erased flash or padding |
 | `gpt_attributes` | `src/discovery/Recurse.cpp:323` | GPT attribute bits of the entry, when non-zero |
@@ -219,8 +219,8 @@ Source: `src/discovery/Recurse.cpp` (46 keys)
 | `type_byte` | `src/discovery/Recurse.cpp:306` | the MBR type byte again, under the format-specific key |
 | `type_guid` | `src/discovery/Recurse.cpp:304` | the GPT type GUID again, under the format-specific key |
 | `unique_guid` | `src/discovery/Recurse.cpp:314` | GPT unique partition GUID |
-| `word_swap` | `src/discovery/Recurse.cpp:1798` | swap16 or swap32 on the Image node when the dump was byte-reversed per word |
-| `word_swap_confidence` | `src/discovery/Recurse.cpp:1799` | detector score (0-100) behind word_swap |
+| `word_swap` | `src/discovery/Recurse.cpp:1814` | swap16 or swap32 on the Image node when the dump was byte-reversed per word |
+| `word_swap_confidence` | `src/discovery/Recurse.cpp:1815` | detector score (0-100) behind word_swap |
 | `written` | `src/discovery/Recurse.cpp:501` | false on a regular-file node that was not written to disk (extraction on, but the Sink skipped it) |
 
 ## validator `android-boot`
@@ -857,39 +857,39 @@ Source: `src/filesystems/ext/ExtReader.cpp` (33 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `block_groups` | `src/filesystems/ext/ExtReader.cpp:2279` | number of block groups, ceil((blocks_count - first_data_block) / blocks_per_group) |
-| `block_size` | `src/filesystems/ext/ExtReader.cpp:2274` | 1024 << s_log_block_size |
-| `blocks_count` | `src/filesystems/ext/ExtReader.cpp:2275` | s_blocks_count (64-bit when INCOMPAT_64BIT) |
-| `blocks_per_group` | `src/filesystems/ext/ExtReader.cpp:2280` | s_blocks_per_group |
-| `creator_os` | `src/filesystems/ext/ExtReader.cpp:2301` | s_creator_os as a name: linux, hurd, masix, freebsd, lites or unknown |
-| `csum_type` | `src/filesystems/ext/ExtReader.cpp:2306` | crc32c (metadata_csum), crc16 (gdt_csum) or none: what protects the group descriptors and inodes |
-| `desc_size` | `src/filesystems/ext/ExtReader.cpp:2309` | bytes per group descriptor (32, or s_desc_size with INCOMPAT_64BIT) |
-| `encoding` | `src/filesystems/ext/ExtReader.cpp:2310` | s_encoding when set (casefold filesystems) |
-| `errors_behaviour` | `src/filesystems/ext/ExtReader.cpp:2293` | s_errors: 1 continue, 2 remount read-only, 3 panic |
-| `feature_compat` | `src/filesystems/ext/ExtReader.cpp:2285` | s_feature_compat as hex |
-| `feature_incompat` | `src/filesystems/ext/ExtReader.cpp:2286` | s_feature_incompat as hex |
-| `feature_ro_compat` | `src/filesystems/ext/ExtReader.cpp:2287` | s_feature_ro_compat as hex |
-| `features` | `src/filesystems/ext/ExtReader.cpp:2288` | compat\|incompat\|ro_compat feature names, comma-separated inside each group, unknown bits as hex |
-| `first_ino` | `src/filesystems/ext/ExtReader.cpp:2283` | s_first_ino, the first non-reserved inode; dirents naming a lower inode are skipped |
-| `free_blocks` | `src/filesystems/ext/ExtReader.cpp:2277` | s_free_blocks_count (64-bit when INCOMPAT_64BIT) |
-| `free_inodes` | `src/filesystems/ext/ExtReader.cpp:2278` | s_free_inodes_count |
-| `has_journal` | `src/filesystems/ext/ExtReader.cpp:2302` | true when COMPAT_HAS_JOURNAL is set (ext3/ext4); the journal is never replayed |
-| `inode_count` | `src/filesystems/ext/ExtReader.cpp:2276` | s_inodes_count |
-| `inode_size` | `src/filesystems/ext/ExtReader.cpp:2282` | s_inode_size (128 for rev 0) |
-| `inodes_per_group` | `src/filesystems/ext/ExtReader.cpp:2281` | s_inodes_per_group |
-| `journal_inode` | `src/filesystems/ext/ExtReader.cpp:2303` | s_journal_inum (8 by default) when a journal exists, else 0 |
-| `last_check_time` | `src/filesystems/ext/ExtReader.cpp:2296` | s_lastcheck (epoch seconds) |
-| `last_mount_time` | `src/filesystems/ext/ExtReader.cpp:2294` | s_mtime (epoch seconds) |
-| `last_mounted` | `src/filesystems/ext/ExtReader.cpp:2300` | s_last_mounted, where the volume was last mounted |
-| `last_write_time` | `src/filesystems/ext/ExtReader.cpp:2295` | s_wtime (epoch seconds) |
-| `max_mount_count` | `src/filesystems/ext/ExtReader.cpp:2299` | s_max_mnt_count |
-| `mkfs_time` | `src/filesystems/ext/ExtReader.cpp:2297` | s_mkfs_time (epoch seconds), when the filesystem was created |
-| `mount_count` | `src/filesystems/ext/ExtReader.cpp:2298` | s_mnt_count |
-| `needs_recovery` | `src/filesystems/ext/ExtReader.cpp:2305` | true when INCOMPAT_RECOVER is set: the journal holds unreplayed transactions |
-| `rev_level` | `src/filesystems/ext/ExtReader.cpp:2284` | 0 (good old) or 1 (dynamic) |
-| `state` | `src/filesystems/ext/ExtReader.cpp:2291` | clean, not-clean or errors from s_state |
-| `uuid` | `src/filesystems/ext/ExtReader.cpp:2273` | s_uuid as text |
-| `volume_name` | `src/filesystems/ext/ExtReader.cpp:2272` | s_volume_name |
+| `block_groups` | `src/filesystems/ext/ExtReader.cpp:2280` | number of block groups, ceil((blocks_count - first_data_block) / blocks_per_group) |
+| `block_size` | `src/filesystems/ext/ExtReader.cpp:2275` | 1024 << s_log_block_size |
+| `blocks_count` | `src/filesystems/ext/ExtReader.cpp:2276` | s_blocks_count (64-bit when INCOMPAT_64BIT) |
+| `blocks_per_group` | `src/filesystems/ext/ExtReader.cpp:2281` | s_blocks_per_group |
+| `creator_os` | `src/filesystems/ext/ExtReader.cpp:2302` | s_creator_os as a name: linux, hurd, masix, freebsd, lites or unknown |
+| `csum_type` | `src/filesystems/ext/ExtReader.cpp:2307` | crc32c (metadata_csum), crc16 (gdt_csum) or none: what protects the group descriptors and inodes |
+| `desc_size` | `src/filesystems/ext/ExtReader.cpp:2310` | bytes per group descriptor (32, or s_desc_size with INCOMPAT_64BIT) |
+| `encoding` | `src/filesystems/ext/ExtReader.cpp:2311` | s_encoding when set (casefold filesystems) |
+| `errors_behaviour` | `src/filesystems/ext/ExtReader.cpp:2294` | s_errors: 1 continue, 2 remount read-only, 3 panic |
+| `feature_compat` | `src/filesystems/ext/ExtReader.cpp:2286` | s_feature_compat as hex |
+| `feature_incompat` | `src/filesystems/ext/ExtReader.cpp:2287` | s_feature_incompat as hex |
+| `feature_ro_compat` | `src/filesystems/ext/ExtReader.cpp:2288` | s_feature_ro_compat as hex |
+| `features` | `src/filesystems/ext/ExtReader.cpp:2289` | compat\|incompat\|ro_compat feature names, comma-separated inside each group, unknown bits as hex |
+| `first_ino` | `src/filesystems/ext/ExtReader.cpp:2284` | s_first_ino, the first non-reserved inode; dirents naming a lower inode are skipped |
+| `free_blocks` | `src/filesystems/ext/ExtReader.cpp:2278` | s_free_blocks_count (64-bit when INCOMPAT_64BIT) |
+| `free_inodes` | `src/filesystems/ext/ExtReader.cpp:2279` | s_free_inodes_count |
+| `has_journal` | `src/filesystems/ext/ExtReader.cpp:2303` | true when COMPAT_HAS_JOURNAL is set (ext3/ext4); the journal is never replayed |
+| `inode_count` | `src/filesystems/ext/ExtReader.cpp:2277` | s_inodes_count |
+| `inode_size` | `src/filesystems/ext/ExtReader.cpp:2283` | s_inode_size (128 for rev 0) |
+| `inodes_per_group` | `src/filesystems/ext/ExtReader.cpp:2282` | s_inodes_per_group |
+| `journal_inode` | `src/filesystems/ext/ExtReader.cpp:2304` | s_journal_inum (8 by default) when a journal exists, else 0 |
+| `last_check_time` | `src/filesystems/ext/ExtReader.cpp:2297` | s_lastcheck (epoch seconds) |
+| `last_mount_time` | `src/filesystems/ext/ExtReader.cpp:2295` | s_mtime (epoch seconds) |
+| `last_mounted` | `src/filesystems/ext/ExtReader.cpp:2301` | s_last_mounted, where the volume was last mounted |
+| `last_write_time` | `src/filesystems/ext/ExtReader.cpp:2296` | s_wtime (epoch seconds) |
+| `max_mount_count` | `src/filesystems/ext/ExtReader.cpp:2300` | s_max_mnt_count |
+| `mkfs_time` | `src/filesystems/ext/ExtReader.cpp:2298` | s_mkfs_time (epoch seconds), when the filesystem was created |
+| `mount_count` | `src/filesystems/ext/ExtReader.cpp:2299` | s_mnt_count |
+| `needs_recovery` | `src/filesystems/ext/ExtReader.cpp:2306` | true when INCOMPAT_RECOVER is set: the journal holds unreplayed transactions |
+| `rev_level` | `src/filesystems/ext/ExtReader.cpp:2285` | 0 (good old) or 1 (dynamic) |
+| `state` | `src/filesystems/ext/ExtReader.cpp:2292` | clean, not-clean or errors from s_state |
+| `uuid` | `src/filesystems/ext/ExtReader.cpp:2274` | s_uuid as text |
+| `volume_name` | `src/filesystems/ext/ExtReader.cpp:2273` | s_volume_name |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 
@@ -897,20 +897,20 @@ Source: `src/filesystems/fat/FatReader.cpp` (14 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `bytes_per_sector` | `src/filesystems/fat/FatReader.cpp:862` | sector size the BPB declares |
-| `cluster_size` | `src/filesystems/fat/FatReader.cpp:864` | bytes per cluster: bytes_per_sector x sectors_per_cluster |
-| `clusters` | `src/filesystems/fat/FatReader.cpp:865` | data clusters, which is what decides FAT12 / FAT16 / FAT32 |
-| `fat_count` | `src/filesystems/fat/FatReader.cpp:866` | copies of the allocation table (almost always 2) |
-| `fat_sectors` | `src/filesystems/fat/FatReader.cpp:867` | sectors in one copy of the allocation table |
-| `fat_type` | `src/filesystems/fat/FatReader.cpp:861` | fat12, fat16 or fat32, from the cluster count and not from the type string |
-| `label` | `src/filesystems/fat/FatReader.cpp:874` | volume label from the extended BPB, trailing spaces removed |
-| `oem_name` | `src/filesystems/fat/FatReader.cpp:875` | the eight-byte OEM string the formatter wrote at offset 3 |
-| `reserved_sectors` | `src/filesystems/fat/FatReader.cpp:869` | sectors before the first allocation table, the boot sector included |
-| `root_cluster` | `src/filesystems/fat/FatReader.cpp:871` | FAT32 only: first cluster of the root directory |
-| `root_entries` | `src/filesystems/fat/FatReader.cpp:873` | FAT12/16 only: entries in the fixed root directory |
-| `sectors_per_cluster` | `src/filesystems/fat/FatReader.cpp:863` | cluster size in sectors |
-| `total_sectors` | `src/filesystems/fat/FatReader.cpp:868` | sectors the volume claims, from the 16-bit field or its 32-bit twin |
-| `volume_id` | `src/filesystems/fat/FatReader.cpp:878` | volume serial number, as eight hex digits |
+| `bytes_per_sector` | `src/filesystems/fat/FatReader.cpp:873` | sector size the BPB declares |
+| `cluster_size` | `src/filesystems/fat/FatReader.cpp:875` | bytes per cluster: bytes_per_sector x sectors_per_cluster |
+| `clusters` | `src/filesystems/fat/FatReader.cpp:876` | data clusters, which is what decides FAT12 / FAT16 / FAT32 |
+| `fat_count` | `src/filesystems/fat/FatReader.cpp:877` | copies of the allocation table (almost always 2) |
+| `fat_sectors` | `src/filesystems/fat/FatReader.cpp:878` | sectors in one copy of the allocation table |
+| `fat_type` | `src/filesystems/fat/FatReader.cpp:872` | fat12, fat16 or fat32, from the cluster count and not from the type string |
+| `label` | `src/filesystems/fat/FatReader.cpp:885` | volume label from the extended BPB, trailing spaces removed |
+| `oem_name` | `src/filesystems/fat/FatReader.cpp:886` | the eight-byte OEM string the formatter wrote at offset 3 |
+| `reserved_sectors` | `src/filesystems/fat/FatReader.cpp:880` | sectors before the first allocation table, the boot sector included |
+| `root_cluster` | `src/filesystems/fat/FatReader.cpp:882` | FAT32 only: first cluster of the root directory |
+| `root_entries` | `src/filesystems/fat/FatReader.cpp:884` | FAT12/16 only: entries in the fixed root directory |
+| `sectors_per_cluster` | `src/filesystems/fat/FatReader.cpp:874` | cluster size in sectors |
+| `total_sectors` | `src/filesystems/fat/FatReader.cpp:879` | sectors the volume claims, from the 16-bit field or its 32-bit twin |
+| `volume_id` | `src/filesystems/fat/FatReader.cpp:889` | volume serial number, as eight hex digits |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 
@@ -918,27 +918,27 @@ Source: `src/filesystems/jffs2/Jffs2Reader.cpp` (21 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `cleanmarkers` | `src/filesystems/jffs2/Jffs2Reader.cpp:1753` | cleanmarker nodes seen (one per erased block on NOR) |
-| `compressors` | `src/filesystems/jffs2/Jffs2Reader.cpp:1766` | comma-joined compression ids seen on CRC-valid inode nodes (none, zero, rtime, zlib, lzo, lzma, ...) |
-| `crc_failures` | `src/filesystems/jffs2/Jffs2Reader.cpp:1760` | nodes that failed node_crc, data_crc or name_crc |
-| `dirent_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1752` | dirent nodes seen (all versions, including obsolete and unlink records) |
-| `endian` | `src/filesystems/jffs2/Jffs2Reader.cpp:1748` | little or big, from the first CRC-valid node header |
-| `erase_size` | `src/filesystems/jffs2/Jffs2Reader.cpp:1762` | erase-block size inferred from cleanmarker spacing, or unknown |
-| `first_node` | `src/filesystems/jffs2/Jffs2Reader.cpp:1749` | offset (hex) of the first CRC-valid node inside the span |
-| `inode_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1751` | inode nodes seen (all versions) |
-| `inodes_deleted` | `src/filesystems/jffs2/Jffs2Reader.cpp:1769` | inodes with nodes but no live directory entry (recoverable with --history) |
-| `inodes_live` | `src/filesystems/jffs2/Jffs2Reader.cpp:1768` | inodes reachable through live directory entries (the root counts when it has a node) |
-| `inodes_multi_version` | `src/filesystems/jffs2/Jffs2Reader.cpp:1770` | inodes with more than one distinct inode-node version |
-| `nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1750` | nodes scanned (header CRC valid) |
-| `obsolete_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1759` | nodes obsoleted in place (ACCURATE bit cleared); history only |
-| `padding_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1754` | padding nodes seen |
-| `scan_capped` | `src/filesystems/jffs2/Jffs2Reader.cpp:1771` | true when max_nodes_per_fs stopped the scan (jffs2-limit-nodes) |
-| `summary_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1755` | summary nodes seen (counted, not parsed) |
-| `unknown_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1758` | nodes of a type this reader does not decode |
-| `unlink_dirents` | `src/filesystems/jffs2/Jffs2Reader.cpp:1761` | dirents with ino 0, i.e. explicit unlink or rename-away records |
-| `xattr_count` | `src/filesystems/jffs2/Jffs2Reader.cpp:1767` | xref nodes seen (inode-to-xattr links, including retired ones) |
-| `xattr_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1756` | xattr nodes seen |
-| `xref_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1757` | xref nodes seen |
+| `cleanmarkers` | `src/filesystems/jffs2/Jffs2Reader.cpp:1756` | cleanmarker nodes seen (one per erased block on NOR) |
+| `compressors` | `src/filesystems/jffs2/Jffs2Reader.cpp:1769` | comma-joined compression ids seen on CRC-valid inode nodes (none, zero, rtime, zlib, lzo, lzma, ...) |
+| `crc_failures` | `src/filesystems/jffs2/Jffs2Reader.cpp:1763` | nodes that failed node_crc, data_crc or name_crc |
+| `dirent_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1755` | dirent nodes seen (all versions, including obsolete and unlink records) |
+| `endian` | `src/filesystems/jffs2/Jffs2Reader.cpp:1751` | little or big, from the first CRC-valid node header |
+| `erase_size` | `src/filesystems/jffs2/Jffs2Reader.cpp:1765` | erase-block size inferred from cleanmarker spacing, or unknown |
+| `first_node` | `src/filesystems/jffs2/Jffs2Reader.cpp:1752` | offset (hex) of the first CRC-valid node inside the span |
+| `inode_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1754` | inode nodes seen (all versions) |
+| `inodes_deleted` | `src/filesystems/jffs2/Jffs2Reader.cpp:1772` | inodes with nodes but no live directory entry (recoverable with --history) |
+| `inodes_live` | `src/filesystems/jffs2/Jffs2Reader.cpp:1771` | inodes reachable through live directory entries (the root counts when it has a node) |
+| `inodes_multi_version` | `src/filesystems/jffs2/Jffs2Reader.cpp:1773` | inodes with more than one distinct inode-node version |
+| `nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1753` | nodes scanned (header CRC valid) |
+| `obsolete_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1762` | nodes obsoleted in place (ACCURATE bit cleared); history only |
+| `padding_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1757` | padding nodes seen |
+| `scan_capped` | `src/filesystems/jffs2/Jffs2Reader.cpp:1774` | true when max_nodes_per_fs stopped the scan (jffs2-limit-nodes) |
+| `summary_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1758` | summary nodes seen (counted, not parsed) |
+| `unknown_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1761` | nodes of a type this reader does not decode |
+| `unlink_dirents` | `src/filesystems/jffs2/Jffs2Reader.cpp:1764` | dirents with ino 0, i.e. explicit unlink or rename-away records |
+| `xattr_count` | `src/filesystems/jffs2/Jffs2Reader.cpp:1770` | xref nodes seen (inode-to-xattr links, including retired ones) |
+| `xattr_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1759` | xattr nodes seen |
+| `xref_nodes` | `src/filesystems/jffs2/Jffs2Reader.cpp:1760` | xref nodes seen |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 
@@ -977,45 +977,45 @@ Source: `src/filesystems/qnxifs/QnxIfsReader.cpp` (39 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `blocks` | `src/filesystems/qnxifs/QnxIfsReader.cpp:858` | compressed blocks in the chain (or 1 for zlib) |
-| `boot_ino` | `src/filesystems/qnxifs/QnxIfsReader.cpp:872` | inodes of the bootstrap executables (flag bits stripped, comma-joined) |
-| `chain_paddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:874` | image header chain_paddr, when non-zero (next image) |
-| `compressed` | `src/filesystems/qnxifs/QnxIfsReader.cpp:856` | none, zlib, lzo, ucl or lz4 |
-| `compressed_bytes` | `src/filesystems/qnxifs/QnxIfsReader.cpp:859` | bytes of compressed payload |
-| `decompress_capped` | `src/filesystems/qnxifs/QnxIfsReader.cpp:861` | true when a Limits cap stopped decompression (qnx-ifs-decompress-cap) |
-| `decompress_failed` | `src/filesystems/qnxifs/QnxIfsReader.cpp:862` | true when a block did not decode (qnx-ifs-decompress-failed) |
-| `decompressed_bytes` | `src/filesystems/qnxifs/QnxIfsReader.cpp:860` | bytes of image filesystem decoded |
-| `devices` | `src/filesystems/qnxifs/QnxIfsReader.cpp:881` | device, fifo, socket and named-special entries |
-| `dir_offset` | `src/filesystems/qnxifs/QnxIfsReader.cpp:867` | image header dir_offset |
-| `dirs` | `src/filesystems/qnxifs/QnxIfsReader.cpp:879` | directory entries (root excluded) |
-| `endian` | `src/filesystems/qnxifs/QnxIfsReader.cpp:840` | little or big, from the image header flags |
-| `entries` | `src/filesystems/qnxifs/QnxIfsReader.cpp:877` | directory entries with a non-zero inode (root excluded) |
-| `files` | `src/filesystems/qnxifs/QnxIfsReader.cpp:878` | regular-file entries |
-| `flags1` | `src/filesystems/qnxifs/QnxIfsReader.cpp:844` | startup header flags1 (hex) |
-| `flags2` | `src/filesystems/qnxifs/QnxIfsReader.cpp:845` | startup header flags2 (hex) |
-| `hdr_dir_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:866` | image header hdr_dir_size |
-| `image_checksum` | `src/filesystems/qnxifs/QnxIfsReader.cpp:868` | ok or mismatch: u32 sum of the image filesystem |
-| `image_flags` | `src/filesystems/qnxifs/QnxIfsReader.cpp:864` | image header flags (hex) |
-| `image_paddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:848` | startup header image_paddr (hex) |
-| `image_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:865` | image header image_size |
-| `imagefs_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:853` | startup header imagefs_size |
-| `machine` | `src/filesystems/qnxifs/QnxIfsReader.cpp:843` | ELF machine name or unknown(0x..) |
-| `mountflags` | `src/filesystems/qnxifs/QnxIfsReader.cpp:875` | image header mountflags (hex) |
-| `mountpoint` | `src/filesystems/qnxifs/QnxIfsReader.cpp:876` | default mountpoint, when set |
-| `paddr_bias` | `src/filesystems/qnxifs/QnxIfsReader.cpp:847` | startup header paddr_bias (hex) |
-| `preboot_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:854` | startup header preboot_size, when non-zero |
-| `ram_paddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:849` | startup header ram_paddr (hex) |
-| `ram_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:850` | startup header ram_size |
-| `root_mode` | `src/filesystems/qnxifs/QnxIfsReader.cpp:884` | permission bits of the root directory entry (hex) |
-| `root_mtime` | `src/filesystems/qnxifs/QnxIfsReader.cpp:885` | mtime of the root directory entry |
-| `script_ino` | `src/filesystems/qnxifs/QnxIfsReader.cpp:873` | inode of the boot script, when set |
-| `skipped_entries` | `src/filesystems/qnxifs/QnxIfsReader.cpp:882` | entries with inode 0 (qnx-ifs-entry-skipped), when any |
-| `startup_checksum` | `src/filesystems/qnxifs/QnxIfsReader.cpp:855` | ok or mismatch: u32 sum of the startup region |
-| `startup_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:851` | startup header startup_size |
-| `startup_vaddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:846` | startup header startup_vaddr (hex) |
-| `stored_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:852` | startup header stored_size |
-| `symlinks` | `src/filesystems/qnxifs/QnxIfsReader.cpp:880` | symlink entries |
-| `version` | `src/filesystems/qnxifs/QnxIfsReader.cpp:841` | startup header version |
+| `blocks` | `src/filesystems/qnxifs/QnxIfsReader.cpp:859` | compressed blocks in the chain (or 1 for zlib) |
+| `boot_ino` | `src/filesystems/qnxifs/QnxIfsReader.cpp:873` | inodes of the bootstrap executables (flag bits stripped, comma-joined) |
+| `chain_paddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:875` | image header chain_paddr, when non-zero (next image) |
+| `compressed` | `src/filesystems/qnxifs/QnxIfsReader.cpp:857` | none, zlib, lzo, ucl or lz4 |
+| `compressed_bytes` | `src/filesystems/qnxifs/QnxIfsReader.cpp:860` | bytes of compressed payload |
+| `decompress_capped` | `src/filesystems/qnxifs/QnxIfsReader.cpp:862` | true when a Limits cap stopped decompression (qnx-ifs-decompress-cap) |
+| `decompress_failed` | `src/filesystems/qnxifs/QnxIfsReader.cpp:863` | true when a block did not decode (qnx-ifs-decompress-failed) |
+| `decompressed_bytes` | `src/filesystems/qnxifs/QnxIfsReader.cpp:861` | bytes of image filesystem decoded |
+| `devices` | `src/filesystems/qnxifs/QnxIfsReader.cpp:882` | device, fifo, socket and named-special entries |
+| `dir_offset` | `src/filesystems/qnxifs/QnxIfsReader.cpp:868` | image header dir_offset |
+| `dirs` | `src/filesystems/qnxifs/QnxIfsReader.cpp:880` | directory entries (root excluded) |
+| `endian` | `src/filesystems/qnxifs/QnxIfsReader.cpp:841` | little or big, from the image header flags |
+| `entries` | `src/filesystems/qnxifs/QnxIfsReader.cpp:878` | directory entries with a non-zero inode (root excluded) |
+| `files` | `src/filesystems/qnxifs/QnxIfsReader.cpp:879` | regular-file entries |
+| `flags1` | `src/filesystems/qnxifs/QnxIfsReader.cpp:845` | startup header flags1 (hex) |
+| `flags2` | `src/filesystems/qnxifs/QnxIfsReader.cpp:846` | startup header flags2 (hex) |
+| `hdr_dir_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:867` | image header hdr_dir_size |
+| `image_checksum` | `src/filesystems/qnxifs/QnxIfsReader.cpp:869` | ok or mismatch: u32 sum of the image filesystem |
+| `image_flags` | `src/filesystems/qnxifs/QnxIfsReader.cpp:865` | image header flags (hex) |
+| `image_paddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:849` | startup header image_paddr (hex) |
+| `image_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:866` | image header image_size |
+| `imagefs_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:854` | startup header imagefs_size |
+| `machine` | `src/filesystems/qnxifs/QnxIfsReader.cpp:844` | ELF machine name or unknown(0x..) |
+| `mountflags` | `src/filesystems/qnxifs/QnxIfsReader.cpp:876` | image header mountflags (hex) |
+| `mountpoint` | `src/filesystems/qnxifs/QnxIfsReader.cpp:877` | default mountpoint, when set |
+| `paddr_bias` | `src/filesystems/qnxifs/QnxIfsReader.cpp:848` | startup header paddr_bias (hex) |
+| `preboot_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:855` | startup header preboot_size, when non-zero |
+| `ram_paddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:850` | startup header ram_paddr (hex) |
+| `ram_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:851` | startup header ram_size |
+| `root_mode` | `src/filesystems/qnxifs/QnxIfsReader.cpp:885` | permission bits of the root directory entry (hex) |
+| `root_mtime` | `src/filesystems/qnxifs/QnxIfsReader.cpp:886` | mtime of the root directory entry |
+| `script_ino` | `src/filesystems/qnxifs/QnxIfsReader.cpp:874` | inode of the boot script, when set |
+| `skipped_entries` | `src/filesystems/qnxifs/QnxIfsReader.cpp:883` | entries with inode 0 (qnx-ifs-entry-skipped), when any |
+| `startup_checksum` | `src/filesystems/qnxifs/QnxIfsReader.cpp:856` | ok or mismatch: u32 sum of the startup region |
+| `startup_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:852` | startup header startup_size |
+| `startup_vaddr` | `src/filesystems/qnxifs/QnxIfsReader.cpp:847` | startup header startup_vaddr (hex) |
+| `stored_size` | `src/filesystems/qnxifs/QnxIfsReader.cpp:853` | startup header stored_size |
+| `symlinks` | `src/filesystems/qnxifs/QnxIfsReader.cpp:881` | symlink entries |
+| `version` | `src/filesystems/qnxifs/QnxIfsReader.cpp:842` | startup header version |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 
@@ -1032,24 +1032,24 @@ Source: `src/filesystems/squashfs/SquashfsReader.cpp` (21 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `compression_id` | `src/filesystems/squashfs/SquashfsReader.cpp:1774` | numeric compression id |
-| `exportable` | `src/filesystems/squashfs/SquashfsReader.cpp:1778` | true when an export table exists |
-| `flags` | `src/filesystems/squashfs/SquashfsReader.cpp:1773` | superblock flags as hex |
-| `fragments` | `src/filesystems/squashfs/SquashfsReader.cpp:1772` | fragment count |
+| `compression_id` | `src/filesystems/squashfs/SquashfsReader.cpp:1777` | numeric compression id |
+| `exportable` | `src/filesystems/squashfs/SquashfsReader.cpp:1781` | true when an export table exists |
+| `flags` | `src/filesystems/squashfs/SquashfsReader.cpp:1776` | superblock flags as hex |
+| `fragments` | `src/filesystems/squashfs/SquashfsReader.cpp:1775` | fragment count |
 | `gzip_level` | `src/filesystems/squashfs/SquashfsReader.cpp:647` | gzip compressor option |
 | `gzip_strategies` | `src/filesystems/squashfs/SquashfsReader.cpp:649` | gzip compressor option |
 | `gzip_window` | `src/filesystems/squashfs/SquashfsReader.cpp:648` | gzip compressor option |
-| `id_count` | `src/filesystems/squashfs/SquashfsReader.cpp:1775` | no_ids |
-| `inodes` | `src/filesystems/squashfs/SquashfsReader.cpp:1771` | inode count |
+| `id_count` | `src/filesystems/squashfs/SquashfsReader.cpp:1778` | no_ids |
+| `inodes` | `src/filesystems/squashfs/SquashfsReader.cpp:1774` | inode count |
 | `lz4_flags` | `src/filesystems/squashfs/SquashfsReader.cpp:661` | lz4 compressor option |
 | `lz4_version` | `src/filesystems/squashfs/SquashfsReader.cpp:660` | lz4 compressor option |
 | `lzo_algorithm` | `src/filesystems/squashfs/SquashfsReader.cpp:652` | lzo compressor option |
 | `lzo_level` | `src/filesystems/squashfs/SquashfsReader.cpp:653` | lzo compressor option |
-| `magic` | `src/filesystems/squashfs/SquashfsReader.cpp:1770` | the four magic bytes as text |
-| `mkfs_time` | `src/filesystems/squashfs/SquashfsReader.cpp:1776` | mkfs_time (epoch seconds) |
-| `root_inode` | `src/filesystems/squashfs/SquashfsReader.cpp:1777` | root inode reference as hex |
-| `version` | `src/filesystems/squashfs/SquashfsReader.cpp:1769` | major.minor |
-| `xattr_ids` | `src/filesystems/squashfs/SquashfsReader.cpp:1779` | number of xattr ids (0 when there is no xattr table) |
+| `magic` | `src/filesystems/squashfs/SquashfsReader.cpp:1773` | the four magic bytes as text |
+| `mkfs_time` | `src/filesystems/squashfs/SquashfsReader.cpp:1779` | mkfs_time (epoch seconds) |
+| `root_inode` | `src/filesystems/squashfs/SquashfsReader.cpp:1780` | root inode reference as hex |
+| `version` | `src/filesystems/squashfs/SquashfsReader.cpp:1772` | major.minor |
+| `xattr_ids` | `src/filesystems/squashfs/SquashfsReader.cpp:1782` | number of xattr ids (0 when there is no xattr table) |
 | `xz_dict_size` | `src/filesystems/squashfs/SquashfsReader.cpp:656` | xz compressor option |
 | `xz_filters` | `src/filesystems/squashfs/SquashfsReader.cpp:657` | xz compressor option |
 | `zstd_level` | `src/filesystems/squashfs/SquashfsReader.cpp:664` | zstd compressor option |
@@ -1060,26 +1060,26 @@ Source: `src/filesystems/ubifs/UbifsReader.cpp` (20 keys)
 
 | key | first set at | meaning |
 |---|---|---|
-| `bad_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1033` | nodes that failed their CRC or could not be read (absent when none) |
-| `bud_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:1030` | journal bud erase blocks replayed |
-| `commit_no` | `src/filesystems/ubifs/UbifsReader.cpp:1023` | commit number of the master node the reader used |
-| `data_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1029` | distinct (inode, block) data nodes the index and journal name |
-| `dentries` | `src/filesystems/ubifs/UbifsReader.cpp:1028` | live directory entries after the journal replay |
-| `fanout` | `src/filesystems/ubifs/UbifsReader.cpp:1022` | index B-tree fanout from the superblock |
-| `fmt_version` | `src/filesystems/ubifs/UbifsReader.cpp:1014` | UBIFS format version |
-| `index_leaves` | `src/filesystems/ubifs/UbifsReader.cpp:1026` | leaf branches the index walk collected |
-| `index_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1025` | index nodes walked |
-| `index_size` | `src/filesystems/ubifs/UbifsReader.cpp:1024` | bytes of index the master node reports |
-| `inodes` | `src/filesystems/ubifs/UbifsReader.cpp:1027` | distinct inode nodes the index and journal name |
-| `journal_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1031` | nodes the journal replay applied on top of the index |
-| `leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:1019` | logical erase blocks the volume uses |
-| `leb_size` | `src/filesystems/ubifs/UbifsReader.cpp:1018` | usable bytes per logical erase block |
-| `log_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:1021` | erase blocks reserved for the log |
-| `max_leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:1020` | largest volume size the superblock allows, in erase blocks |
-| `min_io_size` | `src/filesystems/ubifs/UbifsReader.cpp:1017` | minimum I/O unit of the underlying flash |
-| `ro_compat_version` | `src/filesystems/ubifs/UbifsReader.cpp:1015` | read-only compatibility version |
-| `unlink_records` | `src/filesystems/ubifs/UbifsReader.cpp:1032` | directory entries pointing at inode 0, the record UBIFS writes on unlink (absent when none) |
-| `uuid` | `src/filesystems/ubifs/UbifsReader.cpp:1016` | filesystem UUID from the superblock |
+| `bad_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1034` | nodes that failed their CRC or could not be read (absent when none) |
+| `bud_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:1031` | journal bud erase blocks replayed |
+| `commit_no` | `src/filesystems/ubifs/UbifsReader.cpp:1024` | commit number of the master node the reader used |
+| `data_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1030` | distinct (inode, block) data nodes the index and journal name |
+| `dentries` | `src/filesystems/ubifs/UbifsReader.cpp:1029` | live directory entries after the journal replay |
+| `fanout` | `src/filesystems/ubifs/UbifsReader.cpp:1023` | index B-tree fanout from the superblock |
+| `fmt_version` | `src/filesystems/ubifs/UbifsReader.cpp:1015` | UBIFS format version |
+| `index_leaves` | `src/filesystems/ubifs/UbifsReader.cpp:1027` | leaf branches the index walk collected |
+| `index_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1026` | index nodes walked |
+| `index_size` | `src/filesystems/ubifs/UbifsReader.cpp:1025` | bytes of index the master node reports |
+| `inodes` | `src/filesystems/ubifs/UbifsReader.cpp:1028` | distinct inode nodes the index and journal name |
+| `journal_nodes` | `src/filesystems/ubifs/UbifsReader.cpp:1032` | nodes the journal replay applied on top of the index |
+| `leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:1020` | logical erase blocks the volume uses |
+| `leb_size` | `src/filesystems/ubifs/UbifsReader.cpp:1019` | usable bytes per logical erase block |
+| `log_lebs` | `src/filesystems/ubifs/UbifsReader.cpp:1022` | erase blocks reserved for the log |
+| `max_leb_cnt` | `src/filesystems/ubifs/UbifsReader.cpp:1021` | largest volume size the superblock allows, in erase blocks |
+| `min_io_size` | `src/filesystems/ubifs/UbifsReader.cpp:1018` | minimum I/O unit of the underlying flash |
+| `ro_compat_version` | `src/filesystems/ubifs/UbifsReader.cpp:1016` | read-only compatibility version |
+| `unlink_records` | `src/filesystems/ubifs/UbifsReader.cpp:1033` | directory entries pointing at inode 0, the record UBIFS writes on unlink (absent when none) |
+| `uuid` | `src/filesystems/ubifs/UbifsReader.cpp:1017` | filesystem UUID from the superblock |
 
 ## filesystem reader (`FilesystemInfo::attrs`)
 

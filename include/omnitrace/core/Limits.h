@@ -38,10 +38,38 @@ struct Limits {
     /// is given, so an explicit budget is never silently raised.
     std::uint64_t max_bytes_ratio = 4;
     std::uint64_t max_file_bytes =
-        1ull << 30;  ///< Bytes of one entry a Sink accepts ("sink-limit-file-bytes").
-    std::uint64_t max_decompress_ratio =
-        1000;  ///< Intended out/in cap for one stream. No reader consults it yet; they pass an
-               ///< explicit `max_out` to `compress::decompress`.
+        1ull << 30;  ///< Floor for the bytes of one entry a Sink accepts
+                     ///< ("sink-limit-file-bytes"). See `max_file_bytes_ratio`.
+    /// Per-entry cap as a multiple of the image, for the same reason
+    /// `max_bytes_ratio` exists: a fixed byte count cannot suit both a 2 MiB
+    /// SPI part and a 16 GiB eMMC dump.
+    ///
+    /// The multiple is 1 because a *stored* entry cannot be larger than the
+    /// image that holds it, so the image size is the tightest cap that can
+    /// never cut legitimate content -- and cutting it is not a partial
+    /// recovery. A truncated data file still yields its first N bytes, but a
+    /// truncated *filesystem image* yields nothing at all: SquashFS, ext and
+    /// zip all keep the tables that name their contents at the end, so
+    /// removing the tail removes every file inside. The fixed 1 GiB this
+    /// replaced did exactly that to two 1054 MiB SquashFS images inside a
+    /// 15.7 GiB QNX dump, losing ~100,000 files and the compressed streams
+    /// among them (`docs/PARITY.md`).
+    ///
+    /// This does not loosen the bomb guard, which was never this field's job:
+    /// a stored entry's size is known from metadata before a byte is written,
+    /// and a *decompressed* entry -- the one whose size is not known in
+    /// advance -- is bounded by `max_decompress_ratio` instead.
+    ///
+    /// 0 means use `max_file_bytes` exactly -- what the CLI sets when
+    /// `--max-file-bytes` is given, so an explicit cap is never raised.
+    std::uint64_t max_file_bytes_ratio = 1;
+    /// Out/in cap for one decompressed stream, and the guard that stands in
+    /// for `max_file_bytes` where a size is not known in advance: the readers
+    /// that decompress pass `min(max_file_bytes, in_bytes * this)` as `max_out`
+    /// (`QnxIfsReader`, `StreamReader`). Real firmware expands by up to ~32x
+    /// measured across the corpus; a bomb expands by orders of magnitude more
+    /// and still trips.
+    std::uint64_t max_decompress_ratio = 1000;
     std::uint64_t max_nodes_per_fs =
         5'000'000;  ///< Metadata records one filesystem reader parses (SquashFS directory entries
                     ///< today; JFFS2 nodes, inodes later).

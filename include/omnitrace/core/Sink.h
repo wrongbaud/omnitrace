@@ -54,6 +54,15 @@ struct EntryResult {
 
 /// Destination for extracted entries. Readers see only this interface.
 ///
+/// **A truncated entry is still an entry.** Only `begin_file` can refuse an
+/// entry outright; once it succeeds, bytes may already have landed on disk, so
+/// a limit tripping mid-`write` is not a reason to skip the entry. Break out
+/// of the write loop, always call `end_file`, and push the `EntryResult`: it
+/// carries the digests of what was recovered, `truncated`, and the
+/// `sink-limit-*` diagnostic naming the cap. Dropping it leaves the case
+/// directory holding a file the listing never names, which is the one thing a
+/// forensic output may not do.
+///
 /// Protocol for a regular file: `begin_file` -> `write`* -> `end_file`.
 /// Non-regular entries (directories, symlinks, devices, fifos, sockets) go
 /// through `entry()` alone; a Regular kind passed to `entry()` is an empty
@@ -101,7 +110,10 @@ class Sink {
 
     // Convenience for readers that already have the whole file in memory.
     /// `begin_file` + `write` + `end_file` for a file already in memory.
-    /// `end_file` runs even when `write` failed; its error wins, then `write`'s.
+    /// Fails only when `begin_file` or `end_file` does -- a `write` that trips
+    /// a byte limit does **not** fail the call, because the prefix it accepted
+    /// is already on the disk and the caller has to record it (see the
+    /// truncation rule above). Read `out.truncated` and `out.diagnostics`.
     Status file(const FileMeta& meta, std::span<const std::uint8_t> data, EntryResult& out);
 
     /// The Limits this sink enforces; readers use the same object for their own caps.

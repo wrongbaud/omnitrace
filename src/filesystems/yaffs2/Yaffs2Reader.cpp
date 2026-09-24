@@ -487,6 +487,7 @@ void Yaffs2Reader::Impl::emit_object(const std::string& path, std::uint32_t obj_
             if (res.meta.path.empty()) return;
         }
         if (!sink_ok || truncated) res.truncated = true;
+        if (res.truncated) w.out->truncated = true;
         if (fell_back) res.meta.extra["content_from_first_write"] = "true";
         for (Diagnostic& d : diags) res.diagnostics.push_back(std::move(d));
         w.out->bytes += res.digests.bytes;

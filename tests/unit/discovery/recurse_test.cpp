@@ -2126,3 +2126,36 @@ TEST(Analyze, ExtractionBudgetScalesWithTheImage) {
     EXPECT_EQ(extraction_budget(lim, std::numeric_limits<std::uint64_t>::max()),
               std::numeric_limits<std::uint64_t>::max());
 }
+
+// The same argument for one entry, and the bug that proved it. The fixed 1 GiB
+// per-entry cap cut two 1054 MiB SquashFS images out of the 15.7 GB QNX dump
+// at exactly 1,073,741,824 bytes. A SquashFS keeps the tables naming its
+// contents at the *end*, so each truncated copy walked to zero files and every
+// file inside it -- ~100,000 of them, and the compressed streams parity was
+// missing -- was lost. A cap below the image size can only ever cut real
+// content, because a stored entry cannot be bigger than the image holding it.
+TEST(Analyze, EntryBudgetScalesWithTheImage) {
+    Limits lim;  // defaults: 1 GiB floor, ratio 1
+    const std::uint64_t floor = lim.max_file_bytes;
+
+    // Small image: the floor wins, so nothing about today's behaviour moves.
+    EXPECT_EQ(entry_budget(lim, 2u << 20), floor);
+    EXPECT_EQ(entry_budget(lim, 32u << 20), floor);
+    // Large image: the cap follows the evidence. The QNX dump is the case that
+    // matters -- 15.7 GB, holding a 1054 MiB entry the old default cut.
+    EXPECT_EQ(entry_budget(lim, 16ull << 30), 16ull << 30);
+    EXPECT_GT(entry_budget(lim, 15'634'264'064ull), 1054ull << 20);
+    // The crossover is exactly where floor and image size meet.
+    EXPECT_EQ(entry_budget(lim, floor), floor);
+
+    // Ratio 0 means "use max_file_bytes exactly", which is what an explicit
+    // --max-file-bytes sets, so an examiner's own cap is never raised.
+    lim.max_file_bytes_ratio = 0;
+    lim.max_file_bytes = 1u << 20;
+    EXPECT_EQ(entry_budget(lim, 16ull << 30), 1u << 20);
+
+    // A hostile Source size must not overflow the multiply into a small cap.
+    lim = Limits{};
+    EXPECT_EQ(entry_budget(lim, std::numeric_limits<std::uint64_t>::max()),
+              std::numeric_limits<std::uint64_t>::max());
+}

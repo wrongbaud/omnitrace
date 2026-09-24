@@ -728,6 +728,7 @@ void UbifsReader::Impl::emit_state(const std::string& path, std::uint32_t inum,
             if (r.meta.path.empty()) return;
         }
         if (!sink_ok || truncated) r.truncated = true;
+        if (r.truncated) w.out->truncated = true;
         for (Diagnostic& dg : diags) r.diagnostics.push_back(std::move(dg));
         w.out->bytes += r.digests.bytes;
         count_entry(*w.out, r.meta);
@@ -1286,6 +1287,7 @@ void UbifsReader::Impl::emit_entry(const std::string& path, const Dent& d, Walk&
             if (r.meta.path.empty()) return;
         }
         if (!sink_ok || truncated) r.truncated = true;
+        if (r.truncated) w.out->truncated = true;
         for (Diagnostic& dg : diags) r.diagnostics.push_back(std::move(dg));
         w.out->bytes += r.digests.bytes;
         count_entry(*w.out, r.meta);

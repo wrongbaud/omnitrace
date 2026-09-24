@@ -172,6 +172,12 @@ struct AnalyzeOptions {
 /// and it is the one place the "budget tracks the evidence" rule lives.
 std::uint64_t extraction_budget(const Limits& lim, std::uint64_t image_size);
 
+/// The per-entry cap `analyze()` applies, the same rule for one entry:
+/// `max(max_file_bytes, image_size * max_file_bytes_ratio)`, saturating, and
+/// exactly `max_file_bytes` when the ratio is 0 (`core/Limits.h` explains why
+/// the multiple is 1).
+std::uint64_t entry_budget(const Limits& lim, std::uint64_t image_size);
+
 /// How many bytes a run may write to a filesystem with `available` bytes free,
 /// leaving it room to keep working: `available` less 5% of itself, and never
 /// less than 256 MiB of headroom. Returns 0 when there is not even that.

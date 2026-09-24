@@ -1891,6 +1891,7 @@ void ExtReader::Impl::emit_regular(Walk& w, FileMeta meta, const Inode& in, bool
         truncated = true;
     }
     if (!sink_ok || truncated) r.truncated = true;
+    if (r.truncated) w.out->truncated = true;
     w.out->bytes += r.digests.bytes;
     w.out->entries++;
     w.out->files++;

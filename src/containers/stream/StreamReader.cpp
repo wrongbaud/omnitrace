@@ -6,6 +6,7 @@
 #include "StreamReader.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <span>
@@ -20,11 +21,28 @@ namespace omnitrace::container {
 
 namespace {
 
+std::uint64_t sat_mul(std::uint64_t a, std::uint64_t b) {
+    if (a == 0 || b == 0) return 0;
+    return a > UINT64_MAX / b ? UINT64_MAX : a * b;
+}
+
 // The payload is held in memory in one piece, so the entry cap is also the
-// allocation bound. max_file_bytes is the right knob: the payload becomes one
-// file, and the CLI exposes it as --max-file-bytes.
-std::uint64_t payload_cap(const WalkOptions& opts) {
-    return opts.limits.max_file_bytes;
+// allocation bound. max_file_bytes is the right knob for the entry -- the
+// payload becomes one file, and the CLI exposes it as --max-file-bytes -- but
+// it now tracks the image size (core/Limits.h), and on a 16 GiB eMMC dump that
+// alone would let one hostile stream ask for 16 GiB of RAM.
+//
+// max_decompress_ratio is the guard meant for exactly that, and it is the
+// right one here because a stream is the case max_file_bytes cannot cover: a
+// stored entry's size is known from metadata before a byte is written, a
+// decompressed one's is not known until it has been produced. QnxIfsReader
+// bounds its blocks the same way. Measured against the corpus the widest real
+// expansion is 32x, so 1000x leaves ample room while a bomb still trips.
+std::uint64_t payload_cap(const WalkOptions& opts, std::uint64_t compressed_bytes) {
+    const Limits& L = opts.limits;
+    if (L.max_decompress_ratio == 0) return L.max_file_bytes;
+    return std::min<std::uint64_t>(L.max_file_bytes,
+                                   sat_mul(compressed_bytes, L.max_decompress_ratio));
 }
 
 // gzip and xz both carry the original name in the header on some producers,
@@ -104,8 +122,8 @@ Status StreamReader::walk(Sink& sink, const WalkOptions& opts, WalkResult& out) 
 
     std::vector<std::uint8_t> payload;
     std::uint64_t consumed = 0;
-    const Status st =
-        compress::decompress_stream(codec_, *mapped, payload, payload_cap(opts), consumed);
+    const Status st = compress::decompress_stream(codec_, *mapped, payload,
+                                                  payload_cap(opts, span_.size()), consumed);
     consumed_ = consumed;
     produced_ = payload.size();
 
@@ -154,10 +172,15 @@ Status StreamReader::walk(Sink& sink, const WalkOptions& opts, WalkResult& out) 
         } else {
             truncated_ = true;
             out.truncated = true;
-            out.diagnostics.push_back({Severity::Warning, kCodeLimitFileBytes,
-                                       "the " + format_ + " payload exceeds max_file_bytes (" +
-                                           std::to_string(payload_cap(opts)) +
-                                           "); data cut there"});
+            const std::uint64_t cap = payload_cap(opts, span_.size());
+            const bool by_ratio = cap < opts.limits.max_file_bytes;
+            out.diagnostics.push_back(
+                {Severity::Warning, kCodeLimitFileBytes,
+                 "the " + format_ + " payload exceeds " +
+                     (by_ratio ? "max_decompress_ratio x the " + std::to_string(span_.size()) +
+                                     " compressed bytes"
+                               : std::string("max_file_bytes")) +
+                     " (" + std::to_string(cap) + "); data cut there"});
         }
     }
 

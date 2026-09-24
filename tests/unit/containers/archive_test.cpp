@@ -302,6 +302,50 @@ TEST(TarContainer, TruncatedArchiveKeepsWhatItHasAndSaysSo) {
     EXPECT_TRUE(has_code(w.r.diagnostics, "tar-truncated"));
 }
 
+// A cap that cuts an entry short must not also erase it. `emit_span_file` had
+// been handing back a complete EntryResult -- host path, digests over the bytes
+// that landed, `truncated` set -- and then returning the failed write Status,
+// so every container reader took the "a refusal applies to that entry only"
+// branch and dropped it. The bytes stayed on the disk. The listing said
+// `entries: []`, and the manifest said `files=0`, for a case directory that
+// held the file: a forensic output naming nothing that produced it.
+TEST(TarContainer, AnEntryCutByAByteLimitStillReachesTheListing) {
+    Bytes img;
+    append(img, tar_header("keep.txt", 4, '0'));
+    append_data(img, "abcd");
+    append(img, tar_header("big.bin", 3000, '0'));
+    append_data(img, std::string(3000, 'x'));
+    img.resize(img.size() + 1024, 0);
+    std::shared_ptr<const Source> keep;
+    auto reader = make("tar");
+    ASSERT_TRUE(reader->open(span_of(img, keep)));
+
+    Limits lim;
+    lim.max_file_bytes = 1000;
+    lim.max_file_bytes_ratio = 0;  // the cap exactly, as an explicit flag sets it
+    const Walked w = walk_it(*reader, lim);
+    ASSERT_TRUE(w.st);
+
+    // Both members are counted, not just the one that fitted.
+    EXPECT_EQ(w.r.entries, 2u);
+    EXPECT_EQ(w.r.files, 2u);
+    EXPECT_TRUE(w.r.truncated) << "the walk has to admit something was cut";
+
+    const EntryResult* big = entry_named(w.r, "big.bin");
+    ASSERT_NE(big, nullptr) << "the cut entry was dropped from the listing";
+    EXPECT_TRUE(big->truncated);
+    EXPECT_EQ(big->meta.size, 3000u) << "what the archive said the file was";
+    EXPECT_EQ(big->digests.bytes, 1000u) << "what was actually recovered";
+    EXPECT_TRUE(has_code(big->diagnostics, "sink-limit-file-bytes"))
+        << "the entry has to say which limit cut it";
+
+    // The entry that fitted is untouched and not marked.
+    const EntryResult* small = entry_named(w.r, "keep.txt");
+    ASSERT_NE(small, nullptr);
+    EXPECT_FALSE(small->truncated);
+    EXPECT_EQ(small->digests.bytes, 4u);
+}
+
 TEST(TarContainer, EntryLimitStopsTheWalk) {
     Bytes img;
     for (int i = 0; i < 40; ++i) {

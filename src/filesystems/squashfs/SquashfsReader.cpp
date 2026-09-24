@@ -1581,6 +1581,9 @@ void SquashfsReader::Impl::emit_regular(const FileMeta& meta, Inode& ino, Walk& 
         r.truncated = true;
     }
     if (truncated) r.truncated = true;
+    // The walk has to admit it: a coverage row saying "supported" over a
+    // cut entry reads as a clean extraction.
+    if (r.truncated) w.out->truncated = true;
     w.out->bytes += r.digests.bytes;
     w.out->entries++;
     w.out->files++;
