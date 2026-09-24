@@ -150,8 +150,37 @@ class LinuxAnalyzer final : public Analyzer {
         // modules themselves always name the release, but a release directory
         // holding no modules has no paths. The union has neither hole.
         std::set<std::string> found;
-        for (const std::string& d : t.list_dir("lib/modules")) found.insert(d);
+        for (const std::string& d : t.list_dir("lib/modules")) {
+            // A release is a *directory*. `list_dir` returns files too, and
+            // plenty of vendors drop loose modules straight into lib/modules
+            // -- the auto-ivi unit has `tcc_nand.ko` there and an SPI part has
+            // `tx_pwr.conf`, which were read as kernel releases named
+            // `tcc_nand.ko` and `tx_pwr.conf` holding zero modules each.
+            const std::string sub = std::string(kModulesRoot) + "/" + d;
+            if (!t.has_dir(sub)) continue;
+            // A directory under lib/modules is a kernel release when it holds
+            // modules, or when it is named like one. The auto-ivi unit has a
+            // `tcm3800` directory of firmware next to `3.18.24-tcc`, and
+            // calling it a kernel release reported a version that does not
+            // exist. Every release in the corpus starts with a digit and
+            // carries a dot: 2.6.22.19, 3.10.27, 3.18.24-tcc, 4.14.63, 5.4.55.
+            bool holds_modules = false;
+            for (const std::string& f : t.files_under(sub))
+                if (is_module(f)) {
+                    holds_modules = true;
+                    break;
+                }
+            const bool looks_like_release =
+                !d.empty() && std::isdigit(static_cast<unsigned char>(d.front())) != 0 &&
+                d.find('.') != std::string::npos;
+            if (holds_modules || looks_like_release) found.insert(d);
+        }
         for (const std::string& f : t.files_under("lib/modules")) {
+            // Only a *module's* path names a release. This source exists for
+            // an archive built without directory members, and taking the
+            // first component of every file under lib/modules instead made a
+            // firmware directory called `tcm3800` into a kernel release.
+            if (!is_module(f)) continue;
             const std::string_view rest(f.c_str() + kModulesRoot.size() + 1);
             const std::size_t slash = rest.find('/');
             if (slash != std::string_view::npos) found.emplace(rest.substr(0, slash));
@@ -176,11 +205,30 @@ class LinuxAnalyzer final : public Analyzer {
                                          "); which one boots is not recorded in the filesystem"});
             release = releases.back();  // the newest by sort order, reported as one of several
         }
-        if (release.empty()) return;
+        // No release directory at all, but modules sitting loose in
+        // lib/modules: the drivers are there and the version is simply not
+        // written down anywhere. Report what there is rather than nothing.
+        if (release.empty()) {
+            const std::vector<std::string> loose = t.files_under(std::string(kModulesRoot));
+            bool any = false;
+            for (const std::string& p : loose)
+                if (is_module(p)) any = true;
+            if (!any) return;
+            describe_modules(t, r, std::string(kModulesRoot), /*release=*/{});
+            return;
+        }
 
         const std::string root = std::string(kModulesRoot) + "/" + release;
         add(r, "kernel.version", release, root);
+        describe_modules(t, r, root, release);
+    }
 
+    // The modules under `root`, and what they say. `release` is the
+    // directory's name when there is one and empty when the modules sit
+    // loose in lib/modules, in which case the version is simply not
+    // written down and the vermagic has nothing to be checked against.
+    static void describe_modules(const Tree& t, Report& r, const std::string& root,
+                                 const std::string& release) {
         const std::vector<std::string> under = t.files_under(root);
         std::vector<std::string> modules;
         std::map<std::string, unsigned> by_subsystem;
@@ -246,7 +294,7 @@ class LinuxAnalyzer final : public Analyzer {
             if (vm.empty()) continue;
             add(r, "kernel.vermagic", vm, p);
             const std::string claimed = leading_version(vm);
-            if (!claimed.empty() && claimed != release)
+            if (!release.empty() && !claimed.empty() && claimed != release)
                 r.diagnostics.push_back(
                     {Severity::Warning, kCodeKernelMismatch,
                      "'" + p + "' was built for kernel " + claimed + " but is installed under " +

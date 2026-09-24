@@ -493,6 +493,55 @@ TEST(PlatformLinux, ReadsTheDriversCompiledIntoTheKernel) {
     EXPECT_EQ(fact(r, "kernel.builtin.count")->source, "lib/modules/5.4.55/modules.builtin");
 }
 
+// `lib/modules` is not only release directories. Vendors drop loose modules
+// and stray config into it, and reading every direct child as a release name
+// reported the auto-ivi unit as running kernel "tcc_nand_core.ko" and an SPI
+// part as running "tx_pwr.conf", each with zero modules.
+TEST(PlatformLinux, LooseFilesInLibModulesAreNotKernelReleases) {
+    const TempDir tmp;
+    Fs fs = openwrt(tmp.path(), "root:*:0:0:99999:7:::\n");
+    fs.dir("lib/modules")
+        .file("lib/modules/tcc_nand.ko", "")
+        .file("lib/modules/tcc_nand_core.ko", "")
+        .file("lib/modules/tx_pwr.conf", "not a module");
+
+    auto a = AnalyzerRegistry::instance().create(Platform::Linux);
+    Report r;
+    a->describe(fs.tree(), r);
+
+    EXPECT_EQ(fact(r, "kernel.version"), nullptr) << "no release directory, so no version";
+    EXPECT_EQ(fact(r, "kernel.versions"), nullptr);
+    // The drivers are still there and are still worth reporting.
+    ASSERT_NE(fact(r, "kernel.modules.count"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.modules.count")->value, "2") << "the .conf is not a module";
+    EXPECT_EQ(fact(r, "kernel.modules.count")->source, "lib/modules");
+    ASSERT_NE(fact(r, "kernel.modules.names"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.modules.names")->value, "tcc_nand,tcc_nand_core");
+}
+
+// A directory under lib/modules is a release when it holds modules or is
+// named like one. The auto-ivi unit keeps firmware in `tcm3800` beside the
+// real `3.18.24-tcc`.
+TEST(PlatformLinux, ADirectoryOfFirmwareIsNotAKernelRelease) {
+    const TempDir tmp;
+    Fs fs = openwrt(tmp.path(), "root:*:0:0:99999:7:::\n");
+    fs.dir("lib/modules")
+        .dir("lib/modules/3.18.24-tcc")
+        .file("lib/modules/3.18.24-tcc/vpu_lib.ko", "")
+        .dir("lib/modules/tcm3800")
+        .file("lib/modules/tcm3800/blob.bin", "firmware, not a module");
+
+    auto a = AnalyzerRegistry::instance().create(Platform::Linux);
+    Report r;
+    a->describe(fs.tree(), r);
+
+    ASSERT_NE(fact(r, "kernel.version"), nullptr);
+    EXPECT_EQ(fact(r, "kernel.version")->value, "3.18.24-tcc");
+    EXPECT_EQ(fact(r, "kernel.versions"), nullptr) << "only one release, so no ambiguity";
+    EXPECT_FALSE(has_code(r.diagnostics, "platform-linux-multiple-kernels"));
+    EXPECT_EQ(fact(r, "kernel.modules.count")->value, "1");
+}
+
 // A Linux system with no modules at all is normal (everything built in), and
 // says nothing about the kernel rather than guessing.
 TEST(PlatformLinux, NoModulesDirectoryMeansNoKernelFacts) {
