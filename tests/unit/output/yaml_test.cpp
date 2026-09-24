@@ -98,6 +98,53 @@ TEST(Yaml, Deterministic) {
     EXPECT_EQ(a.back(), '\n');
 }
 
+// Case identity is the examiner's statement about the case, and a report
+// re-rendered years later has to still name them -- which means it has to
+// survive the manifest, not just the command line that supplied it.
+TEST(Yaml, CaseIdentityRoundTripsAndIsAbsentWhenUnset) {
+    Manifest m = full_manifest();
+    ASSERT_TRUE(m.case_info.empty()) << "analyze() must never set this itself";
+
+    // Unset: no block at all, so a case made without the flags is identical to
+    // one made before they existed.
+    const std::string without = manifest_to_yaml(m);
+    EXPECT_EQ(without.find("\ncase:\n"), std::string::npos);
+
+    m.case_info.id = "EX-2026-0147";
+    m.case_info.examiner = "A. Examiner";
+    m.case_info.notes = "Recovered under warrant; scope limited to user data.";
+    const std::string with = manifest_to_yaml(m);
+    EXPECT_NE(with.find("\ncase:\n"), std::string::npos);
+
+    Manifest back;
+    const Status st = manifest_from_yaml(with, back);
+    ASSERT_TRUE(st.ok) << st.error;
+    EXPECT_EQ(back.case_info.id, m.case_info.id);
+    EXPECT_EQ(back.case_info.examiner, m.case_info.examiner);
+    EXPECT_EQ(back.case_info.notes, m.case_info.notes);
+    EXPECT_EQ(manifest_to_yaml(back), with);
+
+    // One field is enough to write the block, and the others come back empty
+    // rather than missing.
+    Manifest one;
+    one.case_info.examiner = "Solo";
+    Manifest one_back;
+    ASSERT_TRUE(manifest_from_yaml(manifest_to_yaml(one), one_back).ok);
+    EXPECT_EQ(one_back.case_info.examiner, "Solo");
+    EXPECT_TRUE(one_back.case_info.id.empty());
+    EXPECT_FALSE(one_back.case_info.empty());
+}
+
+// A manifest written before the block existed still reads, and reads as
+// "nothing was stated" rather than failing.
+TEST(Yaml, AManifestWithNoCaseBlockStillReads) {
+    const Manifest m = full_manifest();
+    Manifest back;
+    const Status st = manifest_from_yaml(manifest_to_yaml(m), back);
+    ASSERT_TRUE(st.ok) << st.error;
+    EXPECT_TRUE(back.case_info.empty());
+}
+
 TEST(Yaml, RoundTripIsByteIdentical) {
     const Manifest m = full_manifest();
     const std::string a = manifest_to_yaml(m);

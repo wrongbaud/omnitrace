@@ -21,6 +21,9 @@
     "run": {
       "$ref": "#/$defs/run"
     },
+    "case": {
+      "$ref": "#/$defs/case"
+    },
     "evidence": {
       "type": "array",
       "items": {
@@ -102,6 +105,30 @@
             "type": "string"
           },
           "description": "Command line of the run."
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "description": "Examiner-supplied case identity; absent when none was given.",
+      "required": [
+        "id",
+        "examiner",
+        "notes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Case, exhibit or job number."
+        },
+        "examiner": {
+          "type": "string",
+          "description": "Who ran the tool."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free text carried into the report."
         }
       }
     },

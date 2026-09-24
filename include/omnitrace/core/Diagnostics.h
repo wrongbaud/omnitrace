@@ -14,7 +14,9 @@
 /// code has shipped in a manifest it never changes meaning.
 #pragma once
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace omnitrace {
@@ -25,6 +27,12 @@ enum class Severity : std::uint8_t { Info, Warning, Error };
 /// Stable name of a severity: "info", "warning", "error" (never null; "unknown"
 /// for an out-of-range value). These strings land in manifest.yaml.
 const char* severity_name(Severity s);
+/// Reverse of `severity_name`; `nullopt` when the text is not one of them.
+///
+/// Lives here rather than in a renderer because both `output` (reading a
+/// manifest back) and `rules` (reading an artifacts.yaml back) need it, and
+/// two copies of a mapping between a name and an enum drift.
+std::optional<Severity> severity_from_name(std::string_view s);
 
 /// One caveat attached to a Node, Finding, EntryResult, WalkResult or the run.
 struct Diagnostic {

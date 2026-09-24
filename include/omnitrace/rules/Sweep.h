@@ -64,10 +64,37 @@ struct SweepResult {
 Status sweep(const Engine& engine, const Manifest& m, const discovery::Listings& listings,
              const Span& image, const ScanLimits& limits, SweepResult& out);
 
+/// Schema tag written as the first key of `artifacts.yaml` and checked on read.
+inline constexpr const char* kArtifactsSchema = "omnitrace-artifacts/1";
+
 /// `artifacts.yaml`: the hits, grouped by rule, with their provenance.
 std::string artifacts_to_yaml(const Manifest& m, const SweepResult& r);
 /// `artifacts.md`: the same for a person — a summary by severity and
 /// category, then a table per rule that fired.
 std::string artifacts_to_markdown(const Manifest& m, const SweepResult& r);
+
+/// Read an `artifacts.yaml` back into a `SweepResult`. Fails (never throws)
+/// with "artifacts: ..." on a YAML error, a `schema` other than
+/// `omnitrace-artifacts/1`, or a missing/mistyped field; `out` is untouched on
+/// failure.
+///
+/// The inverse of `artifacts_to_yaml`, and the last piece that lets
+/// `omnitrace report <case>` rebuild every section from a case directory. A
+/// sweep wants the *image* -- re-reading a 16 GiB dump to re-find hits the
+/// case already records is work for no gain -- so this is how the search
+/// section comes back without one.
+///
+/// Two fields do not survive the round trip, and neither is one a report uses:
+/// `host_path`, which the writer does not record because a hit is placed by
+/// `node` and `path`, and `Hit::match`/`context` for a hit whose bytes were
+/// not quoted. The summary counters come from the file rather than being
+/// recounted, because `files_scanned` and the region tallies cannot be derived
+/// from the hits.
+///
+/// A `summary.hits` that disagrees with the number of `hits:` entries is a
+/// **failure**, not a smaller result: the usual cause is a file cut short
+/// while being written, and a report that quietly said "0 hits" over a
+/// truncated sweep would be the most misleading thing this could produce.
+Status artifacts_from_yaml(const std::string& text, SweepResult& out);
 
 }  // namespace omnitrace::rules

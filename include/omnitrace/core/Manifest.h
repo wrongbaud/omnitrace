@@ -37,6 +37,26 @@ struct RunInfo {
     std::vector<std::string> argv;        ///< The command line.
 };
 
+/// Who is accountable for this case, as the examiner stated it.
+///
+/// Separate from `RunInfo` because the two answer different questions and
+/// only one of them is derived: `RunInfo` records what the tool did, and
+/// every field of it comes from the tool. Nothing here does. It is supplied
+/// on the command line, it is not checked against anything, and a report
+/// repeats it as the claim of the person who ran the analysis -- which is
+/// exactly what a report needs to carry out of the lab, and what a manifest
+/// has to keep so that re-rendering the case months later still names them.
+struct CaseInfo {
+    std::string id;        ///< Case, exhibit or job number.
+    std::string examiner;  ///< Who ran the tool.
+    std::string notes;     ///< Free text: scope, authority, anything the report should carry.
+
+    /// Nothing was supplied. The YAML block is written only when this is
+    /// false, so a case made without these flags is byte-identical to one
+    /// made before they existed.
+    bool empty() const { return id.empty() && examiner.empty() && notes.empty(); }
+};
+
 /// The whole case as data: run info, evidence, the node graph, coverage,
 /// tools and run-level diagnostics.
 ///
@@ -49,6 +69,7 @@ class Manifest {
     static constexpr const char* kSchema = "omnitrace/1";
 
     RunInfo run;                          ///< Left to the caller by `analyze()`.
+    CaseInfo case_info;                   ///< Examiner-supplied; `analyze()` never sets it.
     std::vector<Evidence> evidence;       ///< One row per input file.
     std::vector<Coverage> coverage;       ///< One row per format met.
     std::vector<ToolRecord> tools;        ///< External tools run (none today).

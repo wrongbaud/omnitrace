@@ -52,6 +52,7 @@ evidence rows is not "verified" either.
 
 | section | from |
 |---|---|
+| Examiner's notes | `--notes`, when given (see below) |
 | Evidence | the manifest's evidence rows, plus the live integrity check |
 | Structure | node counts, formats identified, the partition and filesystem map |
 | Platforms | the analyzers (`docs/ANALYZERS.md`) |
@@ -77,9 +78,20 @@ decoupling that `docs/ANALYZERS.md` argues for is what this subcommand spends.
 A case made on another machine, by an older build, or from evidence that is no
 longer attached still produces platforms and artifacts.
 
-**The search section is the one that is not rebuilt.** A sweep wants the image
-rather than the case, and re-reading a 16 GiB dump to re-find hits already
-written to `artifacts.yaml` is work for no gain.
+**The search packs are the one thing not re-run**, and they do not need to be.
+A sweep wants the image rather than the case, and re-reading a 16 GiB dump to
+re-find hits already written to `artifacts.yaml` is work for no gain — so the
+hits are read back out of that file instead (`rules::artifacts_from_yaml`).
+What the section shows is therefore the sweep that happened, not a second
+opinion about it.
+
+That reader is stricter than it looks, for one reason. A file cut short while
+being written parses perfectly well and yields fewer hits than its own
+`summary.hits` claims, and a report quietly printing the smaller number as a
+finding is the most misleading thing this could produce. A disagreement is a
+**failure**, and the CLI says `report-hits-unreadable` and omits the section
+rather than understating it. A case with no `artifacts.yaml` at all is a
+different thing — no packs ran — and the section is simply absent.
 
 What a moved or gutted case does:
 
@@ -93,9 +105,43 @@ A recorded `host_path` outside the case directory is **never** followed. It
 belongs to another machine or another case, and following it produced a report
 about somebody else's bytes — which is the bug that rule exists to prevent.
 
+The claim is measured rather than argued: re-rendering a *copy* of the
+110,937-node QNX case reproduces **all seven sections byte-identically** to
+the ones `analyze` wrote, 53,402 search hits included. The only difference in
+the whole document is the case directory's name in the subtitle, which is
+correct — it is a different directory.
+
 The integrity check runs either way, and is reason enough on its own:
 re-hashing evidence months later, against a case made then, is exactly the
 question to answer before relying on anything in it.
+
+`--out DIR` writes the two files somewhere else and leaves the case untouched.
+
+## Who says so
+
+A report that cannot name the person making its claims is not much use outside
+the machine that produced it. `analyze` and `report` both take `--case-id`,
+`--examiner` and `--notes`, and `analyze` writes them into `INFO.yaml` under
+`case:` so that re-rendering the case years later still names them.
+
+Nothing here is derived. Every other field in the header comes from the tool
+or from the evidence and can be checked against something; these come from the
+examiner, are checked against nothing, and are repeated as **their** claim.
+That is why they are a separate `CaseInfo` rather than more fields on
+`RunInfo`, which records only what the tool did.
+
+`--case-id` and `--examiner` are rows in the header grid. `--notes` is its own
+section, because free text of any length does not belong in a two-column grid.
+A flag given to `report` overrides that one field and leaves the others alone:
+adding a case number to an old case must not silently drop the examiner's
+name. The block is written only when at least one field is set, so a case made
+without them is byte-identical to one made before the flags existed.
+
+These strings reach the markup like any other, and the renderers escape them
+for their own format — a case number containing `|` does not break a Markdown
+table and one containing `<script>` does not survive into the HTML. The
+threat model is not a hostile examiner; it is a case number pasted from a
+system that allows anything.
 
 ## Known gaps
 
@@ -103,8 +149,6 @@ question to answer before relying on anything in it.
   stylesheet inverts the palette for paper.
 * **No figures.** §7's `Figure(base64)` block is not modelled; nothing in a
   firmware report needs one yet.
-* **Search hits are not recovered.** `report` rebuilds six sections of seven;
-  the seventh needs an `artifacts.yaml` reader or a re-sweep of the image.
 * **No C ABI or pybind11 module.** §7 wants both so OmniSonde can adopt this;
   the layer is shaped for it (core-only, no exceptions across the boundary)
   but neither is written.

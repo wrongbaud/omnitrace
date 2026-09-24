@@ -1,6 +1,8 @@
 // Sweep.cpp — run the rules over a finished case and render what they found.
 #include "omnitrace/rules/Sweep.h"
 
+#include <yaml-cpp/yaml.h>
+
 #include <algorithm>
 #include <fstream>
 #include <map>
@@ -163,7 +165,7 @@ Status sweep(const Engine& engine, const Manifest& m, const discovery::Listings&
 
 std::string artifacts_to_yaml(const Manifest& m, const SweepResult& r) {
     (void)m;
-    std::string y = "schema: omnitrace-artifacts/1\n";
+    std::string y = "schema: " + std::string(kArtifactsSchema) + "\n";
     y += "summary:\n";
     y += "  hits: " + std::to_string(r.hits.size()) + "\n";
     y += "  files_scanned: " + std::to_string(r.files_scanned) + "\n";
@@ -275,6 +277,148 @@ std::string artifacts_to_markdown(const Manifest& m, const SweepResult& r) {
         out += "\n";
     }
     return out;
+}
+
+namespace {
+
+// artifacts.yaml is written by hand above rather than through an emitter, so
+// it is read back by hand too. The schema is small and flat; what matters is
+// that a field this cannot parse is an error rather than a default, because
+// every default here is a number a report would print as fact.
+struct ReadCtx {
+    std::string error;
+    bool fail(const std::string& what) {
+        error = "artifacts: " + what;
+        return false;
+    }
+};
+
+bool want_map(const YAML::Node& n, const char* key, YAML::Node& out, ReadCtx& c) {
+    out = n[key];
+    if (!out.IsDefined() || out.IsNull()) {
+        out = YAML::Node();
+        return true;  // absent is allowed; the caller decides whether it matters
+    }
+    if (!out.IsMap()) return c.fail(std::string(key) + " must be a map");
+    return true;
+}
+
+bool want_u64(const YAML::Node& n, const char* key, std::uint64_t& out, ReadCtx& c) {
+    const YAML::Node v = n[key];
+    if (!v.IsDefined() || v.IsNull()) return true;  // keep the default
+    if (!v.IsScalar()) return c.fail(std::string(key) + " must be a number");
+    try {
+        out = v.as<std::uint64_t>();
+    } catch (const YAML::Exception&) {
+        return c.fail(std::string(key) + " is not a number");
+    }
+    return true;
+}
+
+bool want_str(const YAML::Node& n, const char* key, std::string& out, ReadCtx& c) {
+    const YAML::Node v = n[key];
+    if (!v.IsDefined() || v.IsNull()) return true;
+    if (!v.IsScalar()) return c.fail(std::string(key) + " must be a string");
+    out = v.Scalar();
+    return true;
+}
+
+}  // namespace
+
+Status artifacts_from_yaml(const std::string& text, SweepResult& out) {
+    YAML::Node root;
+    try {
+        root = YAML::Load(text);
+    } catch (const YAML::Exception& ex) {
+        return Status::fail(std::string("artifacts: yaml parse error: ") + ex.what());
+    } catch (const std::exception& ex) {
+        return Status::fail(std::string("artifacts: yaml parse error: ") + ex.what());
+    }
+    if (!root.IsMap()) return Status::fail("artifacts: document must be a map");
+
+    ReadCtx c;
+    SweepResult read;
+    std::uint64_t claimed_hits = 0;
+    try {
+        std::string schema;
+        if (!want_str(root, "schema", schema, c)) return Status::fail(c.error);
+        if (schema != kArtifactsSchema)
+            return Status::fail("artifacts: schema is '" + schema + "', expected '" +
+                                std::string(kArtifactsSchema) + "'");
+
+        YAML::Node summary;
+        if (!want_map(root, "summary", summary, c)) return Status::fail(c.error);
+        if (summary.IsMap()) {
+            bool truncated = false;
+            const YAML::Node t = summary["truncated"];
+            if (t.IsDefined() && !t.IsNull()) {
+                if (!t.IsScalar()) return Status::fail("artifacts: truncated must be a bool");
+                truncated = t.Scalar() == "true";
+            }
+            read.truncated = truncated;
+            if (!want_u64(summary, "hits", claimed_hits, c) ||
+                !want_u64(summary, "files_scanned", read.files_scanned, c) ||
+                !want_u64(summary, "regions_scanned", read.regions_scanned, c) ||
+                !want_u64(summary, "regions_skipped", read.regions_skipped, c) ||
+                !want_u64(summary, "bytes_scanned", read.bytes_scanned, c))
+                return Status::fail(c.error);
+        }
+
+        const YAML::Node diags = root["diagnostics"];
+        if (diags.IsDefined() && !diags.IsNull() && diags.IsSequence()) {
+            for (const YAML::Node& d : diags) {
+                if (!d.IsMap()) return Status::fail("artifacts: a diagnostic must be a map");
+                Diagnostic out_d;
+                std::string sev;
+                if (!want_str(d, "severity", sev, c) || !want_str(d, "code", out_d.code, c) ||
+                    !want_str(d, "message", out_d.message, c))
+                    return Status::fail(c.error);
+                const auto parsed = omnitrace::severity_from_name(sev);
+                if (!parsed)
+                    return Status::fail("artifacts: a diagnostic has severity '" + sev +
+                                        "', which is not a severity");
+                out_d.severity = *parsed;
+                read.diagnostics.push_back(std::move(out_d));
+            }
+        }
+
+        const YAML::Node hits = root["hits"];
+        if (hits.IsDefined() && !hits.IsNull() && hits.IsSequence()) {
+            std::size_t i = 0;
+            for (const YAML::Node& h : hits) {
+                if (!h.IsMap())
+                    return Status::fail("artifacts: hits item " + std::to_string(i) +
+                                        " must be a map");
+                ArtifactHit a;
+                std::string sev;
+                if (!want_str(h, "rule", a.hit.rule, c) || !want_str(h, "pack", a.hit.pack, c) ||
+                    !want_str(h, "category", a.hit.category, c) ||
+                    !want_str(h, "severity", sev, c) || !want_str(h, "node", a.node, c) ||
+                    !want_str(h, "path", a.path, c) || !want_u64(h, "offset", a.hit.offset, c) ||
+                    !want_str(h, "match", a.hit.match, c) ||
+                    !want_str(h, "context", a.hit.context, c))
+                    return Status::fail(c.error);
+                if (!sev.empty() && !parse_severity(sev, a.hit.severity))
+                    return Status::fail("artifacts: hits item " + std::to_string(i) +
+                                        " has severity '" + sev + "', which is not a severity");
+                read.hits.push_back(std::move(a));
+                ++i;
+            }
+        }
+    } catch (const YAML::Exception& ex) {
+        return Status::fail(std::string("artifacts: yaml error: ") + ex.what());
+    }
+
+    // The guard that makes this worth trusting. A file cut short while being
+    // written parses cleanly and yields fewer hits than it claims, and the
+    // report would print the smaller number as a finding.
+    if (claimed_hits != read.hits.size())
+        return Status::fail("artifacts: summary claims " + std::to_string(claimed_hits) +
+                            " hit(s) but the document holds " + std::to_string(read.hits.size()) +
+                            "; the file is incomplete");
+
+    out = std::move(read);
+    return Status::success();
 }
 
 }  // namespace omnitrace::rules

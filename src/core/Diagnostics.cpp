@@ -15,6 +15,13 @@ const char* severity_name(Severity s) {
     return "unknown";
 }
 
+std::optional<Severity> severity_from_name(std::string_view s) {
+    if (s == "info") return Severity::Info;
+    if (s == "warning") return Severity::Warning;
+    if (s == "error") return Severity::Error;
+    return std::nullopt;
+}
+
 const char* confidence_tier(Confidence c) {
     // Any score is accepted: it is snapped down to the tier it satisfies, so a
     // Confidence built from a raw score still gets a stable name.

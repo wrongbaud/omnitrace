@@ -24,10 +24,8 @@ std::optional<Endian> endian_from_name(const std::string& s) {
 }
 
 std::optional<Severity> severity_from_name(const std::string& s) {
-    for (const Severity sev : {Severity::Info, Severity::Warning, Severity::Error}) {
-        if (s == severity_name(sev)) return sev;
-    }
-    return std::nullopt;
+    // One mapping, in core, because `rules` reads severities back too.
+    return omnitrace::severity_from_name(s);
 }
 
 std::string iso8601(std::int64_t unix_seconds) {

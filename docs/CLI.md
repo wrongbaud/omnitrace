@@ -282,8 +282,13 @@ omnitrace report case-router
 
 ```
 [info] re-examined 5 filesystem(s): 1 platform(s), 3 artifact record(s)
-[info] report: 6 section(s) written to case-router/report.html and report.md
+[info] recovered 412 search hit(s) from artifacts.yaml
+[info] report: 7 section(s) written to case-router/report.html and report.md
 ```
+
+`--out DIR` writes `report.html` and `report.md` somewhere else and leaves the
+case directory untouched, which is what sending a report on without handing
+over the evidence directory looks like.
 
 Three things are worth knowing before relying on it:
 
@@ -301,6 +306,35 @@ Three things are worth knowing before relying on it:
   deleted, still produces what the metadata supports** — paths, counts, names
   — and simply omits anything that needs file contents.
 
-The search-hit section is the one thing not rebuilt: a sweep wants the image
-rather than the case, and the hits are already in `artifacts.yaml`.
+The search packs are the one thing not re-*run* — a sweep wants the image
+rather than the case — but the section is still there: the hits are read back
+out of `artifacts.yaml`, so what the report shows is the sweep that happened
+rather than a second opinion about it. A case with no `artifacts.yaml` simply
+has no such section; one whose `artifacts.yaml` is there and does not parse
+says so (`report-hits-unreadable`) instead of quietly dropping it.
+
+## Case identity
+
+`analyze` and `report` both take `--case-id`, `--examiner` and `--notes`.
+Nothing here is derived from the evidence — it is the examiner's statement
+about the case, it is not checked against anything, and it is repeated in the
+report as their claim.
+
+```
+omnitrace analyze dump.bin --out case-router \
+  --case-id EX-2026-0147 --examiner "A. Examiner" \
+  --notes "Recovered under warrant 2026/887; scope limited to user data."
+```
+
+`--case-id` and `--examiner` become rows in the report header beside the tool
+and the evidence hash; `--notes` becomes its own section, because free text of
+any length does not belong in a two-column grid.
+
+They are written into `INFO.yaml` under `case:`, so `omnitrace report` on that
+case months later still names whoever ran it. Giving a flag to `report`
+overrides that one field and leaves the others alone — adding a case number to
+an old case does not silently drop the examiner's name. The block is written
+only when at least one field is given, so a case made without them is
+byte-identical to one made before the flags existed.
+
 `docs/REPORT.md` covers the document model and the integrity gate.

@@ -82,15 +82,22 @@ suppressed: every offset in a report refers to the bytes the case recorded.
 
 `omnitrace report <case>` re-examines a finished case rather than re-rendering
 the manifest: it reads every `listing.yaml` back and runs the analyzers and
-the extractors again over the recovered entries. That is the decoupling in §5
-and §7 being spent — those layers take entries and nothing about how the
-extraction happened, so a case directory alone is enough.
+the extractors again over the recovered entries, and reads the search hits
+back out of `artifacts.yaml` rather than re-sweeping a 16 GiB image to find
+what the case already lists. That is the decoupling in §5 and §7 being spent —
+those layers take entries and nothing about how the extraction happened, so a
+case directory alone is enough. Measured: re-rendering a copy of the
+110,937-node QNX case reproduces all seven sections byte-identically.
+
+A report also names who is making its claims. `--case-id`, `--examiner` and
+`--notes` are kept in the manifest, not just passed to the renderer, so a case
+re-rendered years later still names whoever ran it.
 
 ### Throughout
 
-Coverage rows state what was *not* done. 450 diagnostic codes, each catalogued
+Coverage rows state what was *not* done. 482 diagnostic codes, each catalogued
 with a meaning and an action. `analyze` will not fill the disk it writes to.
-867 tests across 9 suites; gcc, clang and ASan all green.
+917 tests across 9 suites; gcc, clang and ASan all green.
 
 ## Phases
 

@@ -9,7 +9,7 @@ to another tool. The original image is never modified and never copied unless
 
 ```
 DIR/
-├── INFO.yaml                 # the manifest (schema omnitrace/1): run, evidence, nodes, coverage, tools, diagnostics
+├── INFO.yaml                 # the manifest (schema omnitrace/1): run, case, evidence, nodes, coverage, tools, diagnostics
 ├── manifest.yaml             # alias of INFO.yaml: a symlink on POSIX, a byte copy on Windows
 ├── INFO.md                   # summary + partition map + "Partitions carved" table + coverage (rendered from INFO.yaml)
 ├── summary.md, partitions.md # compatibility renderings (INFO.md supersedes them)
@@ -47,6 +47,13 @@ The manifest, byte-identical for the same image and options except for
 The CLI re-reads what it wrote and refuses to exit 0 unless it re-serialises
 identically. `manifest.yaml` is the same document under the Phase 0 name so
 older consumers keep working; on POSIX it is a symlink to `INFO.yaml`.
+
+The optional `case:` block (`id`, `examiner`, `notes`) is the examiner's own
+statement, supplied by `--case-id` / `--examiner` / `--notes` and derived from
+nothing. It is written only when at least one is given, so a case made without
+them is byte-identical to one made before the block existed, and it is what
+lets `omnitrace report` name whoever ran the analysis years later
+(`docs/REPORT.md`).
 
 Node ids are `n` + six digits in insertion order. Partition tables and their
 entries are inserted first (they are the map everything else is placed on),

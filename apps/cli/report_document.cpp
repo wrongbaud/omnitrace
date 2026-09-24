@@ -344,12 +344,23 @@ report::Document build_report(const Manifest& m, const report::IntegrityResult* 
     doc.meta.title = "Forensic analysis";
     doc.meta.subtitle =
         m.evidence.empty() ? case_name : m.evidence.front().path + " — " + case_name;
+    if (!m.case_info.id.empty()) doc.meta.fields.emplace_back("Case", m.case_info.id);
+    if (!m.case_info.examiner.empty())
+        doc.meta.fields.emplace_back("Examiner", m.case_info.examiner);
     if (!m.run.tool.empty()) doc.meta.fields.emplace_back("Tool", m.run.tool + " " + m.run.version);
     if (!m.run.git_sha.empty()) doc.meta.fields.emplace_back("Build", m.run.git_sha);
     if (!m.run.started_at.empty()) doc.meta.fields.emplace_back("Analysed", m.run.started_at);
     if (!m.evidence.empty()) {
         doc.meta.fields.emplace_back("Evidence", m.evidence.front().path);
         doc.meta.fields.emplace_back("SHA-256", m.evidence.front().digests.sha256);
+    }
+
+    if (!m.case_info.notes.empty()) {
+        report::Section notes;
+        notes.title = "Examiner's notes";
+        notes.anchor = "notes";
+        notes.blocks.emplace_back(report::Paragraph{m.case_info.notes});
+        doc.sections.push_back(std::move(notes));
     }
 
     doc.sections.push_back(evidence_section(m, integrity));

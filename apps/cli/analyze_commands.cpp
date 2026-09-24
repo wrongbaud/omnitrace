@@ -200,6 +200,7 @@ struct AnalyzeArgs {
     std::vector<std::string> rule_packs;
     std::uint64_t max_hits = 100'000;
     bool no_extract = false, history = false;
+    CaseInfo case_info;
     Limits limits;
 };
 
@@ -423,6 +424,7 @@ void cmd_analyze(const AnalyzeArgs& a) {
     m.run.started_at = Clock::now_iso8601();
     m.run.host_os = host_os();
     m.run.argv = g_argv;
+    m.case_info = a.case_info;
 
     discovery::AnalyzeOptions opts;
     opts.out_dir = a.out;
@@ -594,13 +596,16 @@ namespace {
 // directory is enough to re-examine, and none of the evidence is read again
 // except to verify it.
 //
-// The search packs are the one thing not re-run -- a sweep wants the image
-// rather than the case, and the hits are already in artifacts.yaml.
+// The search packs are the one thing not re-*run* -- a sweep wants the image
+// rather than the case -- but they do not need to be: the hits the sweep found
+// are in artifacts.yaml, and reading them back is the last of the seven
+// sections.
 //
 // The integrity check is why this is worth having even when nothing has
 // changed: re-hashing evidence months later, against a case made then, is the
 // question to answer before relying on anything in it.
-void run_report(const std::string& case_dir) {
+void run_report(const std::string& case_dir, const std::string& out_dir,
+                const CaseInfo& override_case) {
     const std::filesystem::path dir(case_dir);
     const std::filesystem::path info = dir / "INFO.yaml";
     std::error_code ec;
@@ -613,6 +618,14 @@ void run_report(const std::string& case_dir) {
 
     Manifest m;
     if (const Status st = output::manifest_from_yaml(text, m); !st) fail(st.error);
+
+    // The case identity comes from the manifest, so a report re-rendered years
+    // later still names whoever ran the analysis. A flag given here overrides
+    // one field without clearing the others -- an examiner adding a case
+    // number to an old case should not silently drop the examiner's name.
+    if (!override_case.id.empty()) m.case_info.id = override_case.id;
+    if (!override_case.examiner.empty()) m.case_info.examiner = override_case.examiner;
+    if (!override_case.notes.empty()) m.case_info.notes = override_case.notes;
 
     // The listings are what make this more than a re-render of the manifest.
     // The post-analysis layers take entries and nothing about how extraction
@@ -640,17 +653,47 @@ void run_report(const std::string& case_dir) {
         refs.push_back({ev.id, ev.path, ev.digests.sha256, ev.size});
     const report::IntegrityResult integrity = report::verify_evidence(refs);
 
-    // The search packs are not re-run: a sweep needs the image, not the case,
-    // and re-reading a 16 GiB dump to re-find hits already written to
-    // artifacts.yaml is work for no gain. Everything else is rebuilt.
-    const report::Document doc =
-        cli::build_report(m, &integrity, &survey, &extracted, nullptr, dir.filename().string());
-    write_text(dir / "report.html", report::to_html(doc));
-    write_text(dir / "report.md", report::to_markdown(doc));
+    // The search packs are not re-run -- a sweep needs the image, not the case,
+    // and re-reading a 16 GiB dump to re-find hits the case already lists is
+    // work for no gain. They are read back instead, so the section is the one
+    // the sweep produced rather than a second opinion about it.
+    //
+    // A case without artifacts.yaml is normal (no packs ran, or an older
+    // build), and the section is simply absent. A file that is *there* and
+    // does not parse is not: that is said out loud, because silently dropping
+    // a section is how a report comes to understate what was found.
+    rules::SweepResult hits;
+    bool have_hits = false;
+    const std::filesystem::path artifacts_yaml = dir / "artifacts.yaml";
+    if (std::filesystem::exists(artifacts_yaml, ec)) {
+        std::ifstream af(artifacts_yaml, std::ios::binary);
+        const std::string atext((std::istreambuf_iterator<char>(af)),
+                                std::istreambuf_iterator<char>());
+        if (const Status st = rules::artifacts_from_yaml(atext, hits); !st) {
+            spdlog::warn("report-hits-unreadable: {}; the search section is omitted", st.error);
+        } else {
+            have_hits = true;
+            spdlog::info("recovered {} search hit(s) from artifacts.yaml", hits.hits.size());
+        }
+    }
+
+    const report::Document doc = cli::build_report(
+        m, &integrity, &survey, &extracted, have_hits ? &hits : nullptr, dir.filename().string());
+    // --out writes the report somewhere else and leaves the case untouched,
+    // which is what sending a report on without handing over the evidence
+    // directory looks like.
+    std::filesystem::path dest = dir;
+    if (!out_dir.empty()) {
+        dest = std::filesystem::path(out_dir);
+        std::filesystem::create_directories(dest, ec);
+        if (ec) fail("cannot create '" + out_dir + "': " + ec.message());
+    }
+    write_text(dest / "report.html", report::to_html(doc));
+    write_text(dest / "report.md", report::to_markdown(doc));
     if (!integrity.verified)
         spdlog::warn("the evidence could not be verified; the report's first section says why");
     spdlog::info("report: {} section(s) written to {}/report.html and report.md",
-                 doc.sections.size(), case_dir);
+                 doc.sections.size(), dest.string());
 }
 
 }  // namespace
@@ -658,10 +701,26 @@ void run_report(const std::string& case_dir) {
 void register_analyze_commands(CLI::App& app) {
     auto* rep = app.add_subcommand("report", "Re-render a finished case directory as a report");
     auto case_dir = std::make_shared<std::string>();
+    auto rep_out = std::make_shared<std::string>();
+    auto rep_case = std::make_shared<CaseInfo>();
     rep->add_option("case", *case_dir, "Case directory written by analyze")
         ->required()
         ->check(CLI::ExistingDirectory);
-    rep->callback([case_dir]() { run_report(*case_dir); });
+    rep->add_option("--out", *rep_out,
+                    "Directory to write report.html and report.md to (default: the case "
+                    "directory). The case itself is never modified");
+    // The examiner's statement about the case, not anything the tool derives.
+    // Spelled out on both subcommands rather than shared through a helper
+    // because scripts/gen_docs.py resolves a flag to its subcommand through
+    // the variable it is registered on, and a helper's parameter resolves to
+    // neither. Keep these three identical to the `analyze` copies below.
+    rep->add_option("--case-id", rep_case->id, "Case, exhibit or job number, recorded and reported")
+        ->group("Case");
+    rep->add_option("--examiner", rep_case->examiner, "Who ran the tool, recorded and reported")
+        ->group("Case");
+    rep->add_option("--notes", rep_case->notes, "Free text carried into the report header")
+        ->group("Case");
+    rep->callback([case_dir, rep_out, rep_case]() { run_report(*case_dir, *rep_out, *rep_case); });
 
     auto scan_args = std::make_shared<std::pair<std::string, bool>>();
     auto* scan = app.add_subcommand("scan", "Find format signatures in an image");
@@ -749,5 +808,17 @@ void register_analyze_commands(CLI::App& app) {
         // with, so naming the cap always means it exactly.
         if (max_file_bytes->count() > 0) args->limits.max_file_bytes_ratio = 0;
     });
+    // Keep identical to the `report` copies above; see the note there.
+    analyze
+        ->add_option("--case-id", args->case_info.id,
+                     "Case, exhibit or job number, recorded and reported")
+        ->group("Case");
+    analyze
+        ->add_option("--examiner", args->case_info.examiner,
+                     "Who ran the tool, recorded and reported")
+        ->group("Case");
+    analyze
+        ->add_option("--notes", args->case_info.notes, "Free text carried into the report header")
+        ->group("Case");
     analyze->callback([args] { cmd_analyze(*args); });
 }

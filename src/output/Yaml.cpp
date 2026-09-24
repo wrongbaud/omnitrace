@@ -583,6 +583,17 @@ bool read_run(const YAML::Node& root, RunInfo& r, Ctx& c) {
     return ok;
 }
 
+bool read_case(const YAML::Node& root, CaseInfo& ci, Ctx& c) {
+    YAML::Node n;
+    if (!get_map(root, "case", n, c)) return false;
+    if (!n.IsDefined()) return true;  // absent: a case made without the flags
+    Ctx sub{"case", {}};
+    const bool ok = get_str(n, "id", ci.id, sub) && get_str(n, "examiner", ci.examiner, sub) &&
+                    get_str(n, "notes", ci.notes, sub);
+    if (!ok) c.error = sub.error;
+    return ok;
+}
+
 bool read_evidence(const YAML::Node& root, std::vector<Evidence>& out, Ctx& c) {
     YAML::Node seq;
     if (!get_seq(root, "evidence", seq, c)) return false;
@@ -727,6 +738,7 @@ json build_schema() {
     props["schema"] =
         json{{"const", "omnitrace/1"}, {"description", "Manifest schema identifier."}};
     props["run"] = ref("run");
+    props["case"] = ref("case");
     props["evidence"] =
         json{{"type", "array"},
              {"items", ref("evidence")},
@@ -763,6 +775,18 @@ json build_schema() {
              {"host_os", string_schema("Host operating system label.")},
              {"argv", string_array_schema("Command line of the run.")}};
     defs["run"] = std::move(run);
+
+    // Optional: written only when the examiner supplied at least one field, so
+    // it is not in the top-level `required` list.
+    json case_info;
+    case_info["type"] = "object";
+    case_info["description"] = "Examiner-supplied case identity; absent when none was given.";
+    case_info["required"] = json::array({"id", "examiner", "notes"});
+    case_info["additionalProperties"] = false;
+    case_info["properties"] = json{{"id", string_schema("Case, exhibit or job number.")},
+                                   {"examiner", string_schema("Who ran the tool.")},
+                                   {"notes", string_schema("Free text carried into the report.")}};
+    defs["case"] = std::move(case_info);
 
     json digests;
     digests["type"] = "object";
@@ -961,6 +985,17 @@ std::string manifest_to_yaml(const Manifest& m) {
     emit_key_str(e, "host_os", m.run.host_os);
     emit_string_seq(e, "argv", m.run.argv);
     e << YAML::EndMap;
+
+    // Written only when the examiner supplied something, so a case made
+    // without the flags is byte-identical to one made before they existed and
+    // every checked-in expected manifest stays valid.
+    if (!m.case_info.empty()) {
+        e << YAML::Key << "case" << YAML::Value << YAML::BeginMap;
+        emit_key_str(e, "id", m.case_info.id);
+        emit_key_str(e, "examiner", m.case_info.examiner);
+        emit_key_str(e, "notes", m.case_info.notes);
+        e << YAML::EndMap;
+    }
 
     e << YAML::Key << "evidence" << YAML::Value;
     begin_seq(e, m.evidence.empty());
@@ -1197,6 +1232,7 @@ Status manifest_from_yaml(const std::string& text, Manifest& out) {
                                 Manifest::kSchema + "'");
         }
         if (!read_run(root, m.run, c)) return Status::fail(c.error);
+        if (!read_case(root, m.case_info, c)) return Status::fail(c.error);
         if (!read_evidence(root, m.evidence, c)) return Status::fail(c.error);
         YAML::Node nodes;
         if (!get_seq(root, "nodes", nodes, c)) return Status::fail(c.error);
