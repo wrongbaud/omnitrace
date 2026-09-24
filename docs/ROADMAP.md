@@ -138,43 +138,46 @@ are now carved. That image went from 16.8 % to 91.6 % of unblob.
 
 Every corpus image is in that number. The 7.8 GB auto-emmc eMMC is 99.7 % of
 unblob and 100.0 % of moria, the 7.8 GB audio 98.4 % and 100.0 %, the 3.8 GB
-Auto-ivi 99.8 % and 100.0 %. The 15.7 GB QNX unit scores 50 % of unblob, which
-is the one figure not to read as a score: neither baseline reads QNX6 or
-QNX-IFS, so OmniTrace recovers **23,833** contents there against unblob's 8
-and moria's 11, and "50 %" is four of eight (`docs/PARITY.md` §7).
+Auto-ivi 99.8 % and 100.0 %. The 15.7 GB QNX unit scores 62.5 % of unblob,
+which is the one figure not to read as a score: neither baseline reads QNX6 or
+QNX-IFS, so OmniTrace recovers **62,352** contents there against unblob's 8
+and moria's 11, and "62.5 %" is five of eight (`docs/PARITY.md` §7).
 
 ## Next, in order
 
-1. **Decompress the streams inside a QNX filesystem that the baselines do.**
-   The only piece of named work the finished measurement leaves: three gzip
-   payloads and one LZMA payload that unblob and moria decompress out of the
-   middle of the QNX unit's filesystems, which OmniTrace extracts the files of
-   but does not decompress (`docs/PARITY.md` §7). Everything else in the
-   difference is a recorded policy choice or a history fixture that is already
-   100 % of ground truth.
+1. **Decide whether to carve what a filesystem's metadata no longer claims.**
+   This is the only piece of named work the finished measurement leaves, and
+   it is a scope decision rather than a bug. The streams §7 used to blame on
+   decompression are seven gzipped QNX **slog device logs** whose bytes are
+   not reachable through the filesystem at all — an exact search across all
+   105,951 extracted files (20.2 GB) finds none of them, so OmniTrace never
+   holds them. Both baselines find them by scanning raw bytes without caring
+   what owns them.
 
-2. **Finish the parity measurement** on the two remaining multi-gigabyte
-   corpus images, `qnx` (15.7 GB) and `audio` (7.8 GB). Four tools over that
-   much evidence needs a disk budget and a long wall clock; everything else is
-   measured.
+   Carving in unallocated space is currently listed under "Not planned" as a
+   post-MVP track (`DEVELOPMENT_PLAN.md`). What this measurement adds to that
+   decision is that the thing sitting there is deleted device logs — one of
+   the four artefact classes Phase 2 exists to find — recovered from a vehicle
+   infotainment unit. Everything else in the parity difference is a recorded
+   policy choice or a history fixture already at 100 % of ground truth.
 
-3. **Validate the Android analyzer against a real Android tree.** Its markers
+2. **Validate the Android analyzer against a real Android tree.** Its markers
    come from documented AOSP layout, not evidence; the automotive Android unit's `la_super`
    is the image to check them against. The QNX model *was* aimed at evidence
    and the corpus still corrected six things its fixtures could not, including
    a `Tree` bug that silently disabled its strongest marker.
    `docs/ANALYZERS.md` says which parts are guesses.
 
-4. **More artifact extractors** (§5.5): SQLite with freelist recovery, logs
+3. **More artifact extractors** (§5.5): SQLite with freelist recovery, logs
    with a normalised timeline, ELF metadata. Certificates came first because
    the corpus had 131 of them and most of the rest of §5.5 overlaps what the
    packs and analyzers already do — an extractor earns its place by *parsing*
    something, not by matching it.
 
-5. **Phase 3**: fuzzing per reader under ASan/UBSan, a performance pass on
+4. **Phase 3**: fuzzing per reader under ASan/UBSan, a performance pass on
    large images, signed release artifacts for all three platforms.
 
-6. **Phase 4**: web UI, only after the CLI and library are released.
+5. **Phase 4**: web UI, only after the CLI and library are released.
 
 ## Good first improvements
 
