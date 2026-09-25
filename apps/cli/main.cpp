@@ -10,6 +10,8 @@
 #include "commands.h"
 #include "omnitrace/core/Hash.h"
 
+#include "omnitrace_gitsha.h"  // generated; see cmake/GitSha.cmake
+
 #ifndef OMNITRACE_VERSION
 #define OMNITRACE_VERSION "0.0.0"
 #endif
@@ -37,7 +39,10 @@ int main(int argc, char** argv) {
     set_process_argv(std::vector<std::string>(argv, argv + argc));
 
     CLI::App app{"OmniTrace: embedded systems forensic analysis"};
-    app.set_version_flag("--version", OMNITRACE_VERSION);
+    app.set_version_flag("--version", std::string(OMNITRACE_VERSION) +
+                                          (std::string(OMNITRACE_GIT_SHA).empty()
+                                               ? std::string{}
+                                               : " (" + std::string(OMNITRACE_GIT_SHA) + ")"));
     app.add_flag_callback(
         "-v,--verbose", [] { spdlog::set_level(spdlog::level::debug); }, "Debug logging");
 

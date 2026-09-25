@@ -44,6 +44,8 @@
 #include "omnitrace/rules/Sweep.h"
 #include "report_document.h"
 
+#include "omnitrace_gitsha.h"  // generated; see cmake/GitSha.cmake
+
 #ifndef OMNITRACE_VERSION
 #define OMNITRACE_VERSION "0.0.0"
 #endif
@@ -436,6 +438,9 @@ void cmd_analyze(const AnalyzeArgs& a) {
 
     Manifest m;
     m.run.version = OMNITRACE_VERSION;
+    // Which build, not just which version. A report shows it as "Build", and a
+    // case made by a modified tree says so with a `-dirty` suffix.
+    m.run.git_sha = OMNITRACE_GIT_SHA;
     m.run.started_at = Clock::now_iso8601();
     m.run.host_os = host_os();
     m.run.argv = g_argv;

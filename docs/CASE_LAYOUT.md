@@ -69,6 +69,11 @@ or `partitions/` appears.
 
 The manifest, byte-identical for the same image and options except for
 `run.started_at`, `run.finished_at`, `run.argv` and `evidence[].acquired_at`.
+`run.git_sha` names the commit the binary was built from and is constant for a
+given build; a build from a modified working tree carries a `-dirty` suffix,
+because the commit alone would name bytes that were never compiled. It is
+empty only when the build had no `.git` and was not told
+(`-DOMNITRACE_GIT_SHA=`).
 The CLI re-reads what it wrote and refuses to exit 0 unless it re-serialises
 identically. `manifest.yaml` is the same document under the Phase 0 name so
 older consumers keep working; on POSIX it is a symlink to `INFO.yaml`.

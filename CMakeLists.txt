@@ -10,6 +10,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)  # no C++20 modules; keeps clangd happy with GCC flags
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# Which commit produced this binary. Empty when built from an archive with no
+# .git and no -DOMNITRACE_GIT_SHA=...; see cmake/GitSha.cmake.
+set(OMNITRACE_GIT_SHA "" CACHE STRING "Commit to record in run.git_sha; auto-detected when empty")
+include(GitSha)
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
