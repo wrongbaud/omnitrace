@@ -28,6 +28,14 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # tests/fixtures/out is git-ignored, so a fresh checkout has no images.
+      # Without this the smoke test has nothing to run against, and the
+      # builder stage's ctest silently skips every fixture-backed suite --
+      # a container that passes its tests by not running them. The builder
+      # uses Docker with a pinned toolchain, which the runner already has.
+      - name: Build test fixtures
+        run: scripts/fixtures.sh build
+
       - name: Short commit
         id: sha
         run: echo "short=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"

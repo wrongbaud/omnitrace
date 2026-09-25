@@ -35,10 +35,23 @@ if(NOT TARGET yaml-cpp::yaml-cpp)
 endif()
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
-# Pin fmt >= 10 before spdlog's find_dependency(fmt): a distro may ship a
-# legacy fmt9 compat package whose config dir also matches the fmt* glob, and
-# linking a fmt-9 ABI against a spdlog built on fmt 12 fails at link time.
-find_package(fmt 10 CONFIG REQUIRED)
+# Resolve fmt before spdlog's own find_dependency(fmt), and prefer a modern
+# one: a distro may ship a legacy fmt9 compat package whose config dir also
+# matches the fmt* glob, and linking a fmt-9 ABI against a spdlog built on
+# fmt 12 fails at link time.
+#
+# The preference cannot be a hard floor, though. Nothing here uses fmt
+# directly -- it is spdlog's dependency, and what actually has to hold is that
+# this fmt is the one spdlog was built against, not that it is any particular
+# version. Ubuntu 24.04 pairs spdlog 1.12 with fmt 9.1.0 and ships no fmt 10,
+# so a `find_package(fmt 10 REQUIRED)` rejects a perfectly coherent pairing
+# and fails the configure outright. So: take >= 10 where it exists, and
+# otherwise take what the distro paired with its spdlog.
+find_package(fmt 10 CONFIG QUIET)
+if(NOT TARGET fmt::fmt)
+  find_package(fmt CONFIG REQUIRED)
+endif()
+message(STATUS "fmt: ${fmt_VERSION}")
 find_package(spdlog CONFIG REQUIRED)
 
 find_package(tomlplusplus CONFIG QUIET)

@@ -12,13 +12,23 @@
 
 // toml++ is used header-only on purpose. TOML_EXCEPTIONS is a library-wide
 // setting, not a per-file one: with it off, parse() lives in toml::v3::noex,
-// and a package-provided libtomlplusplus.a (vcpkg's, for one) is compiled
-// with exceptions on and exports toml::v3::parse instead -- so linking it
-// leaves this file's call undefined. Header-only costs one translation unit
-// and resolves the same way wherever toml++ came from. The undef is for the
-// package configs that put -DTOML_HEADER_ONLY=0 on the command line.
+// while a packaged libtomlplusplus is built with exceptions on and exports
+// toml::v3::parse instead -- so linking against one leaves this file's call
+// undefined. Header-only costs one translation unit and resolves the same way
+// wherever toml++ came from.
+//
+// All three defines have to be forced, because package configs put their own
+// on the command line and they do not all say the same thing. vcpkg's sets
+// TOML_HEADER_ONLY=0; Debian's sets TOML_HEADER_ONLY=0 *and*
+// TOML_SHARED_LIB=1, and preprocessor.hpp resolves TOML_SHARED_LIB last --
+// `#if TOML_DOXYGEN || TOML_SHARED_LIB` undefines TOML_HEADER_ONLY and sets
+// it back to 0. Overriding only TOML_HEADER_ONLY therefore fixes vcpkg and
+// leaves Debian still failing to link.
+#undef TOML_SHARED_LIB
+#define TOML_SHARED_LIB 0
 #undef TOML_HEADER_ONLY
 #define TOML_HEADER_ONLY 1
+#undef TOML_EXCEPTIONS
 #define TOML_EXCEPTIONS 0
 #include <toml++/toml.hpp>
 

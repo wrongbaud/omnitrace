@@ -155,12 +155,41 @@ edit**. Adding a whole layer does: `src/<layer>/CMakeLists.txt` with
 release path; pushing a `v*` tag runs `.github/workflows/release.yml`, which
 builds, smoke-tests and then publishes to GHCR. [docs/DOCKER.md](DOCKER.md).
 
-Two traps are already paid for. The vcpkg baseline in `vcpkg.json` was a
-commit that **does not exist**, so the Windows and macOS CI jobs had never
-actually run; and toml++'s `TOML_EXCEPTIONS 0` is a library-wide setting, so a
-package-provided `libtomlplusplus.a` (built with exceptions on) leaves
-`toml::v3::noex::parse` undefined. If the vcpkg path breaks again, check those
-two before anything else.
+**CI had never been green, and it failed for four independent reasons.** All
+four are worth knowing, because each one hid the next.
+
+1. The vcpkg baseline in `vcpkg.json` was a commit that **does not exist**
+   (the GitHub API answers 422), so the Windows and macOS jobs never ran at
+   all.
+2. `libbz2-dev` was missing from `.github/workflows/ci.yml`. bzip2 was added
+   as a dependency and got its `find_package`, its module `DEPS` and its
+   `CONTRIBUTING.md` row -- the checklist in `CLAUDE.md` does not mention the
+   workflow, so nothing added it there and every Linux job died at configure
+   on `Could NOT find BZip2`. `check_docs.py` now compares the two lists and
+   fails when CONTRIBUTING documents a package CI does not install.
+3. `find_package(fmt 10 CONFIG REQUIRED)` rejected Ubuntu 24.04, which pairs
+   spdlog 1.12 with fmt 9.1.0 and ships no fmt 10. Nothing here uses fmt
+   directly; what has to hold is that it is the fmt *spdlog was built
+   against*, not any particular version. It is now a preference, not a floor.
+4. toml++'s `TOML_EXCEPTIONS 0` is a library-wide setting, so a packaged
+   libtomlplusplus (built with exceptions on) leaves `toml::v3::noex::parse`
+   undefined. Forcing header-only fixes it -- but **forcing only
+   `TOML_HEADER_ONLY` fixes vcpkg and leaves Debian still broken**, because
+   Debian's config also sets `TOML_SHARED_LIB=1` and `preprocessor.hpp`
+   resolves that one last: `#if TOML_DOXYGEN || TOML_SHARED_LIB` undefines
+   `TOML_HEADER_ONLY` and sets it back to 0. All three defines are forced in
+   `src/discovery/Signature.cpp`.
+
+The lesson under all four: **the dev host is not a platform CI runs on.** Arch
+has fmt 12, no system toml++ and every library present, so it exercised none
+of these paths. Reproduce a CI failure in `ubuntu:24.04` with the workflow's
+own apt list before changing anything -- a `git ls-files | tar` tarball is a
+faithful checkout, and the whole loop is about three minutes, against twenty
+for a push.
+
+One more thing that is not broken but is easy to misread: `tests/fixtures/out`
+is git-ignored and CI does not build it, so seven fixture-backed suites
+**skip** there. Green CI is not the same coverage as green locally.
 
 ## The sample reports
 

@@ -18,7 +18,7 @@ jobs:
         preset: [linux-gcc, linux-clang, linux-asan]
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y ninja-build clang zlib1g-dev liblzma-dev liblz4-dev libzstd-dev libssl-dev libyaml-cpp-dev nlohmann-json3-dev libcli11-dev libspdlog-dev libgtest-dev pkg-config squashfs-tools e2fsprogs dosfstools mtd-utils
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build clang zlib1g-dev liblzma-dev libbz2-dev liblz4-dev libzstd-dev libssl-dev libyaml-cpp-dev nlohmann-json3-dev libcli11-dev libspdlog-dev libgtest-dev libre2-dev libtomlplusplus-dev pkg-config squashfs-tools e2fsprogs dosfstools mtd-utils
       - run: cmake --preset ${{ matrix.preset }}
       - run: cmake --build --preset ${{ matrix.preset }} --parallel
       - run: ctest --preset ${{ matrix.preset }}

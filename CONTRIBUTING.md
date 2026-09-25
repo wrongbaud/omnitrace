@@ -32,7 +32,7 @@ Linux, Debian / Ubuntu (the same list CI installs in `.github/workflows/ci.yml`)
 
 ```sh
 sudo apt-get install -y cmake ninja-build g++ clang pkg-config zlib1g-dev liblzma-dev libbz2-dev liblz4-dev libzstd-dev \
-  libssl-dev libyaml-cpp-dev nlohmann-json3-dev libcli11-dev libspdlog-dev libgtest-dev libre2-dev
+  libssl-dev libyaml-cpp-dev nlohmann-json3-dev libcli11-dev libspdlog-dev libgtest-dev libre2-dev libtomlplusplus-dev
 ```
 
 macOS: install vcpkg, set `VCPKG_ROOT`, and use the `macos-clang` preset. `vcpkg.json` is the manifest; the preset points CMake at `$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake` and vcpkg builds every dependency on the first configure.
@@ -183,9 +183,11 @@ runs the whole `ctest` suite, so the build fails the same way CI does.
 
 Two things about it are load-bearing. `.dockerignore` keeps `corpus/` out of
 the build context — a context sweeps up whatever it is not told to skip, and
-the corpus is real evidence. And the toolchain is pinned by digest, not by
-"whatever apt has": Debian's CMake is below this project's floor and its GCC
-12 lacks `std::chrono::clock_cast`. See [docs/DOCKER.md](docs/DOCKER.md).
+the corpus is real evidence. And the toolchain is pinned rather than taken
+from apt: bookworm's GCC 12 lacks `std::chrono::clock_cast`, so the builder is
+trixie, and trixie's own CMake 3.31.6 cannot build a single vcpkg port because
+the SPDX code calls `string(JSON ... STRING_ENCODE ...)`, so CMake comes from
+Kitware by version and SHA-256. See [docs/DOCKER.md](docs/DOCKER.md).
 
 ## Fixtures and parity
 

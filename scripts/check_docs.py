@@ -14,7 +14,9 @@ Exit status is non-zero when any of these holds:
    for mbr/gpt, compressed-streams for gzip/xz/lz4/zstd, ...);
 3. a CLI flag defined in apps/cli/*.cpp is not mentioned in docs/CLI.md;
 4. a relative Markdown link in README.md or any docs/**/*.md points at a file
-   that does not exist.
+   that does not exist;
+5. CONTRIBUTING.md documents an apt package that .github/workflows/ci.yml
+   does not install.
 
 CI runs it as the first job (.github/workflows/ci.yml); the discovery unit
 tests run it too when python3 is on the PATH (tests/unit/discovery/docs_check_test.cpp).
@@ -77,6 +79,47 @@ def check_cli_doc(problems: list[str]) -> None:
             problems.append(f"docs/CLI.md: flag `{flag}` (apps/cli) is not mentioned")
 
 
+# Packages the GitHub runner image already provides, so CI never installs them.
+RUNNER_PROVIDED = {"cmake", "g++", "gcc", "git", "python3"}
+APT = re.compile(r"apt-get install[^\n`]*")
+
+
+def apt_packages(text: str) -> set[str]:
+    """Every package named on an `apt-get install` line, flags dropped."""
+    out: set[str] = set()
+    for line in APT.findall(text.replace("\\\n", " ")):
+        for tok in line.split():
+            if tok.startswith("-") or tok in {"apt-get", "install", "sudo", "&&", "apt-get"}:
+                continue
+            out.add(tok)
+    return out
+
+
+def check_ci_packages(problems: list[str]) -> None:
+    """CI must install what CONTRIBUTING.md tells a contributor to install.
+
+    These two lists drifted once and it cost a red matrix: bzip2 was added as a
+    dependency and got its find_package, its module DEPS and its CONTRIBUTING
+    row, but nothing added libbz2-dev to the workflow, so every Linux job
+    failed at configure on `Could NOT find BZip2`. The documented list is the
+    source of truth; this makes the workflow answer to it.
+    """
+    contributing = ROOT / "CONTRIBUTING.md"
+    workflow = ROOT / ".github" / "workflows" / "ci.yml"
+    if not contributing.exists() or not workflow.exists():
+        return
+    documented = apt_packages(gen_docs.read(contributing))
+    installed = apt_packages(gen_docs.read(workflow))
+    if not documented or not installed:
+        problems.append("check_ci_packages: found no apt-get line to compare; the check is not working")
+        return
+    for pkg in sorted(documented - installed - RUNNER_PROVIDED):
+        problems.append(
+            f".github/workflows/ci.yml: CONTRIBUTING.md says to install `{pkg}`, "
+            "but the Linux job does not; add it or stop documenting it"
+        )
+
+
 def check_links(problems: list[str]) -> None:
     pages = [ROOT / "README.md"] + sorted((ROOT / "docs").rglob("*.md"))
     for page in pages:
@@ -99,7 +142,7 @@ def check_links(problems: list[str]) -> None:
 
 def main() -> int:
     problems: list[str] = []
-    for check in (check_generated, check_format_pages, check_cli_doc, check_links):
+    for check in (check_generated, check_format_pages, check_cli_doc, check_ci_packages, check_links):
         try:
             check(problems)
         except SystemExit as e:  # gen_docs uses sys.exit on malformed YAML

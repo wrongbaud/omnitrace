@@ -83,6 +83,15 @@ RUN cmake --preset linux-vcpkg -DOMNITRACE_STATIC=ON -DOMNITRACE_GIT_SHA="$GIT_S
     && cmake --build --preset linux-vcpkg --parallel
 
 # An image that builds but produces a broken case is worse than no image.
+#
+# tests/fixtures/out is git-ignored, so whether the fixture-backed suites run
+# at all depends on whether the build context happened to carry the images.
+# When it does not, ctest passes having tested much less -- so say which case
+# this is in the build log instead of letting it pass quietly. Run
+# `scripts/fixtures.sh build` before `docker build` to get the full suite.
+RUN n=$(ls tests/fixtures/out/*.img 2>/dev/null | wc -l); \
+    if [ "$n" -gt 0 ]; then echo "fixtures: $n images in the context; full suite"; \
+    else echo "fixtures: NONE in the context; fixture-backed suites will SKIP"; fi
 RUN ctest --preset linux-vcpkg --output-on-failure
 
 # ---------------------------------------------------------------- runtime
