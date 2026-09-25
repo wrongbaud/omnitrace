@@ -33,8 +33,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: lukka/get-cmake@latest
+      # Pinned to vcpkg release 2026.07.29, the same baseline vcpkg.json and
+      # the container use, so all three resolve identical port versions.
       - uses: lukka/run-vcpkg@v11
-        with: { vcpkgGitCommitId: b322364f06075bb2d0c88d4c5a9e2d6aa8a5cdba }
+        with: { vcpkgGitCommitId: 9e593bb18ea69cc5095e012465dcd675a822ed0d }
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - run: cmake --preset ${{ matrix.preset }}

@@ -10,6 +10,15 @@
 #include <sstream>
 #include <stdexcept>
 
+// toml++ is used header-only on purpose. TOML_EXCEPTIONS is a library-wide
+// setting, not a per-file one: with it off, parse() lives in toml::v3::noex,
+// and a package-provided libtomlplusplus.a (vcpkg's, for one) is compiled
+// with exceptions on and exports toml::v3::parse instead -- so linking it
+// leaves this file's call undefined. Header-only costs one translation unit
+// and resolves the same way wherever toml++ came from. The undef is for the
+// package configs that put -DTOML_HEADER_ONLY=0 on the command line.
+#undef TOML_HEADER_ONLY
+#define TOML_HEADER_ONLY 1
 #define TOML_EXCEPTIONS 0
 #include <toml++/toml.hpp>
 
