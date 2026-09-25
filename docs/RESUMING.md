@@ -149,6 +149,19 @@ edit**. Adding a whole layer does: `src/<layer>/CMakeLists.txt` with
 `omnitrace_module(<layer> DEPS ...)`, plus `add_subdirectory` in the root
 `CMakeLists.txt` and the target in `apps/cli/CMakeLists.txt`.
 
+## The container and releases
+
+`docker build ... -t omnitrace .` plus `scripts/smoke_container.sh` is the
+release path; pushing a `v*` tag runs `.github/workflows/release.yml`, which
+builds, smoke-tests and then publishes to GHCR. [docs/DOCKER.md](DOCKER.md).
+
+Two traps are already paid for. The vcpkg baseline in `vcpkg.json` was a
+commit that **does not exist**, so the Windows and macOS CI jobs had never
+actually run; and toml++'s `TOML_EXCEPTIONS 0` is a library-wide setting, so a
+package-provided `libtomlplusplus.a` (built with exceptions on) leaves
+`toml::v3::noex::parse` undefined. If the vcpkg path breaks again, check those
+two before anything else.
+
 ## The sample reports
 
 `~/omnitrace-reports/` holds a report per corpus image plus sample diffs, with

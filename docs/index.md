@@ -23,6 +23,7 @@ less case-router/INFO.md
 | You want to | Read |
 |---|---|
 | run the tool and understand its flags | [CLI](CLI.md) |
+| run it from a container instead of building it | [Docker](DOCKER.md) |
 | know what is in a case directory and what to rely on | [Case layout](CASE_LAYOUT.md) |
 | see which formats are handled and how well | [Formats](reference/FORMATS.md) |
 | learn the project vocabulary | [Glossary](GLOSSARY.md) |

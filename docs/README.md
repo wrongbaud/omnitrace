@@ -10,6 +10,7 @@ For examiners and researchers who run the tool and read a case directory.
 |---|---|
 | [../README.md](../README.md) | What is OmniTrace, how do I build it and run it once? |
 | [CLI.md](CLI.md) | What do `hash`, `scan` and `analyze` do, and what does every flag change? |
+| [DOCKER.md](DOCKER.md) | How do I run a published build against evidence without installing anything, and what do the two volumes do? |
 | [CASE_LAYOUT.md](CASE_LAYOUT.md) | What is in the case directory, how are partitions named and carved, and what may an agent rely on? |
 | [reference/FORMATS.md](reference/FORMATS.md) | Which formats are identified, sized and extracted today, and at what confidence? |
 | [GLOSSARY.md](GLOSSARY.md) | What do Span, Node, Finding, Coverage row, superseded and the other project words mean? |

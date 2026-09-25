@@ -1,0 +1,22 @@
+# The build context is sent to the daemon in full, so anything large or
+# sensitive that is not needed to compile must be excluded here.
+#
+# `corpus/` above all: it is the local evidence corpus, tens of gigabytes of
+# real device images, and it is git-ignored precisely so it never leaves this
+# machine. A build context that swept it up would copy it into the daemon and
+# potentially into an image layer.
+corpus/
+tests/corpus/local/
+
+build/
+vcpkg_installed/
+out/
+.git/
+.github/
+.cache/
+*.o
+*.a
+compile_commands.json
+
+# docs/ and scripts/ stay: `ctest` runs scripts/check_docs.py, which reads
+# both, so excluding them would turn the docs gate into a silent skip.

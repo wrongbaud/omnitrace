@@ -174,6 +174,19 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 
 Work on a feature branch off `main` and open a pull request. `.github/workflows/ci.yml` runs `linux-gcc`, `linux-clang` and `linux-asan` on Ubuntu 24.04 plus `windows-msvc` and `macos-clang` through vcpkg; every job must be green before merge. Do not commit anything under `build/`, `tests/fixtures/out/` or `corpus/` (all are in `.gitignore`).
 
+## The container
+
+`docker build --build-arg GIT_SHA="$(git rev-parse --short=12 HEAD)" -t omnitrace .`
+builds the published image, and `scripts/smoke_container.sh omnitrace <sha>`
+runs it against a fixture and checks the case it produced. The builder stage
+runs the whole `ctest` suite, so the build fails the same way CI does.
+
+Two things about it are load-bearing. `.dockerignore` keeps `corpus/` out of
+the build context — a context sweeps up whatever it is not told to skip, and
+the corpus is real evidence. And the toolchain is pinned by digest, not by
+"whatever apt has": Debian's CMake is below this project's floor and its GCC
+12 lacks `std::chrono::clock_cast`. See [docs/DOCKER.md](docs/DOCKER.md).
+
 ## Fixtures and parity
 
 `scripts/fixtures.sh build` generates the synthetic images (SquashFS with every compressor, JFFS2 with a scripted overwrite/delete history, UBI/UBIFS, YAFFS2, ext4, FAT32, MBR, GPT, uImage, nested tar.gz) and a ground-truth `*.expected.yaml` beside each one; `scripts/fixtures.sh check` proves the build is byte-reproducible. `tests/parity/run.py IMAGE` runs unblob, binwalk, moria and the OmniTrace CLI over one image and diffs findings and files. Both are documented end to end in [docs/TESTING.md](docs/TESTING.md).
