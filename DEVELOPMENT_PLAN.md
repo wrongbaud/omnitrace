@@ -391,11 +391,15 @@ Weeks are estimates for one primary developer with agent assistance. Each phase 
 - 2a (2 wk): history mode for JFFS2/UBIFS/YAFFS2 (every (inode, version) as a superseded entry, every unlink dirent as a deletion record, QNX6 old-superblock snapshot); libtsk orphan recovery for ext/FAT; `.omnitrace-versions/` layout; `timeline.csv`. Validated against the router JFFS2 census (248 deleted inodes, 239 multi-version files).
 - 2b (2 wk): rules engine (RE2) + built-in packs (network, users, credentials, certs, PII, automotive); artifact extractors (§5.5); platform analyzers (§5.4); `artifacts.yaml/md`.
 - 2c (2 wk): `omnireport` library + HTML/MD renderers + integrity gate; `omnitrace report`; pybind11 wheel; OmniSonde adoption spike.
-- Exit: end-to-end on the eMMC and router corpora produces a report an examiner would hand over; every unsupported thing appears as a Coverage entry.
+- 2d (added): what "hand over" turned out to require. `omnitrace report <case>` rebuilds all seven sections from a case directory; a report names who made it (`--case-id`, `--examiner`, `--notes`, kept in the manifest); `omnitrace diff <case-a> <case-b>` compares two units by path, by content, by parsed-record identity and by kernel symbol name, never by node id; and `--tar-filesystems` writes a faithful archive beside every extracted tree, because a case copied onto exFAT or a Windows share loses its symlinks, its permission bits and any name that is not valid UTF-8 without saying so. Carving raised to a 32 GiB ceiling so an eMMC or UFS partition is carved rather than skipped.
+- Exit: **met.** End-to-end on the eMMC and router corpora produces a report an examiner would hand over, and the handover itself is tested — two cases were copied to external media and the failures that produced are what 2d fixes. Every unsupported thing appears as a Coverage entry.
+
+Delivered beyond 2b's artifact extractors: kernel modules (`.modinfo` per `.ko`) and kernel images (build banner plus the kallsyms symbol table, written out in `nm` format). The Linux analyzer reports the kernel a system runs, its loadable drivers and the ones compiled in.
 
 ### Phase 3 — Hardening and CLI release (3 weeks)
 - Fuzzing campaign (libFuzzer target per reader under ASan/UBSan), performance pass on 8 GiB images (peak RSS target < 1 GiB; moria measured 1.46 GB extracting 3.7 GB, so windowed mapping matters), Windows path/Unicode edge cases, macOS notarization, signed release artifacts, docs site, `--json` output, plugin adapter docs (unblob, binwalk, moria, dumpifs).
 - Exit: v2.0.0 CLI on GitHub Releases for all three OSes.
+- Still open from Phase 2: the `omnireport` C ABI and pybind11 module (the layer is core-only and shaped for both; neither is written), and OmniSonde's migration onto it.
 
 ### Phase 4 — Web UI (after core is released; 4 weeks)
 - cpp-httplib server embedded in the binary, SSE job progress, React + TS + Vite front end with the `ui-layout` design system (§3.4, §8). Everything the UI shows comes from the case directory and `case.db`, so nothing in Phases 0 to 3 changes.

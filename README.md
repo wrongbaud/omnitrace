@@ -74,6 +74,8 @@ The coverage table is the honest part: a format the scanner recognises but canno
 
 `omnitrace report <case>` re-examines a finished case later: it reads the listings back, re-hashes the evidence against what the case recorded, and runs the analyzers and extractors again without re-scanning the image. A case that has been copied to another machine still works.
 
+`--tar-filesystems` writes `files.tar` beside every extracted tree, because a case cannot be handed over as a directory: copying one onto exFAT, a Windows share or cloud storage silently drops its symlinks, its permission bits and any name that is not valid UTF-8 ([docs/CASE_LAYOUT.md](docs/CASE_LAYOUT.md)).
+
 `omnitrace diff <case-a> <case-b>` compares two of them — two units of the same model, or one device acquired twice — by path and by content, never by node id. On the two camera firmware releases in the corpus it reports 182 files changed and a telnet daemon in the newer one that the older does not ship ([docs/DIFF.md](docs/DIFF.md)).
 
 The full contract is [docs/CASE_LAYOUT.md](docs/CASE_LAYOUT.md); the commands and flags are in [docs/CLI.md](docs/CLI.md).

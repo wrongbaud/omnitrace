@@ -60,18 +60,42 @@ file it was read from, so an examiner can open it and disagree. Precedence is
 by **rank, not score**: a QNX root matches five Linux markers, and counting
 cannot settle which answer is more precise.
 
+The Linux model also reports the kernel a system runs and the drivers it
+carries, both out of `lib/modules/<release>/`: the directory name *is*
+`uname -r`, and everything under it is the module set, in either of the two
+layouts the field uses. A module's `vermagic` corroborates it and carries the
+CPU architecture nothing else states, and `modules.builtin` names the drivers
+compiled in, which have no `.ko` and are invisible everywhere else.
+
 ### 6. Search — 4 rule packs, 52 rules
 
 network, credentials, pii, rtos. Compiled into one RE2 set — linear time
 regardless of the pattern, because a pack is untrusted input. Runs over every
 extracted file and every region no signature claimed.
 
-### 7. Parse — 1 artifact extractor
+### 7. Parse — 3 artifact extractors
 
-Certificates: subject, issuer, validity, key type and length, SAN, and private
-keys. A search pack can say a `-----BEGIN CERTIFICATE-----` block is present;
-only a parser can say it is self-signed `CN=router` with its RSA-2048 private
-key in the same file.
+**Certificates**: subject, issuer, validity, key type and length, SAN,
+fingerprint, and private keys. A search pack can say a
+`-----BEGIN CERTIFICATE-----` block is present; only a parser can say it is
+self-signed `CN=router` with its RSA-2048 private key in the same file.
+
+**Kernel modules**: `.modinfo` parsed out of every `.ko` — what a driver is
+for, who wrote it, what licence it ships under, which kernel it was built
+against, and the architecture from the ELF header. 207 records on one router
+image; four binary-only MediaTek drivers named on another.
+
+**Kernel images**: the build banner, which is the only place a kernel's
+version is written when a system has no `lib/modules`; and **kallsyms**, the
+symbol table a kernel carries inside itself. None of its structures has a
+magic number, so it is read back to front from the one that is
+self-describing and accepted only when the names decode as symbols. The full
+table is written to `symbols/<node>-<entry>.txt` in `nm` format, because
+counting symbols is not the same as having them.
+
+Every record carries an `identity` — a certificate's fingerprint, a module's
+name, a kernel's banner — set by the extractor, because only the extractor
+knows what makes a record *the same record* in another case.
 
 ### 8. Report — a typed document, and an integrity gate
 
@@ -95,9 +119,9 @@ re-rendered years later still names whoever ran it.
 
 ### Throughout
 
-Coverage rows state what was *not* done. 482 diagnostic codes, each catalogued
+Coverage rows state what was *not* done. 492 diagnostic codes, each catalogued
 with a meaning and an action. `analyze` will not fill the disk it writes to.
-917 tests across 9 suites; gcc, clang and ASan all green.
+981 tests across 10 suites; gcc, clang and ASan all green.
 
 ## Phases
 
@@ -105,7 +129,7 @@ with a meaning and an action. `analyze` will not fill the disk it writes to.
 |---|---|
 | 0 — Foundation | complete |
 | 1 — Discovery, extraction, parity | **complete** — parity measured and met against both baselines (`docs/PARITY.md`) |
-| 2 — Recovery, artifacts, reporting | complete; exit criterion verified on both the router and the 7.8 GB auto-emmc eMMC corpora |
+| 2 — Recovery, artifacts, reporting | **complete** — and the exit criterion ("a report an examiner would hand over") was tested by handing one over: see §9 |
 | 3 — Hardening and release | not started |
 | 4 — Web UI | not started, and deliberately after a release (`core-before-ui`) |
 
@@ -152,21 +176,20 @@ and moria's 11, and "62.5 %" is five of eight (`docs/PARITY.md` §7).
 
 ## Next, in order
 
-1. **Decide whether to carve what a filesystem's metadata no longer claims.**
-   This is the only piece of named work the finished measurement leaves, and
-   it is a scope decision rather than a bug. The streams §7 used to blame on
-   decompression are seven gzipped QNX **slog device logs** whose bytes are
-   not reachable through the filesystem at all — an exact search across all
-   105,951 extracted files (20.2 GB) finds none of them, so OmniTrace never
-   holds them. Both baselines find them by scanning raw bytes without caring
-   what owns them.
+1. **Carving what a filesystem's metadata no longer claims** — *decided: not
+   scheduled.*
+   The streams §7 used to blame on decompression are seven gzipped QNX **slog
+   device logs** whose bytes are not reachable through the filesystem at all —
+   an exact search across all 105,951 extracted files (20.2 GB) finds none of
+   them. Both baselines find them by scanning raw bytes without caring what
+   owns them.
 
-   Carving in unallocated space is currently listed under "Not planned" as a
-   post-MVP track (`DEVELOPMENT_PLAN.md`). What this measurement adds to that
-   decision is that the thing sitting there is deleted device logs — one of
-   the four artefact classes Phase 2 exists to find — recovered from a vehicle
-   infotainment unit. Everything else in the parity difference is a recorded
-   policy choice or a history fixture already at 100 % of ground truth.
+   It stays where `DEVELOPMENT_PLAN.md` puts it, under post-MVP tracks. What
+   the measurement adds to that decision is what is sitting there: deleted
+   device logs, one of the four artefact classes Phase 2 exists to find,
+   recovered from a vehicle infotainment unit. Everything else in the parity
+   difference is a recorded policy choice or a history fixture already at
+   100 % of ground truth.
 
 2. **Validate the Android analyzer against a real Android tree.** Its markers
    come from documented AOSP layout, not evidence; the automotive Android unit's `la_super`
