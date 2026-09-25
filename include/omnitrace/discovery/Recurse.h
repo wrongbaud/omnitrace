@@ -162,9 +162,18 @@ struct AnalyzeOptions {
     ImageViewHook image_view;  ///< See `ImageViewHook`. Empty: automatic word-swap detection.
     Carve carve =
         Carve::All;  ///< Carving into `<out_dir>/partitions/`; ignored when `out_dir` is empty.
-    std::uint64_t max_carve_bytes = 4ull
-                                    << 30;  ///< Per carved file; larger ones get `carve_skipped`
-                                            ///< and a "carve"/"partial" Coverage row.
+    /// Per carved file; a larger one gets `carve_skipped` and a
+    /// "carve"/"partial" Coverage row.
+    ///
+    /// 32 GiB because a partition can be that big and an examiner wants it.
+    /// The 4 GiB this replaced skipped the 15.2 GB `storage` partition of a
+    /// QNX vehicle unit -- the one holding everything -- and a UFS dump's
+    /// partitions are larger still. The guard against filling a disk is not
+    /// this: the extraction budget is cut to free space up front
+    /// (`analyze-limit-disk`) and every carve is checked as it is written
+    /// (`carve-limit-disk`), because this is per file and nothing else bounds
+    /// carving in aggregate.
+    std::uint64_t max_carve_bytes = 32ull << 30;
     /// Write the view the analysis actually ran on to
     /// `<out_dir>/flash/<stem>-<transform>.bin` whenever that view is not the
     /// evidence itself -- today, a word-swapped image. Without it the case

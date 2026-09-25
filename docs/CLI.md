@@ -119,7 +119,7 @@ The end-to-end pipeline:
 | `-o, --out DIR` | Case directory. Created if missing; existing files are overwritten. Required. |
 | `--layout corpus\|flat` | `corpus` (default): the examiner template of `docs/CASE_LAYOUT.md` (`INFO.yaml` + `manifest.yaml` alias, `INFO.md`, `flash/SOURCE.yaml`, `partitions/`, `filesystems/`, `containers/`, plus `summary.md` / `partitions.md`). `flat`: the Phase 0 files only (`manifest.yaml`, `summary.md`, `partitions.md`, `filesystems/`, `containers/`), nothing carved. |
 | `--carve none\|table\|all` | What lands in `partitions/`: `all` (default) every partition entry and every nested find directly under the image or a partition (`0x03100000-squashfs.bin`); `table` entries only (`p6-system.bin`, `p6.bin`); `none` no `partitions/` directory. |
-| `--max-carve-bytes N` | Largest file to carve (default 4 GiB; `64M`, `2G` accepted, 1024-based). A larger partition is not written: its node gets `carve_skipped` and a warning, and coverage gets `carve / partial / "<name> skipped: <size> exceeds --max-carve-bytes"`. |
+| `--max-carve-bytes N` | Largest file to carve (default 32 GiB; `64M`, `2G` accepted, 1024-based). A larger partition is not written: its node gets `carve_skipped` and a warning, and coverage gets `carve / partial / "<name> skipped: <size> exceeds --max-carve-bytes"`. |
 | `--copy-image` | Also copy the evidence into `flash/<name>` (verified by SHA-256 after the copy). Default: `flash/SOURCE.yaml` only refers to the original path. |
 | `--no-extract` | Walk filesystems for metadata only (`ListingSink`). `listing.yaml` is still written; `files/` is not. Faster, and useful when the examiner only needs the inventory. |
 | `--history` | Ask readers for superseded and deleted versions (JFFS2 / UBIFS / YAFFS2 keep them). Extracted versions land in `files/.omnitrace-versions/<path>/v<version>`. |
@@ -127,7 +127,7 @@ The end-to-end pipeline:
 | `--max-files N` | Entries emitted per run, across all filesystems (default 500000). When the budget is spent the remaining filesystems are recorded but not walked. |
 | `--max-bytes N` | Floor for the total bytes written per run (default 4 GiB; `2G`, `64G` accepted, 1024-based). The budget actually applied is the larger of this and `--max-bytes-ratio` x the image size, so it tracks the evidence instead of being a number chosen for one size of dump. Passing this flag on its own means "exactly this", and clears the ratio. |
 | `--max-bytes-ratio N` | Extraction budget as a multiple of the image size (default 4). A 2 MiB SPI dump stays on the `--max-bytes` floor; a 16 GiB eMMC image gets 64 GiB. `0` uses `--max-bytes` exactly. The ratio is the guard that matters: real firmware expands by up to ~5x (a compressed SquashFS router image, all of which are small enough to sit under the floor), while a decompression bomb expands by orders of magnitude more and still trips. Before this existed, the fixed 4 GiB default truncated every image over a few GiB — the 15.7 GB QNX corpus image lost most of its extraction to it and said so 22,788 times. |
-| *(no flag)* | **The disk is checked before anything is written.** Whatever budget the rules above arrive at is cut to what the output filesystem can actually take, less 5% of its free space (at least 256 MiB), and the run says so with `analyze-limit-disk`. Carving is checked the same way per node with `carve-limit-disk`, because `--max-carve-bytes` is per file and nothing else bounds the total: the 47 partitions of a 116 GiB UFS LUN are each under the 4 GiB default and come to 116 GiB together. The free space is measured on the filesystem holding `--out`, which is not always the one you think -- a case directory under `/tmp` is often tmpfs, and filling it fills RAM. |
+| *(no flag)* | **The disk is checked before anything is written.** Whatever budget the rules above arrive at is cut to what the output filesystem can actually take, less 5% of its free space (at least 256 MiB), and the run says so with `analyze-limit-disk`. Carving is checked the same way per node with `carve-limit-disk`, because `--max-carve-bytes` is per file and nothing else bounds the total: the 47 partitions of a 116 GiB UFS LUN are each under the 32 GiB default and come to 116 GiB together. The free space is measured on the filesystem holding `--out`, which is not always the one you think -- a case directory under `/tmp` is often tmpfs, and filling it fills RAM. |
 | `--rules FILE` | Add a YAML search pack, repeatable; the built-in packs still run. Format in [RULES.md](RULES.md). A pack that does not parse or whose pattern does not compile stops the run, naming the rule — an examiner's own file being wrong is something to hear about, not to silently ignore. |
 | `--no-rules` | Skip the search entirely. The case gets no `artifacts.yaml`. |
 | `--max-hits N` | Rule hits to keep per run (default 100000). Reaching it sets a `rules-limit-hits` warning. |
@@ -333,10 +333,14 @@ headers for names the fixed field cannot hold, it holds the live tree and not
 reads a clock or this host's passwd file. It roughly doubles what a case takes
 on disk, which is why it is asked for rather than assumed.
 
-Carving is separate and already per-partition (`--carve`), but note that
-`--max-carve-bytes` defaults to 4 GiB: a partition larger than that is skipped
-with a coverage row rather than carved. For a handover run, raise it
-deliberately to whatever the evidence needs.
+Carving is separate and already per-partition (`--carve all`, the default),
+and `--max-carve-bytes` now defaults to **32 GiB** so that eMMC and UFS
+partitions are carved rather than skipped. The 4 GiB it replaced silently
+dropped the 15.2 GB `storage` partition of a QNX vehicle unit — the one
+holding everything. Free space is guarded separately and every carve is
+checked against it as it is written (`carve-limit-disk`), so the ceiling being
+generous does not put the disk at risk; it does mean a case can be large, and
+that QNX unit now comes to 34 GB.
 
 ## `omnitrace diff <case-a> <case-b>`
 

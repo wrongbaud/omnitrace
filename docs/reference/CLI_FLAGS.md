@@ -19,22 +19,22 @@ extracted from the CLI11 `add_option` / `add_flag` calls in `apps/cli/*.cpp`
 | `analyze` | `-o,--out` | option | Case directory (created) | required | - | `apps/cli/analyze_commands.cpp:877` |
 | `analyze` | `--layout` | option | corpus: INFO.yaml/INFO.md, flash/, partitions/ (default); flat: manifest.yaml, summary.md, partitions.md, filesystems/ and containers/ only | IsMember{corpus,flat} | `corpus` | `apps/cli/analyze_commands.cpp:878` |
 | `analyze` | `--carve` | option | What to carve into partitions/: none, table (partition-table entries) or all (entries plus nested finds) | IsMember{none,table,all} | `all` | `apps/cli/analyze_commands.cpp:884` |
-| `analyze` | `--max-carve-bytes` | option | Largest file to carve (bytes; suffixes K/M/G/T are 1024-based); larger partitions are skipped with a coverage row, as is a corrected view of a word-swapped image | AsSizeValue | `4294967296` | `apps/cli/analyze_commands.cpp:890` |
-| `analyze` | `--no-rules` | flag | Skip the search packs; the case gets no artifacts.yaml | - | - | `apps/cli/analyze_commands.cpp:897` |
-| `analyze` | `--rules` | option | Add a YAML rule pack (repeatable); the built-in packs still run | ExistingFile | - | `apps/cli/analyze_commands.cpp:899` |
-| `analyze` | `--max-hits` | option | Rule hits to keep per run | - | `100'000` | `apps/cli/analyze_commands.cpp:903` |
-| `analyze` | `--copy-image` | flag | Copy the image into flash/ (verified by hash); by default only flash/SOURCE.yaml refers to it | - | - | `apps/cli/analyze_commands.cpp:905` |
-| `analyze` | `--no-extract` | flag | List filesystems without writing files | - | - | `apps/cli/analyze_commands.cpp:908` |
-| `analyze` | `--tar-filesystems` | flag | Also write filesystems/<node>/files.tar and containers/<node>/files.tar: a faithful archive of each extracted tree, for handing the case to someone else. Copying a tree onto exFAT, a Windows share or cloud storage silently drops its symlinks, its permission bits and any name that is not valid UTF-8; a tar keeps them. Roughly doubles the space a case takes | - | - | `apps/cli/analyze_commands.cpp:909` |
-| `analyze` | `--history` | flag | Recover superseded and deleted versions when the format keeps them | - | - | `apps/cli/analyze_commands.cpp:916` |
-| `analyze` | `--max-depth` | option | Nested extraction levels | - | `8` | `apps/cli/analyze_commands.cpp:918` |
-| `analyze` | `--max-files` | option | Entries per run | - | `500000` | `apps/cli/analyze_commands.cpp:920` |
-| `analyze` | `--max-bytes` | option | Total bytes written per run; the default is the larger of this and --max-bytes-ratio x the image, so it tracks the evidence | AsSizeValue | `4294967296` | `apps/cli/analyze_commands.cpp:924` |
-| `analyze` | `--max-bytes-ratio` | option | Extraction budget as a multiple of the image size; 0 uses --max-bytes exactly, which is also what passing --max-bytes alone does | - | `4` | `apps/cli/analyze_commands.cpp:931` |
-| `analyze` | `--max-file-bytes` | option | Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a larger entry is cut there with a <fmt>-limit-file-bytes warning. The default is the larger of this and the image size, since a stored entry cannot exceed the image that holds it | AsSizeValue | `1073741824` | `apps/cli/analyze_commands.cpp:939` |
-| `analyze` | `--case-id` | option | Case, exhibit or job number, recorded and reported | - | - | `apps/cli/analyze_commands.cpp:958` |
-| `analyze` | `--examiner` | option | Who ran the tool, recorded and reported | - | - | `apps/cli/analyze_commands.cpp:962` |
-| `analyze` | `--notes` | option | Free text carried into the report header | - | - | `apps/cli/analyze_commands.cpp:966` |
+| `analyze` | `--max-carve-bytes` | option | Largest file to carve (bytes; suffixes K/M/G/T are 1024-based); larger partitions are skipped with a coverage row, as is a corrected view of a word-swapped image. The default is 32 GiB because eMMC and UFS partitions reach that; free space is guarded separately and every carve is checked against it as it is written | AsSizeValue | `34359738368` | `apps/cli/analyze_commands.cpp:890` |
+| `analyze` | `--no-rules` | flag | Skip the search packs; the case gets no artifacts.yaml | - | - | `apps/cli/analyze_commands.cpp:899` |
+| `analyze` | `--rules` | option | Add a YAML rule pack (repeatable); the built-in packs still run | ExistingFile | - | `apps/cli/analyze_commands.cpp:901` |
+| `analyze` | `--max-hits` | option | Rule hits to keep per run | - | `100'000` | `apps/cli/analyze_commands.cpp:905` |
+| `analyze` | `--copy-image` | flag | Copy the image into flash/ (verified by hash); by default only flash/SOURCE.yaml refers to it | - | - | `apps/cli/analyze_commands.cpp:907` |
+| `analyze` | `--no-extract` | flag | List filesystems without writing files | - | - | `apps/cli/analyze_commands.cpp:910` |
+| `analyze` | `--tar-filesystems` | flag | Also write filesystems/<node>/files.tar and containers/<node>/files.tar: a faithful archive of each extracted tree, for handing the case to someone else. Copying a tree onto exFAT, a Windows share or cloud storage silently drops its symlinks, its permission bits and any name that is not valid UTF-8; a tar keeps them. Roughly doubles the space a case takes | - | - | `apps/cli/analyze_commands.cpp:911` |
+| `analyze` | `--history` | flag | Recover superseded and deleted versions when the format keeps them | - | - | `apps/cli/analyze_commands.cpp:918` |
+| `analyze` | `--max-depth` | option | Nested extraction levels | - | `8` | `apps/cli/analyze_commands.cpp:920` |
+| `analyze` | `--max-files` | option | Entries per run | - | `500000` | `apps/cli/analyze_commands.cpp:922` |
+| `analyze` | `--max-bytes` | option | Total bytes written per run; the default is the larger of this and --max-bytes-ratio x the image, so it tracks the evidence | AsSizeValue | `4294967296` | `apps/cli/analyze_commands.cpp:926` |
+| `analyze` | `--max-bytes-ratio` | option | Extraction budget as a multiple of the image size; 0 uses --max-bytes exactly, which is also what passing --max-bytes alone does | - | `4` | `apps/cli/analyze_commands.cpp:933` |
+| `analyze` | `--max-file-bytes` | option | Largest single extracted entry (bytes; suffixes K/M/G/T are 1024-based); a larger entry is cut there with a <fmt>-limit-file-bytes warning. The default is the larger of this and the image size, since a stored entry cannot exceed the image that holds it | AsSizeValue | `1073741824` | `apps/cli/analyze_commands.cpp:941` |
+| `analyze` | `--case-id` | option | Case, exhibit or job number, recorded and reported | - | - | `apps/cli/analyze_commands.cpp:960` |
+| `analyze` | `--examiner` | option | Who ran the tool, recorded and reported | - | - | `apps/cli/analyze_commands.cpp:964` |
+| `analyze` | `--notes` | option | Free text carried into the report header | - | - | `apps/cli/analyze_commands.cpp:968` |
 | `diff` | `case-a` | positional | The first case directory | required, ExistingDirectory | - | `apps/cli/analyze_commands.cpp:853` |
 | `diff` | `case-b` | positional | The second case directory | required, ExistingDirectory | - | `apps/cli/analyze_commands.cpp:856` |
 | `diff` | `--out` | option | Directory to write diff.md and diff.yaml to (default: the working directory). Neither case is modified | - | - | `apps/cli/analyze_commands.cpp:859` |

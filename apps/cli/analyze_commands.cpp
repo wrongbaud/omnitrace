@@ -209,7 +209,7 @@ struct AnalyzeArgs {
     std::string image, out;
     std::string layout = "corpus";  // corpus | flat
     std::string carve = "all";      // none | table | all
-    std::uint64_t max_carve_bytes = 4ull << 30;
+    std::uint64_t max_carve_bytes = 32ull << 30;
     bool copy_image = false;
     bool no_rules = false;
     std::vector<std::string> rule_packs;
@@ -891,7 +891,9 @@ void register_analyze_commands(CLI::App& app) {
         ->add_option("--max-carve-bytes", args->max_carve_bytes,
                      "Largest file to carve (bytes; suffixes K/M/G/T are 1024-based); larger "
                      "partitions are skipped with a coverage row, as is a corrected view of a "
-                     "word-swapped image")
+                     "word-swapped image. The default is 32 GiB because eMMC and UFS partitions "
+                     "reach that; free space is guarded separately and every carve is checked "
+                     "against it as it is written")
         ->transform(CLI::AsSizeValue(false))
         ->capture_default_str();
     analyze->add_flag("--no-rules", args->no_rules,

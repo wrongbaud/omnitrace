@@ -169,7 +169,7 @@ gets the `carve-unknown-size` diagnostic instead of a file.
 `--carve none|table|all` (default `all`): `table` carves only partition
 entries; `none` creates no `partitions/` directory at all.
 
-`--max-carve-bytes N` (default 4 GiB, suffixes `K`/`M`/`G`/`T` are
+`--max-carve-bytes N` (default 32 GiB, suffixes `K`/`M`/`G`/`T` are
 1024-based): a node larger than N is not carved. It gets
 `attrs.carve_skipped: max-carve-bytes`, a `carve-limit-bytes` warning, and
 the coverage table gets a row `carve / partial / "<name> skipped: <size>
