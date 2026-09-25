@@ -4,7 +4,7 @@ OmniTrace is an offline, cross-platform forensic analysis tool for embedded syst
 
 It is for forensic examiners who receive flash dumps rather than phone extractions, embedded security researchers who want a traceable map of an image, and agents that consume `INFO.yaml`.
 
-**Status:** Phase 0 complete: identification, partition tables, SquashFS extraction, examiner case layout. Phase 1 readers in progress. See the [roadmap](ROADMAP.md).
+**Status:** Phases 0-2 complete — identification, extraction, recovery, search, platform analysis, artifact parsing, reporting, two-case comparison and handover. Phase 1's parity criterion is measured and met against unblob and moria. See the [roadmap](ROADMAP.md).
 
 ## Quick start
 

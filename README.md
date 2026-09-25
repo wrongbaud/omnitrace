@@ -85,6 +85,7 @@ The full contract is [docs/CASE_LAYOUT.md](docs/CASE_LAYOUT.md); the commands an
 | You want to | Read |
 |---|---|
 | find any document in the project | [docs/README.md](docs/README.md) |
+| pick this project up cold and start working on it | [docs/RESUMING.md](docs/RESUMING.md) |
 | build on your OS, run the tests, send a change | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | understand the layers and the data flow in an hour | [docs/CODE_TOUR.md](docs/CODE_TOUR.md) |
 | add a validator, a reader, a signature or a CLI command | [docs/EXTENDING.md](docs/EXTENDING.md) |

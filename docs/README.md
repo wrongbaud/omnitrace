@@ -20,6 +20,7 @@ For anyone changing the code.
 
 | Document | Answers |
 |---|---|
+| [RESUMING.md](RESUMING.md) | I am picking this up cold: what do I read, in what order, what is the build-and-gate loop, what does "done" mean, and which traps have already cost someone a day? |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How do I install prerequisites, build every preset, run one test, format, and open a PR? |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | What are the layers, the fifteen non-negotiable rules, and the confidence tiers? This is the contract. |
 | [CODE_TOUR.md](CODE_TOUR.md) | How does a byte travel from `MappedFile` through scan, graph, readers and sinks to `INFO.yaml`? |
