@@ -214,7 +214,7 @@ struct AnalyzeArgs {
     bool no_rules = false;
     std::vector<std::string> rule_packs;
     std::uint64_t max_hits = 100'000;
-    bool no_extract = false, history = false;
+    bool no_extract = false, history = false, tar_filesystems = false;
     CaseInfo case_info;
     Limits limits;
 };
@@ -445,6 +445,7 @@ void cmd_analyze(const AnalyzeArgs& a) {
     opts.out_dir = a.out;
     opts.extract = !a.no_extract;
     opts.history = a.history;
+    opts.tar_filesystems = a.tar_filesystems;
     opts.limits = a.limits;
     opts.carve = corpus ? carve_from(a.carve) : discovery::Carve::None;
     opts.max_carve_bytes = a.max_carve_bytes;
@@ -905,6 +906,13 @@ void register_analyze_commands(CLI::App& app) {
                       "Copy the image into flash/ (verified by hash); by default only "
                       "flash/SOURCE.yaml refers to it");
     analyze->add_flag("--no-extract", args->no_extract, "List filesystems without writing files");
+    analyze->add_flag(
+        "--tar-filesystems", args->tar_filesystems,
+        "Also write filesystems/<node>/files.tar and containers/<node>/files.tar: a faithful "
+        "archive of each extracted tree, for handing the case to someone else. Copying a tree "
+        "onto exFAT, a Windows share or cloud storage silently drops its symlinks, its "
+        "permission bits and any name that is not valid UTF-8; a tar keeps them. Roughly "
+        "doubles the space a case takes");
     analyze->add_flag("--history", args->history,
                       "Recover superseded and deleted versions when the format keeps them");
     analyze->add_option("--max-depth", args->limits.max_depth, "Nested extraction levels")

@@ -6,6 +6,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -439,6 +441,246 @@ TEST(DiskSink, LimitMaxFiles) {
     EXPECT_TRUE(starts_with(s.error, "sink-limit-files")) << s.error;
     EXPECT_FALSE(fs::exists(tmp.path() / "c"));
     EXPECT_EQ(sink->files_emitted(), 2u);
+}
+
+// The handover archive. It exists because an extracted tree cannot be copied
+// faithfully onto a filesystem that is not POSIX -- exFAT and SMB drop every
+// symlink, every permission bit and any name that is not valid UTF-8 -- and a
+// case that cannot be handed over is not much use.
+namespace {
+
+/// Every entry in a tar, as (typeflag, name, size, linkname). Parsed here
+/// rather than shelled out to `tar`, so the test asserts on the bytes this
+/// wrote and not on another tool's reading of them.
+struct TarEntry {
+    char type = '0';
+    std::string name;
+    std::uint64_t size = 0;
+    std::string link;
+    std::uint32_t mode = 0;
+};
+
+std::uint64_t from_octal(const char* p, std::size_t n) {
+    std::uint64_t v = 0;
+    for (std::size_t i = 0; i < n && p[i] >= '0' && p[i] <= '7'; ++i) v = v * 8 + (p[i] - '0');
+    return v;
+}
+
+std::vector<TarEntry> read_tar(const fs::path& path) {
+    std::vector<TarEntry> out;
+    std::ifstream f(path, std::ios::binary);
+    std::string pending_path, pending_link;
+    char h[512];
+    while (f.read(h, 512)) {
+        bool all_zero = true;
+        for (char c : h)
+            if (c != 0) all_zero = false;
+        if (all_zero) break;
+        TarEntry e;
+        e.type = h[156];
+        e.name.assign(h, ::strnlen(h, 100));
+        e.size = from_octal(h + 124, 12);
+        e.link.assign(h + 157, ::strnlen(h + 157, 100));
+        e.mode = static_cast<std::uint32_t>(from_octal(h + 100, 8));
+        const std::uint64_t padded = (e.size + 511) / 512 * 512;
+        if (e.type == 'x') {
+            // A pax header: its records name the real path/linkpath.
+            std::string recs(static_cast<std::size_t>(e.size), '\0');
+            f.read(recs.data(), static_cast<std::streamsize>(e.size));
+            f.seekg(static_cast<std::streamoff>(padded - e.size), std::ios::cur);
+            std::size_t at = 0;
+            while (at < recs.size()) {
+                const std::size_t nl = recs.find('\n', at);
+                if (nl == std::string::npos) break;
+                const std::string rec = recs.substr(at, nl - at);
+                at = nl + 1;
+                const std::size_t sp = rec.find(' ');
+                const std::size_t eq = rec.find('=', sp);
+                if (sp == std::string::npos || eq == std::string::npos) continue;
+                const std::string k = rec.substr(sp + 1, eq - sp - 1);
+                const std::string v = rec.substr(eq + 1);
+                if (k == "path") pending_path = v;
+                if (k == "linkpath") pending_link = v;
+            }
+            continue;
+        }
+        if (!pending_path.empty()) {
+            e.name = pending_path;
+            pending_path.clear();
+        }
+        if (!pending_link.empty()) {
+            e.link = pending_link;
+            pending_link.clear();
+        }
+        f.seekg(static_cast<std::streamoff>(padded), std::ios::cur);
+        out.push_back(std::move(e));
+    }
+    return out;
+}
+
+const TarEntry* tar_find(const std::vector<TarEntry>& v, const std::string& name) {
+    for (const TarEntry& e : v)
+        if (e.name == name) return &e;
+    return nullptr;
+}
+
+}  // namespace
+
+TEST(DiskSinkTar, KeepsWhatACopyOntoAForeignFilesystemWouldDrop) {
+    TempDir tmp;
+    DiskSink::Options o;
+    o.tar_path = (tmp.path() / "files.tar").string();
+    auto sink = open_sink(tmp.path() / "files", o);
+
+    EntryResult r;
+    FileMeta d;
+    d.path = "bin";
+    d.kind = EntryKind::Directory;
+    d.mode = 0755;
+    ASSERT_TRUE(sink->entry(d, r).ok);
+
+    ASSERT_TRUE(sink->file(regular("bin/busybox", 0755), bytes_of("ELF"), r).ok);
+
+    FileMeta l;
+    l.path = "bin/sh";
+    l.kind = EntryKind::Symlink;
+    l.link_target = "busybox";
+    ASSERT_TRUE(sink->entry(l, r).ok);
+
+    FileMeta dev;
+    dev.path = "dev/null";
+    dev.kind = EntryKind::CharDevice;
+    dev.mode = 0666;
+    dev.rdev_major = 1;
+    dev.rdev_minor = 3;
+    ASSERT_TRUE(sink->entry(dev, r).ok);
+
+    // A mode that denies its own owner read. Seven files in one corpus case
+    // carry one, and they are why a plain copy fails before it starts.
+    ASSERT_TRUE(sink->file(regular("etc/locked", 0240), bytes_of("x"), r).ok);
+    sink.reset();  // closing writes the end-of-archive blocks
+
+    const std::vector<TarEntry> t = read_tar(tmp.path() / "files.tar");
+    const TarEntry* dir = tar_find(t, "bin/");
+    ASSERT_NE(dir, nullptr) << "a directory is an entry, not an implication";
+    EXPECT_EQ(dir->type, '5');
+
+    const TarEntry* sym = tar_find(t, "bin/sh");
+    ASSERT_NE(sym, nullptr);
+    EXPECT_EQ(sym->type, '2');
+    EXPECT_EQ(sym->link, "busybox") << "the target, which exFAT cannot store at all";
+
+    const TarEntry* node = tar_find(t, "dev/null");
+    ASSERT_NE(node, nullptr);
+    EXPECT_EQ(node->type, '3');
+
+    const TarEntry* bb = tar_find(t, "bin/busybox");
+    ASSERT_NE(bb, nullptr);
+    EXPECT_EQ(bb->size, 3u);
+    EXPECT_EQ(bb->mode, 0755u);
+
+    const TarEntry* locked = tar_find(t, "etc/locked");
+    ASSERT_NE(locked, nullptr);
+    EXPECT_EQ(locked->mode, 0240u) << "recorded as the evidence had it";
+}
+
+// The size is not known when the header has to be written, so it is patched in
+// afterwards. What the archive claims must be what the tree got, truncation
+// included, or the two disagree about what was recovered.
+TEST(DiskSinkTar, RecordsWhatWasWrittenNotWhatWasClaimed) {
+    TempDir tmp;
+    DiskSink::Options o;
+    o.tar_path = (tmp.path() / "files.tar").string();
+    o.limits.max_file_bytes = 4;
+    o.limits.max_file_bytes_ratio = 0;
+    auto sink = open_sink(tmp.path() / "files", o);
+
+    EntryResult r;
+    FileMeta m = regular("big.bin");
+    m.size = 1000;  // what the reader believed
+    ASSERT_TRUE(sink->begin_file(m).ok);
+    static_cast<void>(sink->write(bytes_of("0123456789")));
+    ASSERT_TRUE(sink->end_file(r).ok);
+    EXPECT_TRUE(r.truncated);
+    sink.reset();
+
+    const std::vector<TarEntry> t = read_tar(tmp.path() / "files.tar");
+    const TarEntry* e = tar_find(t, "big.bin");
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->size, 4u) << "the four bytes the limit allowed, not the thousand claimed";
+    EXPECT_EQ(fs::file_size(tmp.path() / "files" / "big.bin"), 4u) << "and the tree agrees";
+}
+
+// A name longer than the 100-byte field, or one that is not valid UTF-8, needs
+// a pax header. Both turn up in evidence -- a QNX phonebook.db whose name
+// carries raw bytes is what exFAT refused outright.
+TEST(DiskSinkTar, CarriesNamesTheFixedFieldCannotHold) {
+    TempDir tmp;
+    DiskSink::Options o;
+    o.tar_path = (tmp.path() / "files.tar").string();
+    auto sink = open_sink(tmp.path() / "files", o);
+
+    const std::string deep = std::string(30, 'a') + "/" + std::string(30, 'b') + "/" +
+                             std::string(30, 'c') + "/" + std::string(30, 'd') + "/leaf.txt";
+    ASSERT_GT(deep.size(), 100u);
+    EntryResult r;
+    ASSERT_TRUE(sink->file(regular(deep), bytes_of("x"), r).ok);
+    sink.reset();
+
+    const std::vector<TarEntry> t = read_tar(tmp.path() / "files.tar");
+    EXPECT_NE(tar_find(t, deep), nullptr) << "the whole path, out of the pax header";
+}
+
+// History is the case's record of what was deleted, not the filesystem as it
+// was running. An analyst unpacking the archive should get the system.
+TEST(DiskSinkTar, HoldsTheLiveTreeAndNotItsHistory) {
+    TempDir tmp;
+    DiskSink::Options o;
+    o.tar_path = (tmp.path() / "files.tar").string();
+    auto sink = open_sink(tmp.path() / "files", o);
+
+    EntryResult r;
+    ASSERT_TRUE(sink->file(regular("etc/passwd"), bytes_of("live"), r).ok);
+    FileMeta old = regular("etc/passwd");
+    old.superseded = true;
+    old.version = 1;
+    ASSERT_TRUE(sink->file(old, bytes_of("older"), r).ok);
+    sink.reset();
+
+    const std::vector<TarEntry> t = read_tar(tmp.path() / "files.tar");
+    EXPECT_EQ(t.size(), 1u) << "one entry: the live one";
+    ASSERT_NE(tar_find(t, "etc/passwd"), nullptr);
+    EXPECT_EQ(tar_find(t, "etc/passwd")->size, 4u);
+}
+
+// Two runs over the same evidence must produce the same archive, or a case can
+// no longer be checked against the one someone else made.
+TEST(DiskSinkTar, IsByteIdenticalBetweenRuns) {
+    const auto build = [](const fs::path& root, const fs::path& tar) {
+        DiskSink::Options o;
+        o.tar_path = tar.string();
+        std::unique_ptr<DiskSink> sink;
+        ASSERT_TRUE(DiskSink::open(root.string(), o, sink).ok);
+        EntryResult r;
+        FileMeta d;
+        d.path = "etc";
+        d.kind = EntryKind::Directory;
+        d.mode = 0755;
+        ASSERT_TRUE(sink->entry(d, r).ok);
+        FileMeta m = regular("etc/passwd");
+        m.mtime = 1700000000;
+        ASSERT_TRUE(sink->file(m, bytes_of("root:x:0:0:"), r).ok);
+    };
+    TempDir tmp;
+    build(tmp.path() / "a", tmp.path() / "a.tar");
+    build(tmp.path() / "b", tmp.path() / "b.tar");
+
+    const auto slurp_bytes = [](const fs::path& p) {
+        std::ifstream f(p, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    EXPECT_EQ(slurp_bytes(tmp.path() / "a.tar"), slurp_bytes(tmp.path() / "b.tar"))
+        << "nothing here may read a clock or this host's passwd file";
 }
 
 TEST(DiskSink, LimitMaxFileBytesTruncates) {

@@ -313,6 +313,31 @@ rather than a second opinion about it. A case with no `artifacts.yaml` simply
 has no such section; one whose `artifacts.yaml` is there and does not parse
 says so (`report-hits-unreadable`) instead of quietly dropping it.
 
+## Handing a case to someone else
+
+`--tar-filesystems` writes `files.tar` beside every `files/` tree — one per
+filesystem and container node — holding exactly the same entries.
+
+It exists because **an extracted tree cannot be copied faithfully onto a
+filesystem that is not POSIX.** Copying one onto exFAT, a Windows share or
+cloud storage drops every symlink, every permission bit and any name that is
+not valid UTF-8, and says nothing while it does it. Measured on a real
+handover: 1,348 symlinks refused, a QNX `phonebook.db` whose name carries raw
+bytes refused outright, and seven files whose evidence-preserved mode denies
+their own owner read.
+
+The archive is written from the same entries as the tree, in one pass, so it
+is faithful even where the host filesystem is not. It is `ustar` with `pax`
+headers for names the fixed field cannot hold, it holds the live tree and not
+`.omnitrace-versions/`, and it is byte-identical between runs — nothing in it
+reads a clock or this host's passwd file. It roughly doubles what a case takes
+on disk, which is why it is asked for rather than assumed.
+
+Carving is separate and already per-partition (`--carve`), but note that
+`--max-carve-bytes` defaults to 4 GiB: a partition larger than that is skipped
+with a coverage row rather than carved. For a handover run, raise it
+deliberately to whatever the evidence needs.
+
 ## `omnitrace diff <case-a> <case-b>`
 
 What changed between two finished cases — two units of the same model, or one

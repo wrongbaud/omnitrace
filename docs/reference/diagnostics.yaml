@@ -1393,6 +1393,10 @@ sink-symlink-bad-target:
   meaning: the symlink's target is empty or contains a NUL byte, which no host can create; the entry is recorded only
   action: a deleted or damaged record whose target data is gone or reused; the listing keeps the entry and its raw target
 
+sink-tar-error:
+  meaning: the handover archive (--tar-filesystems) could not be written, and no further entry of that filesystem was archived
+  action: the extracted tree is unaffected and is still the case; check free space and permissions on the output directory, and re-run with --tar-filesystems if the archive is needed for handover
+
 sink-unsafe-path:
   meaning: the entry path is empty, absolute (leading /), contains a .. component or a NUL byte; refused (a name the host cannot store is escaped, never refused)
   action: hostile or damaged filesystem; the entry name is in the message

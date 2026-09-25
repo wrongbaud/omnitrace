@@ -16,6 +16,8 @@
 // is a legal file-name byte and is written as is.
 #include "omnitrace/core/Sink.h"
 
+#include "TarWriter.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
@@ -681,6 +683,20 @@ struct DiskSink::Impl {
     using Current = DiskSinkCurrent;
     std::optional<Current> cur;
 
+    // The handover archive, written from the same entries as the tree. A
+    // failure here never fails the extraction: the tree is the case and the
+    // archive is a convenience, so it is reported on the entry and dropped.
+    std::unique_ptr<detail::TarWriter> tar;
+    bool tar_open_entry = false;
+    void tar_failed(std::vector<Diagnostic>& diags, const Status& st) {
+        diags.push_back({Severity::Warning, "sink-tar-error",
+                         "the handover archive could not be written (" + st.error +
+                             "); the extracted tree is unaffected and no further entry is "
+                             "archived"});
+        tar.reset();
+        tar_open_entry = false;
+    }
+
     ~Impl() {
         if (cur) close_file(cur->file);
         close_root();
@@ -732,6 +748,10 @@ Status DiskSink::open(const std::string& root_dir, Options opts, std::unique_ptr
     impl->opts = opts;
     Status s = open_root_dir(root_dir, impl->root);
     if (!s) return s;
+    if (!opts.tar_path.empty()) {
+        // Refusing to create it would fail an extraction over a convenience.
+        if (Status t = detail::TarWriter::open(opts.tar_path, impl->tar); !t) impl->tar.reset();
+    }
     std::unique_ptr<DiskSink> sink(new DiskSink());
     sink->impl_ = std::move(impl);
     out = std::move(sink);
@@ -767,6 +787,17 @@ Status DiskSink::begin_file(const FileMeta& meta) {
     Impl::Current& cur = im.cur.emplace();
     cur.meta = meta;
     cur.meta.path = norm;
+
+    // Historical versions are the case's record of what was deleted, not the
+    // filesystem as it was running, so the handover archive holds the live
+    // tree only -- an analyst unpacking it gets the system, not its history.
+    if (im.tar && !is_historical(meta)) {
+        FileMeta tm = cur.meta;
+        if (Status t = im.tar->begin_file(tm); !t)
+            im.tar_failed(cur.diagnostics, t);
+        else
+            im.tar_open_entry = true;
+    }
 
     if (is_historical(meta) && !im.opts.write_versions) {
         // Recorded (hashed, counted) but never lands on disk.
@@ -811,6 +842,10 @@ Status DiskSink::write(std::span<const std::uint8_t> data) {
 
     const LimitClamp clamp = clamp_write(im.opts.limits, cur.written, im.bytes, data.size());
     const std::span<const std::uint8_t> part = data.first(clamp.allowed);
+    // The archive gets exactly what the tree gets, truncation included, so
+    // the two never disagree about what was recovered.
+    if (im.tar && im.tar_open_entry && !part.empty())
+        if (Status t = im.tar->write(part); !t) im.tar_failed(cur.diagnostics, t);
     if (!part.empty()) {
         if (cur.file.valid()) {
             if (Status s = write_all(cur.file, part); !s) {
@@ -851,6 +886,10 @@ Status DiskSink::end_file(EntryResult& out) {
         out.host_path = host_path_of(im.root_path, cur.rel);
         out.written = true;
     }
+    if (im.tar && im.tar_open_entry) {
+        if (Status t = im.tar->end_file(); !t) im.tar_failed(out.diagnostics, t);
+        im.tar_open_entry = false;
+    }
     im.cur.reset();
     ++im.files;
     return Status::success();
@@ -873,6 +912,12 @@ Status DiskSink::entry(const FileMeta& meta, EntryResult& out) {
     out = EntryResult{};
     out.meta = meta;
     out.meta.path = norm;
+
+    // Directories, symlinks and device nodes: header only, and the reason the
+    // archive exists at all -- these are precisely what a copy onto a foreign
+    // filesystem loses.
+    if (im.tar && !is_historical(meta))
+        if (Status t = im.tar->entry(out.meta); !t) im.tar_failed(out.diagnostics, t);
 
     auto finish = [&](Status s) {
         if (s) ++im.files;

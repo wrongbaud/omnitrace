@@ -29,6 +29,7 @@ DIR/
 ├── filesystems/<node-id>/     # one directory per filesystem node, nested ones included
 │   ├── listing.yaml          # every entry: metadata, digests, host path, flags, diagnostics
 │   ├── listing.md            # same, as a table
+│   ├── files.tar             # only with --tar-filesystems: the same entries, faithfully (see below)
 │   └── files/                # the extracted tree (unless --no-extract)
 │       └── .omnitrace-versions/   # superseded / deleted versions when --history recovered any
 │           └── <path>/v<version>  # one file per recovered state (see "Versions")
@@ -49,6 +50,16 @@ It is `nm` output, deliberately: address, type letter, name, one symbol per
 line in the table's own order. That is a format disassemblers and scripts
 already read, and re-inventing it would mean every consumer needed a parser
 for this tool alone.
+
+`files.tar` appears only with `--tar-filesystems`, and exists because an
+extracted tree **cannot be copied faithfully onto a filesystem that is not
+POSIX**: exFAT, a Windows share and cloud storage all drop symlinks,
+permission bits and names that are not valid UTF-8, without a word. It is
+written from the same entries as `files/`, in one pass, so it is faithful even
+where the host filesystem is not; it holds the live tree and not
+`.omnitrace-versions/`; and it is byte-identical between runs. Unpack it and
+you get what `files/` holds, symlinks and modes included — that round trip is
+a test.
 
 `--layout flat` writes the Phase 0 subset only: `manifest.yaml`, `summary.md`,
 `partitions.md`, `filesystems/`, `containers/`. Nothing is carved and no `INFO.*`, `flash/`

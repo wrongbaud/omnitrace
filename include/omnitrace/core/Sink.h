@@ -151,6 +151,20 @@ class DiskSink final : public Sink {
         bool write_versions =
             true;  ///< Write superseded/deleted entries under `.omnitrace-versions`; false records
                    ///< them (hashed, counted) without writing.
+        /// Also write every entry into a tar archive at this path.
+        ///
+        /// For handing a case to someone else. An extracted tree carries
+        /// symlinks, permission bits that deny their own owner read, device
+        /// nodes and names that are not valid UTF-8; copy that onto exFAT, a
+        /// Windows share or cloud storage and every one of them is silently
+        /// dropped. The archive is written from the *same entries* as the
+        /// tree, in one pass, so it is faithful even on a host whose own
+        /// filesystem cannot represent what was extracted.
+        ///
+        /// Empty writes no archive. A failure to write it is reported as a
+        /// diagnostic on the entry, never as a failure of the extraction:
+        /// the tree is the case and the archive is a convenience.
+        std::string tar_path;
         Limits limits;  ///< Caps enforced by this sink.
     };
     /// Create the sink over `root_dir`, creating that one directory if it is

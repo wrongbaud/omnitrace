@@ -139,8 +139,19 @@ struct AnalyzeOptions {
     bool extract =
         true;  ///< false: a `ListingSink` per filesystem, metadata only, nothing written.
     bool history =
-        false;      ///< Ask readers for superseded/deleted versions (`fs::WalkOptions::history`).
-    Limits limits;  ///< Run-wide: `max_files` / `max_bytes` are shared by every walk.
+        false;  ///< Ask readers for superseded/deleted versions (`fs::WalkOptions::history`).
+    /// Write a tar of every extracted tree beside its `files/` directory, for
+    /// handing the case to someone else.
+    ///
+    /// An extracted tree carries symlinks, permission bits that deny their own
+    /// owner read, device nodes and names that are not valid UTF-8. Copy it
+    /// onto exFAT, a Windows share or cloud storage and every one of those is
+    /// dropped without a word. The archive is written from the same entries as
+    /// the tree, in one pass, so it is faithful even where the host filesystem
+    /// is not. It roughly doubles what a case takes on disk, which is why it
+    /// is asked for rather than assumed.
+    bool tar_filesystems = false;
+    Limits limits;     ///< Run-wide: `max_files` / `max_bytes` are shared by every walk.
     ScanOptions scan;  ///< Passed to the default Scanner.
     std::uint64_t min_region_bytes =
         4096;                  ///< Gaps shorter than this are not reported as Region nodes.

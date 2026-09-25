@@ -451,6 +451,8 @@ WalkOutcome walk_into_sink(Ctx& c, const WalkFn& do_walk, const char* group,
         dopts.hash = true;
         dopts.write_versions = c.opts.history;
         dopts.limits = limits;
+        // Beside the tree it mirrors, named for what it holds.
+        if (c.opts.tar_filesystems) dopts.tar_path = (root.parent_path() / "files.tar").string();
         std::unique_ptr<DiskSink> sink;
         if (Status st = DiskSink::open(root.string(), dopts, sink); !st) {
             w.sink_error = st.error;
