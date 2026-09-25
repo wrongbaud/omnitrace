@@ -4,7 +4,7 @@ OmniTrace is an offline, cross-platform forensic analysis tool for embedded syst
 
 It is for forensic examiners who receive flash dumps rather than phone extractions, embedded security researchers who want a traceable map of an image before they start digging, and agents or scripts that consume `INFO.yaml` and never look at a terminal.
 
-**Status:** Phase 0 complete: format identification (27 validators, 52 signatures), MBR/EBR/GPT partition tables and the examiner case layout. Phase 1 in progress: SquashFS, ext2/3/4, JFFS2, QNX6 and QNX IFS filesystem readers; gzip, bzip2, xz, lzma, lz4, zstd, tar, cpio, zip, uImage, Android boot and Android sparse container readers; history recovery for ext/JFFS2/QNX6; and nested analysis, so `boot.img -> ramdisk -> gzip -> cpio -> rootfs` and `uImage -> lzma -> squashfs` are followed to the end. UBIFS, YAFFS2 and the FIT reader are next. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/reference/FORMATS.md](docs/reference/FORMATS.md).
+**Status:** Phases 0-2 complete — identification, extraction, recovery, search, platform analysis, artifact parsing, reporting, two-case comparison and handover. 56 signatures over 40 format ids, 32 validators, 11 filesystem readers and 18 container formats; every format with a signature has a reader. Phase 1's parity criterion is measured and met against unblob and moria ([docs/PARITY.md](docs/PARITY.md)). See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/reference/FORMATS.md](docs/reference/FORMATS.md).
 
 ## Quick start
 
@@ -17,6 +17,8 @@ less case-router/INFO.md
 ```
 
 Linux presets use system packages; `CONTRIBUTING.md` lists them per distro and covers macOS and Windows through vcpkg.
+
+Or skip the build entirely: `docker run --rm -u "$(id -u):$(id -g)" -v /evidence:/data:ro -v /cases:/out ghcr.io/wrongbaud/omnitrace:latest analyze /data/router.bin --out /out/case-router` ([docs/DOCKER.md](docs/DOCKER.md)).
 
 `router.bin` stands for any raw dump you have; on a 16 MB OpenWrt SPI dump the run takes about a second and `INFO.md` starts like this (trimmed):
 
@@ -84,6 +86,7 @@ The full contract is [docs/CASE_LAYOUT.md](docs/CASE_LAYOUT.md); the commands an
 
 | You want to | Read |
 |---|---|
+| run a published build without installing anything | [docs/DOCKER.md](docs/DOCKER.md) |
 | find any document in the project | [docs/README.md](docs/README.md) |
 | pick this project up cold and start working on it | [docs/RESUMING.md](docs/RESUMING.md) |
 | build on your OS, run the tests, send a change | [CONTRIBUTING.md](CONTRIBUTING.md) |
