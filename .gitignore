@@ -19,3 +19,43 @@ __pycache__/
 
 # Local evidence corpus (never commit images)
 corpus/
+
+# Case directories written by `omnitrace analyze --out DIR`. The directory
+# name is the examiner's choice -- AKGM007, case-router, info35l -- so no
+# pattern catches every one. These catch the manifest and listing files
+# wherever they land, and `cases/` is the suggested place to keep them.
+#
+# This is a guard against the accident, not a guarantee: a case also holds
+# carved partitions and an extracted tree that these patterns do not name.
+# scripts/check_docs.py fails the build if case output is ever tracked.
+cases/
+**/filesystems/*/files/
+**/containers/*/files/
+**/.omnitrace-versions/
+**/symbols/
+**/INFO.yaml
+**/manifest.yaml
+**/listing.yaml
+**/SOURCE.yaml
+**/report.html
+**/report.md
+**/INFO.md
+**/summary.md
+**/partitions.md
+**/platform.yaml
+**/platform.md
+**/artifacts.yaml
+**/artifacts.md
+**/certificates.yaml
+**/certificates.md
+**/mount.sh
+
+# Raw evidence and anything carved out of it. This repository has never
+# tracked a disk image and never should: the fixtures are generated
+# (tests/fixtures/out, ignored above) and the corpus is local. A deliberate
+# addition still works with `git add -f`, which check_docs.py then catches.
+*.bin
+*.BIN
+*.img
+*.dd
+*.raw

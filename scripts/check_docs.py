@@ -16,7 +16,8 @@ Exit status is non-zero when any of these holds:
 4. a relative Markdown link in README.md or any docs/**/*.md points at a file
    that does not exist;
 5. CONTRIBUTING.md documents an apt package that .github/workflows/ci.yml
-   does not install.
+   does not install;
+6. a case directory (device evidence) has been committed.
 
 CI runs it as the first job (.github/workflows/ci.yml); the discovery unit
 tests run it too when python3 is on the PATH (tests/unit/discovery/docs_check_test.cpp).
@@ -120,6 +121,49 @@ def check_ci_packages(problems: list[str]) -> None:
         )
 
 
+# A case directory is evidence output: carved partitions, extracted trees and
+# the manifests over them. None of it belongs in the repository, and the names
+# are unmistakable.
+CASE_MARKERS = ("INFO.yaml", "SOURCE.yaml", "listing.yaml")
+# The bulk of a case: carved partitions and the extracted tree.
+CASE_BULK = re.compile(r"(^|/)(partitions|filesystems|containers)/.*(/files/|\.bin$)")
+
+
+def check_no_case_output(problems: list[str]) -> None:
+    """Fail if a case directory has been committed.
+
+    .gitignore guards the common accident, but it only names the manifests --
+    a case also holds carved partitions and an extracted tree, and `git add
+    -f` ignores it entirely. This is the part that actually holds: a case is
+    real device evidence, and publishing one is not undoable.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT,
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return  # no git (source tarball); nothing to check
+    if out.returncode != 0:
+        return
+    for path in out.stdout.split("\0"):
+        if not path:
+            continue
+        name = path.rsplit("/", 1)[-1]
+        why = ""
+        if name in CASE_MARKERS:
+            why = "a case manifest"
+        elif CASE_BULK.search(path):
+            why = "carved or extracted case content"
+        elif path.lower().endswith((".bin", ".img", ".dd", ".raw")):
+            why = "a disk image"
+        if why:
+            problems.append(
+                f"{path}: {why}, tracked by git; this is device evidence and must not be "
+                "committed (see .gitignore)"
+            )
+
+
 def check_links(problems: list[str]) -> None:
     pages = [ROOT / "README.md"] + sorted((ROOT / "docs").rglob("*.md"))
     for page in pages:
@@ -142,7 +186,7 @@ def check_links(problems: list[str]) -> None:
 
 def main() -> int:
     problems: list[str] = []
-    for check in (check_generated, check_format_pages, check_cli_doc, check_ci_packages, check_links):
+    for check in (check_generated, check_format_pages, check_cli_doc, check_ci_packages, check_no_case_output, check_links):
         try:
             check(problems)
         except SystemExit as e:  # gen_docs uses sys.exit on malformed YAML
